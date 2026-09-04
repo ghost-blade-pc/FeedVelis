@@ -1,0 +1,18 @@
+app:
+  name: velis
+  environment: development
+  log_level: info
+
+http:
+  address: 0.0.0.0:8080
+  shutdown_timeout: 10s
+
+database:
+  # 敏感环境请使用 VELIS_DATABASE_URL 覆盖，不要提交真实密码。
+  url: postgres://velis:velis@localhost:5432/velis?sslmode=disable
+  connect_timeout: 5s
+  max_connections: 20
+  min_connections: 2
+
+worker:
+  heartbeat_interval: 30s
