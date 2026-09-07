@@ -19,3 +19,6 @@ web/coverage/
 
 # 本地运行数据
 .data/
+
+# 开发文档
+项目实践.md
