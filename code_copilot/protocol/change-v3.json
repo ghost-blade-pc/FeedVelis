@@ -1,0 +1,64 @@
+{
+  "schema": "spec-copilot/protocol-v1",
+  "change_schema": "spec-copilot/change-v3",
+  "test_schema": "spec-copilot/test-v3",
+  "event_schema": "spec-copilot/event-v1",
+  "states": [
+    "draft",
+    "ready",
+    "applying",
+    "testing",
+    "reviewing",
+    "changes-requested",
+    "fixing",
+    "verified",
+    "blocked",
+    "archived"
+  ],
+  "profiles": ["lite", "standard", "high-risk"],
+  "failure_sources": [null, "test", "review"],
+  "review_verdicts": ["pending", "passed", "changes-requested"],
+  "test_results": ["not-run", "passed", "failed", "blocked"],
+  "stages": {
+    "propose": {
+      "start": {"from": ["draft"], "to": "draft"},
+      "complete": {"from": ["draft"], "to": "ready"}
+    },
+    "apply": {
+      "start": {"from": ["ready"], "to": "applying"},
+      "complete": {"from": ["applying"], "to": "testing"}
+    },
+    "test": {
+      "start": {"from": ["testing"], "to": "testing"},
+      "complete": {"from": ["testing"], "to": "reviewing"},
+      "fail": {"from": ["testing"], "to": "changes-requested", "failure_source": "test"}
+    },
+    "review": {
+      "start": {"from": ["reviewing"], "to": "reviewing"},
+      "complete": {"from": ["reviewing"], "to": "verified"},
+      "fail": {"from": ["reviewing"], "to": "changes-requested", "failure_source": "review"}
+    },
+    "fix": {
+      "start": {"from": ["changes-requested"], "to": "fixing"},
+      "complete": {"from": ["fixing"], "to": "testing"}
+    },
+    "archive": {
+      "start": {"from": ["verified"], "to": "verified"},
+      "complete": {"from": ["verified"], "to": "archived"}
+    }
+  },
+  "blocked_resume": {
+    "draft": ["draft"],
+    "ready": ["draft", "ready"],
+    "applying": ["ready", "applying", "changes-requested"],
+    "testing": ["testing", "changes-requested"],
+    "reviewing": ["reviewing", "changes-requested"],
+    "changes-requested": ["changes-requested", "fixing", "testing"],
+    "fixing": ["fixing", "changes-requested", "testing"],
+    "verified": ["verified"]
+  },
+  "loop_guard": {
+    "max_completed_fix_cycles": 3,
+    "max_failed_occurrences_per_finding": 3
+  }
+}

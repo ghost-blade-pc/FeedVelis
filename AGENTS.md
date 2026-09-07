@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENT.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex when working with code in this repository.
 
 ## 项目概述
 
@@ -106,7 +106,6 @@ Bootstrap ───────► 所有层（Composition Root，仅负责装�
 - 代码注释、日志与错误消息使用中文（与现有代码一致）
 - 开发文档 §19 定义了模块完成标准：业务规则在 Domain/Application、迁移可回滚、覆盖正常/边界/权限/幂等/故障场景、外部调用有超时/取消/重试边界、无数据竞争与 goroutine 泄漏
 - 仓库暂无开源许可证，默认保留全部权利
-
 <!-- spec-copilot:start schema=3 -->
 ## Spec Coding 协作入口
 

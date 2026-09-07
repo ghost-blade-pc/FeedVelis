@@ -1,0 +1,8 @@
+{
+  "schema": "spec-copilot/workspace",
+  "schema_version": 3,
+  "template_version": "3.0.0",
+  "protocol": "protocol/change-v3.json",
+  "project_mode": "scaffolded",
+  "language": "zh-CN"
+}
