@@ -6,7 +6,7 @@ This file provides guidance to Codex when working with code in this repository.
 
 Velis 是可自托管的个人内容聚合与智能阅读平台（RSS/Atom 聚合、Markdown 发布、个性化 Feed）。当前处于 M0 工程骨架阶段：三个进程入口、四层目录、健康检查、迁移与 CI 已落地；各业务领域包目前只有 `doc.go` 占位，尚未实现业务能力。
 
-权威规格是 `Velis新项目开发文档.md`（架构蓝图、里程碑 M0–M6、ADR、API 端点清单、测试策略）。README.md 只描述当前已落地状态。实现业务功能前先读开发文档对应章节。
+开发参考文档是 `Velis新项目开发文档.md`（架构蓝图、里程碑 M0–M6、ADR、API 端点清单、测试策略）。README.md 只描述当前已落地状态。实现业务功能前先读开发文档对应章节以及与开发人员进行沟通，最终开发路线可能与开发文档有所出入。
 
 后端 Go module 位于 `backend/`，完整 module 路径 `github.com/ghost-blade-pc/Velis_Feed/backend`。要求 Go 1.26、Node.js 24。
 
