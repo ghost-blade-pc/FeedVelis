@@ -13,6 +13,7 @@ import (
 type fakeArticleRepository struct {
 	candidates []articleDomain.Candidate
 	list       []articleDomain.ListItem
+	detail     articleDomain.Detail
 }
 
 func (r *fakeArticleRepository) Upsert(_ context.Context, candidate articleDomain.Candidate, _ time.Time) (articleDomain.UpsertResult, int64, error) {
@@ -22,6 +23,10 @@ func (r *fakeArticleRepository) Upsert(_ context.Context, candidate articleDomai
 
 func (r *fakeArticleRepository) ListPublished(context.Context, *articleDomain.Cursor, int) ([]articleDomain.ListItem, error) {
 	return r.list, nil
+}
+
+func (r *fakeArticleRepository) GetPublished(context.Context, int64) (articleDomain.Detail, error) {
+	return r.detail, nil
 }
 
 type fakeSanitizer struct{}
@@ -67,5 +72,18 @@ func TestListCreatesOpaqueCursor(t *testing.T) {
 	}
 	if _, err := decodeCursor(*page.NextCursor); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGetRejectsInvalidIDAndReturnsDetail(t *testing.T) {
+	htmlValue := "<p>正文</p>"
+	repository := &fakeArticleRepository{detail: articleDomain.Detail{Item: articleDomain.ListItem{ID: 3}, SanitizedHTML: &htmlValue}}
+	service := NewService(repository, fakeSanitizer{}, fixedClock{value: time.Now().UTC()})
+	if _, err := service.Get(context.Background(), 0); err == nil {
+		t.Fatal("非法 ID 应被拒绝")
+	}
+	detail, err := service.Get(context.Background(), 3)
+	if err != nil || detail.Item.ID != 3 || detail.SanitizedHTML == nil || *detail.SanitizedHTML != htmlValue {
+		t.Fatalf("detail=%+v err=%v", detail, err)
 	}
 }

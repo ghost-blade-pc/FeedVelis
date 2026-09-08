@@ -18,7 +18,7 @@ type SourceService interface {
 	List(context.Context) ([]sourceDomain.Source, error)
 	Pause(context.Context, int64) error
 	Resume(context.Context, int64) error
-	FetchByID(context.Context, int64) (sourceApp.FetchOutcome, error)
+	FetchByID(context.Context, int64, bool) (sourceApp.FetchOutcome, error)
 }
 
 type Runner struct {
@@ -33,7 +33,7 @@ func New(service SourceService, stdout, stderr io.Writer) *Runner {
 
 func (r *Runner) Run(ctx context.Context, args []string) error {
 	if len(args) < 2 || args[0] != "source" {
-		return errors.New("用法: velis-admin source <add|list|pause|resume|fetch> [参数]")
+		return errors.New("用法: velis-admin source <add|list|pause|resume|fetch <id> [--force]> [参数]")
 	}
 	switch args[1] {
 	case "add":
@@ -62,7 +62,13 @@ func (r *Runner) Run(ctx context.Context, args []string) error {
 		}
 		return nil
 	case "pause", "resume", "fetch":
-		id, err := parseID(args[2:])
+		force := false
+		idArgs := args[2:]
+		if len(idArgs) == 2 && idArgs[1] == "--force" {
+			force = true
+			idArgs = idArgs[:1]
+		}
+		id, err := parseID(idArgs)
 		if err != nil {
 			return err
 		}
@@ -73,7 +79,7 @@ func (r *Runner) Run(ctx context.Context, args []string) error {
 			err = r.service.Resume(ctx, id)
 		case "fetch":
 			var outcome sourceApp.FetchOutcome
-			outcome, err = r.service.FetchByID(ctx, id)
+			outcome, err = r.service.FetchByID(ctx, id, force)
 			if err == nil {
 				fmt.Fprintf(r.stdout, "source_id=%d not_modified=%t inserted=%d updated=%d unchanged=%d\n", id, outcome.NotModified, outcome.Report.Inserted, outcome.Report.Updated, outcome.Report.Unchanged)
 			}

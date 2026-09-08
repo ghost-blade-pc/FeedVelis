@@ -50,6 +50,30 @@ paths:
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
+  /articles/{article_id}:
+    get:
+      operationId: getArticle
+      summary: 读取单篇已发布文章，携带清洗后的正文 HTML
+      parameters:
+        - name: article_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 文章详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArticleDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
   /livez:
     get:
       servers:
@@ -139,6 +163,34 @@ components:
         site_url:
           type: [string, "null"]
           format: uri
+    ArticleDetail:
+      type: object
+      required: [id, title, canonical_url, source, author_name, excerpt, source_published_at, discovered_at, content_html]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        canonical_url:
+          type: string
+          format: uri
+          pattern: "^https?://"
+        source:
+          $ref: "#/components/schemas/ArticleSource"
+        author_name:
+          type: [string, "null"]
+        excerpt:
+          type: string
+        source_published_at:
+          type: [string, "null"]
+          format: date-time
+        discovered_at:
+          type: string
+          format: date-time
+        content_html:
+          type: [string, "null"]
+          description: 经白名单清洗的正文 HTML，可能为空（如源仅提供纯文本）
     ErrorResponse:
       type: object
       required: [error]

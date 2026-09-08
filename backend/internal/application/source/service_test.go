@@ -55,6 +55,17 @@ func (f fetcherFake) Fetch(context.Context, ports.FetchRequest) (ports.FetchResp
 	return f.response, nil
 }
 
+// requestCapturingFetcher 记录收到的抓取请求，用于断言条件请求头。
+type requestCapturingFetcher struct {
+	captured ports.FetchRequest
+	response ports.FetchResponse
+}
+
+func (f *requestCapturingFetcher) Fetch(_ context.Context, request ports.FetchRequest) (ports.FetchResponse, error) {
+	f.captured = request
+	return f.response, nil
+}
+
 type parserFake struct{ called bool }
 
 func (p *parserFake) Parse(context.Context, []byte, string) (ports.ParsedFeed, error) {
@@ -69,6 +80,9 @@ func (articleRepositoryFake) Upsert(context.Context, articleDomain.Candidate, ti
 }
 func (articleRepositoryFake) ListPublished(context.Context, *articleDomain.Cursor, int) ([]articleDomain.ListItem, error) {
 	return nil, nil
+}
+func (articleRepositoryFake) GetPublished(context.Context, int64) (articleDomain.Detail, error) {
+	return articleDomain.Detail{}, nil
 }
 
 type sanitizerFake struct{}
@@ -91,7 +105,7 @@ func TestNotModifiedDoesNotParseOrIngest(t *testing.T) {
 	clock := clockFake{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
 	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
 	service := NewService(repository, fetcherFake{response: ports.FetchResponse{NotModified: true}}, parser, articles, clock, transactionManagerFake{}, nil)
-	outcome, err := service.FetchByID(context.Background(), 1)
+	outcome, err := service.FetchByID(context.Background(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +119,31 @@ func TestPausedSourceCannotBeFetched(t *testing.T) {
 	clock := clockFake{now: time.Now()}
 	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
 	service := NewService(repository, fetcherFake{}, &parserFake{}, articles, clock, transactionManagerFake{}, nil)
-	if _, err := service.FetchByID(context.Background(), 1); err != sourceDomain.ErrInvalidStatus {
+	if _, err := service.FetchByID(context.Background(), 1, false); err != sourceDomain.ErrInvalidStatus {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestForceFetchSkipsConditionalHeaders(t *testing.T) {
+	etag := `"etag-1"`
+	lastModified := "Mon, 07 Sep 2026 00:00:00 GMT"
+	repository := &sourceRepositoryFake{source: sourceDomain.Source{
+		ID: 1, FeedURL: "https://example.com/feed", Status: sourceDomain.StatusActive, ETag: &etag, LastModified: &lastModified,
+	}}
+	clock := clockFake{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
+	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
+	fetcher := &requestCapturingFetcher{response: ports.FetchResponse{}}
+	service := NewService(repository, fetcher, &parserFake{}, articles, clock, transactionManagerFake{}, nil)
+	if _, err := service.FetchByID(context.Background(), 1, true); err != nil {
+		t.Fatal(err)
+	}
+	if fetcher.captured.ETag != nil || fetcher.captured.LastModified != nil {
+		t.Fatalf("强制抓取不应携带条件请求头: %+v", fetcher.captured)
+	}
+	if _, err := service.FetchByID(context.Background(), 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if fetcher.captured.ETag == nil || fetcher.captured.LastModified == nil {
+		t.Fatalf("常规抓取应携带条件请求头: %+v", fetcher.captured)
 	}
 }

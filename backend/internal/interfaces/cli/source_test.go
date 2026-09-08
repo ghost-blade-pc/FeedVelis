@@ -11,8 +11,10 @@ import (
 )
 
 type cliSourceService struct {
-	addedURL string
-	pausedID int64
+	addedURL     string
+	pausedID     int64
+	fetchedID    int64
+	fetchedForce bool
 }
 
 func (s *cliSourceService) Add(_ context.Context, rawURL string) (sourceDomain.Source, bool, error) {
@@ -25,7 +27,9 @@ func (s *cliSourceService) Pause(_ context.Context, id int64) error {
 	return nil
 }
 func (*cliSourceService) Resume(context.Context, int64) error { return nil }
-func (*cliSourceService) FetchByID(context.Context, int64) (sourceApp.FetchOutcome, error) {
+func (s *cliSourceService) FetchByID(_ context.Context, id int64, force bool) (sourceApp.FetchOutcome, error) {
+	s.fetchedID = id
+	s.fetchedForce = force
 	return sourceApp.FetchOutcome{}, nil
 }
 
@@ -51,5 +55,24 @@ func TestSourceCommandRejectsInvalidID(t *testing.T) {
 	runner := New(&cliSourceService{}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err := runner.Run(context.Background(), []string{"source", "fetch", "0"}); err == nil {
 		t.Fatal("expected invalid id")
+	}
+}
+
+func TestSourceFetchForceFlag(t *testing.T) {
+	service := &cliSourceService{}
+	var stdout bytes.Buffer
+	runner := New(service, &stdout, &bytes.Buffer{})
+	if err := runner.Run(context.Background(), []string{"source", "fetch", "2", "--force"}); err != nil {
+		t.Fatal(err)
+	}
+	if service.fetchedID != 2 || !service.fetchedForce {
+		t.Fatalf("fetched=%d force=%t", service.fetchedID, service.fetchedForce)
+	}
+	runner = New(service, &stdout, &bytes.Buffer{})
+	if err := runner.Run(context.Background(), []string{"source", "fetch", "2"}); err != nil {
+		t.Fatal(err)
+	}
+	if service.fetchedForce {
+		t.Fatal("不带 --force 时不应强制")
 	}
 }

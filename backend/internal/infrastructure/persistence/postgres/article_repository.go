@@ -91,6 +91,28 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`, id, c.RawDescription, c.RawContent,
 	return err
 }
 
+func (r *ArticleRepository) GetPublished(ctx context.Context, articleID int64) (articleDomain.Detail, error) {
+	var item articleDomain.ListItem
+	var sanitizedHTML *string
+	err := r.pool.QueryRow(ctx, `
+SELECT a.id, a.title, a.canonical_url, s.id, s.title, s.site_url, a.author_name, a.excerpt,
+ a.source_published_at, a.discovered_at, a.sort_at, c.sanitized_html
+FROM velis.articles a
+JOIN velis.sources s ON s.id = a.source_id
+LEFT JOIN velis.article_contents c ON c.article_id = a.id
+WHERE a.id = $1 AND a.status = 'published'`, articleID).
+		Scan(&item.ID, &item.Title, &item.CanonicalURL, &item.Source.ID, &item.Source.Title,
+			&item.Source.SiteURL, &item.AuthorName, &item.Excerpt, &item.SourcePublishedAt,
+			&item.DiscoveredAt, &item.SortAt, &sanitizedHTML)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return articleDomain.Detail{}, articleDomain.ErrNotFound
+	}
+	if err != nil {
+		return articleDomain.Detail{}, err
+	}
+	return articleDomain.Detail{Item: item, SanitizedHTML: sanitizedHTML}, nil
+}
+
 func (r *ArticleRepository) ListPublished(ctx context.Context, cursor *articleDomain.Cursor, limit int) ([]articleDomain.ListItem, error) {
 	query := `SELECT a.id, a.title, a.canonical_url, s.id, s.title, s.site_url, a.author_name, a.excerpt,
  a.source_published_at, a.discovered_at, a.sort_at

@@ -35,4 +35,15 @@ export async function listArticles(cursor?: string, limit = 20, signal?: AbortSi
   }
   return (await response.json()) as ArticlePage
 }
-import type { ArticlePage } from '../types/article'
+
+export async function getArticle(id: number, signal?: AbortSignal): Promise<ArticleDetail> {
+  const response = await fetch(`/api/v1/articles/${id}`, {
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  if (!response.ok) {
+    throw new ApiError('文章详情暂不可用', response.status)
+  }
+  return (await response.json()) as ArticleDetail
+}
+import type { ArticleDetail, ArticlePage } from '../types/article'

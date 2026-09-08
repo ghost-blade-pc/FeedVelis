@@ -2,6 +2,7 @@ package hertz
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"strings"
@@ -55,13 +56,22 @@ func TestNoRouteUsesErrorEnvelope(t *testing.T) {
 	}
 }
 
-type listRepository struct{ items []articleDomain.ListItem }
+type listRepository struct {
+	items  []articleDomain.ListItem
+	detail articleDomain.Detail
+}
 
 func (*listRepository) Upsert(context.Context, articleDomain.Candidate, time.Time) (articleDomain.UpsertResult, int64, error) {
 	return articleDomain.UpsertInserted, 1, nil
 }
 func (r *listRepository) ListPublished(context.Context, *articleDomain.Cursor, int) ([]articleDomain.ListItem, error) {
 	return r.items, nil
+}
+func (r *listRepository) GetPublished(_ context.Context, articleID int64) (articleDomain.Detail, error) {
+	if r.detail.Item.ID != articleID {
+		return articleDomain.Detail{}, articleDomain.ErrNotFound
+	}
+	return r.detail, nil
 }
 
 type noOpSanitizer struct{}
@@ -90,6 +100,37 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 	invalid := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles?cursor=bad", nil)
 	if invalid.Code != consts.StatusBadRequest || !strings.Contains(invalid.Body.String(), `"code":"INVALID_CURSOR"`) {
 		t.Fatalf("status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
+func TestArticleDetailContractAndNotFound(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	healthService := health.NewService(readyChecker{})
+	published := time.Date(2026, 9, 1, 8, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	htmlValue := `<p>正文</p><img src="https://example.com/a.png" alt="图" loading="lazy"/>`
+	repository := &listRepository{detail: articleDomain.Detail{
+		Item: articleDomain.ListItem{
+			ID: 7, Title: "文章", CanonicalURL: "https://example.com/a", Source: articleDomain.SourceSummary{ID: 2, Title: "来源"},
+			Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
+		},
+		SanitizedHTML: &htmlValue,
+	}}
+	service := articleApp.NewService(repository, noOpSanitizer{}, testClock{})
+	h := NewServer("127.0.0.1:0", time.Second, logger, healthService, service)
+	response := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles/7", nil)
+	var detail struct {
+		ContentHTML string `json:"content_html"`
+	}
+	if response.Code != consts.StatusOK || json.Unmarshal(response.Body.Bytes(), &detail) != nil || detail.ContentHTML != htmlValue {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	missing := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles/999", nil)
+	if missing.Code != consts.StatusNotFound || !strings.Contains(missing.Body.String(), `"code":"ARTICLE_NOT_FOUND"`) {
+		t.Fatalf("status=%d body=%s", missing.Code, missing.Body.String())
+	}
+	badID := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles/abc", nil)
+	if badID.Code != consts.StatusBadRequest || !strings.Contains(badID.Body.String(), `"code":"INVALID_ARGUMENT"`) {
+		t.Fatalf("status=%d body=%s", badID.Code, badID.Body.String())
 	}
 }
 

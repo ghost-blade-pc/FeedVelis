@@ -53,3 +53,14 @@ func TestContentHashIncludesTruncationFlags(t *testing.T) {
 		t.Fatal("正文截断标志变化必须改变 content hash")
 	}
 }
+
+func TestContentHashIncludesSanitizerVersion(t *testing.T) {
+	raw := "d"
+	article := Article{CanonicalURL: "https://example.com/article", Title: "标题"}
+	base := Content{RawDescription: &raw, SanitizerVersion: 1}
+	upgraded := base
+	upgraded.SanitizerVersion = 2
+	if ContentHash(article, base) == ContentHash(article, upgraded) {
+		t.Fatal("清洗器版本升级必须改变 content hash，以触发旧数据重洗")
+	}
+}

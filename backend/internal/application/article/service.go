@@ -135,6 +135,14 @@ func (s *Service) candidate(sourceID int64, item ports.ParsedItem, now time.Time
 	return articleDomain.Candidate{Article: a, Content: c}, "", nil
 }
 
+// Get 读取单篇已发布文章的元数据与清洗后的正文 HTML。
+func (s *Service) Get(ctx context.Context, articleID int64) (articleDomain.Detail, error) {
+	if articleID <= 0 {
+		return articleDomain.Detail{}, articleDomain.ErrInvalidArgument
+	}
+	return s.repository.GetPublished(ctx, articleID)
+}
+
 func (s *Service) List(ctx context.Context, encodedCursor string, limit int) (Page, error) {
 	if limit == 0 {
 		limit = 20

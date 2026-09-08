@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { listArticles } from '../../api/client'
 import type { ArticleItem } from '../../types/article'
@@ -55,17 +56,18 @@ onBeforeUnmount(() => request?.abort())
           <span v-if="item.author_name"> · {{ item.author_name }}</span>
         </p>
         <h2>
-          <a
-            v-if="safeArticleURL(item.canonical_url)"
-            :href="safeArticleURL(item.canonical_url)"
-            target="_blank"
-            rel="noopener noreferrer"
-          >{{ item.title }}</a>
-          <span v-else>{{ item.title }}</span>
+          <RouterLink :to="`/articles/${item.id}`">{{ item.title }}</RouterLink>
         </h2>
         <p v-if="item.excerpt" class="article-excerpt">{{ item.excerpt }}</p>
         <p class="article-time">
-          {{ articleTime(item).label }} {{ formatTime(articleTime(item).value) }}
+          <span>{{ articleTime(item).label }} {{ formatTime(articleTime(item).value) }}</span>
+          <a
+            v-if="safeArticleURL(item.canonical_url)"
+            class="origin-link"
+            :href="safeArticleURL(item.canonical_url)"
+            target="_blank"
+            rel="noopener noreferrer"
+          >原文 ↗</a>
         </p>
       </article>
       <button v-if="hasMore" class="load-more" type="button" @click="load(false)">加载更多</button>

@@ -23,7 +23,7 @@ const (
 	MaxExcerptRunes         = 1000
 	MaxRawDescriptionBytes  = 256 * 1024
 	MaxRawContentBytes      = 1024 * 1024
-	CurrentSanitizerVersion = 1
+	CurrentSanitizerVersion = 2 // v2：清洗保留图片（img/figure/figcaption）等富文本结构
 )
 
 var (
@@ -31,6 +31,7 @@ var (
 	ErrInvalidURL      = errors.New("文章原文 URL 无效")
 	ErrInvalidCursor   = errors.New("文章游标无效")
 	ErrInvalidArgument = errors.New("文章列表参数无效")
+	ErrNotFound        = errors.New("文章不存在或不可见")
 )
 
 type Status string
@@ -109,9 +110,16 @@ type Cursor struct {
 	ArticleID int64
 }
 
+// Detail 是单篇文章的完整读取模型：列表元数据 + 清洗后的正文 HTML。
+type Detail struct {
+	Item          ListItem
+	SanitizedHTML *string
+}
+
 type Repository interface {
 	Upsert(context.Context, Candidate, time.Time) (UpsertResult, int64, error)
 	ListPublished(context.Context, *Cursor, int) ([]ListItem, error)
+	GetPublished(context.Context, int64) (Detail, error)
 }
 
 func DedupeKey(sourceItemID *string, canonicalURL string) (string, error) {
@@ -183,6 +191,8 @@ func ContentHash(a Article, c Content) string {
 		strconv.FormatBool(c.RawDescriptionTruncated),
 		stringValue(c.RawContent),
 		strconv.FormatBool(c.RawContentTruncated),
+		// 清洗器版本参与哈希：升级后同一原始内容会触发重洗
+		strconv.Itoa(c.SanitizerVersion),
 	})
 	return digest(string(payload))
 }

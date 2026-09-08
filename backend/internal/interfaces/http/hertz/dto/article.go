@@ -25,3 +25,9 @@ type ArticleListResponse struct {
 	NextCursor *string       `json:"next_cursor"`
 	HasMore    bool          `json:"has_more"`
 }
+
+// ArticleDetailResponse 在列表项基础上携带清洗后的正文 HTML，字段平铺。
+type ArticleDetailResponse struct {
+	ArticleItem
+	ContentHTML *string `json:"content_html"`
+}

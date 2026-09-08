@@ -20,3 +20,7 @@ export interface ArticlePage {
   next_cursor: string | null
   has_more: boolean
 }
+
+export interface ArticleDetail extends ArticleItem {
+  content_html: string | null
+}

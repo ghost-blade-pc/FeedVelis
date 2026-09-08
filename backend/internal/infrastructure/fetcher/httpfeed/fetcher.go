@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -41,7 +42,9 @@ func NewFetcher() *Fetcher {
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	fetcher := &Fetcher{resolver: resolver}
 	transport := &http.Transport{
-		Proxy:                  nil,
+		// 尊重环境代理（HTTP_PROXY/HTTPS_PROXY/NO_PROXY）：直连被阻断的源可走本地代理。
+		// 走代理时由代理解析目标地址，受限地址校验仅作用于直连路径。
+		Proxy:                  http.ProxyFromEnvironment,
 		DialContext:            fetcher.safeDialContext(dialer),
 		ForceAttemptHTTP2:      true,
 		TLSHandshakeTimeout:    5 * time.Second,
@@ -122,26 +125,58 @@ func (f *Fetcher) Fetch(ctx context.Context, request ports.FetchRequest) (ports.
 
 func (f *Fetcher) safeDialContext(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, &Error{code: "SSRF_BLOCKED", err: errors.New("目标地址无效")}
 		}
-		addresses, err := f.resolveAllowed(connectCtx, host)
+		// 环境显式配置的代理地址放行拨号；其余直连目标执行受限地址校验
+		if !f.allowRestrictedForTesting && isConfiguredProxy(host, port) {
+			conn, err := dialer.DialContext(ctx, network, address)
+			if err != nil {
+				return nil, &Error{code: "CONNECT_FAILED", err: err}
+			}
+			return conn, nil
+		}
+		resolveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		addresses, err := f.resolveAllowed(resolveCtx, host)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
+		// 每个候选地址独立 5 秒预算：首个地址被黑洞不会饿死其余地址（外层请求超时仍兜底）
 		var dialErr error
 		for _, address := range addresses {
-			conn, err := dialer.DialContext(connectCtx, network, net.JoinHostPort(address.String(), port))
+			dialCtx, dialCancel := context.WithTimeout(ctx, 5*time.Second)
+			conn, err := dialer.DialContext(dialCtx, network, net.JoinHostPort(address.String(), port))
+			dialCancel()
 			if err == nil {
 				return conn, nil
 			}
-			dialErr = err
+			if dialErr == nil {
+				dialErr = err
+			}
 		}
 		return nil, &Error{code: "CONNECT_FAILED", err: dialErr}
 	}
+}
+
+// isConfiguredProxy 判断拨号目标是否为环境变量配置的代理地址。
+func isConfiguredProxy(host, port string) bool {
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
+		raw := os.Getenv(key)
+		u, err := url.Parse(raw)
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		proxyPort := u.Port()
+		if proxyPort == "" {
+			proxyPort = "80"
+		}
+		if strings.EqualFold(u.Hostname(), host) && proxyPort == port {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *Fetcher) resolveAllowed(ctx context.Context, host string) ([]netip.Addr, error) {

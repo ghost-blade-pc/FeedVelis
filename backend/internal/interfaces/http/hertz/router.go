@@ -36,6 +36,7 @@ func NewServer(address string, shutdownTimeout time.Duration, logger *slog.Logge
 	if len(articleServices) > 0 && articleServices[0] != nil {
 		articleHandler := handler.NewArticle(articleServices[0])
 		h.GET("/api/v1/articles", articleHandler.List)
+		h.GET("/api/v1/articles/:id", articleHandler.Get)
 	}
 	h.NoRoute(func(_ context.Context, c *app.RequestContext) {
 		presenter.WriteNotFound(c, middleware.RequestIDFrom(c))

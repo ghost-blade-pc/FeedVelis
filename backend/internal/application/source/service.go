@@ -65,17 +65,18 @@ func (s *Service) Resume(ctx context.Context, id int64) error {
 	return s.repository.Resume(ctx, id, s.clock.Now().UTC())
 }
 
-func (s *Service) FetchByID(ctx context.Context, id int64) (FetchOutcome, error) {
+// FetchByID 手动抓取单个源；force 为 true 时忽略条件请求头，强制重新拉取并重洗全部条目。
+func (s *Service) FetchByID(ctx context.Context, id int64, force bool) (FetchOutcome, error) {
 	now := s.clock.Now().UTC()
 	source, err := s.repository.ClaimByID(ctx, id, "manual", now, now.Add(2*time.Minute))
 	if err != nil {
 		return FetchOutcome{}, err
 	}
-	return s.fetch(ctx, source)
+	return s.fetch(ctx, source, force)
 }
 
 func (s *Service) FetchClaimed(ctx context.Context, source sourceDomain.Source) (FetchOutcome, error) {
-	return s.fetch(ctx, source)
+	return s.fetch(ctx, source, false)
 }
 
 func (s *Service) ClaimDue(ctx context.Context, owner string, limit int, leaseDuration time.Duration) ([]sourceDomain.Source, error) {
@@ -83,12 +84,17 @@ func (s *Service) ClaimDue(ctx context.Context, owner string, limit int, leaseDu
 	return s.repository.ClaimDue(ctx, owner, now, now.Add(leaseDuration), limit)
 }
 
-func (s *Service) fetch(ctx context.Context, src sourceDomain.Source) (FetchOutcome, error) {
+func (s *Service) fetch(ctx context.Context, src sourceDomain.Source, force bool) (FetchOutcome, error) {
 	lease, err := src.CurrentLease()
 	if err != nil {
 		return FetchOutcome{}, err
 	}
-	response, err := s.fetcher.Fetch(ctx, ports.FetchRequest{URL: src.FeedURL, ETag: src.ETag, LastModified: src.LastModified})
+	request := ports.FetchRequest{URL: src.FeedURL}
+	if !force {
+		request.ETag = src.ETag
+		request.LastModified = src.LastModified
+	}
+	response, err := s.fetcher.Fetch(ctx, request)
 	if err != nil {
 		return FetchOutcome{}, s.fail(ctx, src, lease, classifyFetchError(err), err)
 	}

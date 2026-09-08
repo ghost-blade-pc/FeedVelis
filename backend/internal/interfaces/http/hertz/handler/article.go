@@ -44,14 +44,39 @@ func (h *Article) List(ctx context.Context, c *app.RequestContext) {
 	}
 	items := make([]dto.ArticleItem, 0, len(page.Items))
 	for _, item := range page.Items {
-		items = append(items, dto.ArticleItem{
-			ID: item.ID, Title: item.Title, CanonicalURL: item.CanonicalURL,
-			Source:     dto.ArticleSource{ID: item.Source.ID, Title: item.Source.Title, SiteURL: item.Source.SiteURL},
-			AuthorName: item.AuthorName, Excerpt: item.Excerpt,
-			SourcePublishedAt: utcTime(item.SourcePublishedAt), DiscoveredAt: item.DiscoveredAt.UTC(),
-		})
+		items = append(items, toArticleItem(item))
 	}
 	c.JSON(consts.StatusOK, dto.ArticleListResponse{Items: items, NextCursor: page.NextCursor, HasMore: page.HasMore})
+}
+
+func (h *Article) Get(ctx context.Context, c *app.RequestContext) {
+	articleID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || articleID <= 0 {
+		presenter.WriteError(c, consts.StatusBadRequest, "INVALID_ARGUMENT", "文章 ID 无效", middleware.RequestIDFrom(c))
+		return
+	}
+	detail, err := h.service.Get(ctx, articleID)
+	if err != nil {
+		switch {
+		case errors.Is(err, articleDomain.ErrNotFound):
+			presenter.WriteError(c, consts.StatusNotFound, "ARTICLE_NOT_FOUND", "文章不存在或不可见", middleware.RequestIDFrom(c))
+		case errors.Is(err, articleDomain.ErrInvalidArgument):
+			presenter.WriteError(c, consts.StatusBadRequest, "INVALID_ARGUMENT", "文章 ID 无效", middleware.RequestIDFrom(c))
+		default:
+			presenter.WriteError(c, consts.StatusInternalServerError, "INTERNAL_ERROR", "文章详情暂不可用", middleware.RequestIDFrom(c))
+		}
+		return
+	}
+	c.JSON(consts.StatusOK, dto.ArticleDetailResponse{ArticleItem: toArticleItem(detail.Item), ContentHTML: detail.SanitizedHTML})
+}
+
+func toArticleItem(item articleDomain.ListItem) dto.ArticleItem {
+	return dto.ArticleItem{
+		ID: item.ID, Title: item.Title, CanonicalURL: item.CanonicalURL,
+		Source:     dto.ArticleSource{ID: item.Source.ID, Title: item.Source.Title, SiteURL: item.Source.SiteURL},
+		AuthorName: item.AuthorName, Excerpt: item.Excerpt,
+		SourcePublishedAt: utcTime(item.SourcePublishedAt), DiscoveredAt: item.DiscoveredAt.UTC(),
+	}
 }
 
 func utcTime(value *time.Time) *time.Time {

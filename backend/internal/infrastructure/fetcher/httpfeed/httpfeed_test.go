@@ -17,6 +17,16 @@ import (
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
 )
 
+func TestIsConfiguredProxyMatchesEnv(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7897")
+	if !isConfiguredProxy("127.0.0.1", "7897") {
+		t.Fatal("应识别环境配置的代理地址")
+	}
+	if isConfiguredProxy("127.0.0.1", "8080") || isConfiguredProxy("proxy.example.com", "7897") {
+		t.Fatal("不应误判其他地址")
+	}
+}
+
 func TestRestrictedAddresses(t *testing.T) {
 	for _, raw := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1"} {
 		if !isRestrictedIP(netip.MustParseAddr(raw)) {
@@ -125,13 +135,47 @@ func TestParserCapsItemsAndRejectsMalformedFeed(t *testing.T) {
 }
 
 func TestSanitizerAllowlistAndSafeLinks(t *testing.T) {
-	result := NewSanitizer().Sanitize(`<p onclick="x">hello<script>x</script><a href="javascript:x">bad</a><a href="https://example.com">ok</a><img src=x></p>`)
-	for _, forbidden := range []string{"script", "onclick", "javascript", "<img"} {
+	result := NewSanitizer().Sanitize(`<p onclick="x">hello<script>x</script><a href="javascript:x">bad</a><a href="https://example.com">ok</a></p>`)
+	for _, forbidden := range []string{"script", "onclick", "javascript"} {
 		if strings.Contains(result.HTML, forbidden) {
 			t.Fatalf("unsafe html: %s", result.HTML)
 		}
 	}
 	if !strings.Contains(result.HTML, `rel="nofollow noopener noreferrer"`) || !strings.Contains(result.PlainText, "hello") || !strings.Contains(result.PlainText, "ok") {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestSanitizerKeepsImagesWithSafeSrc(t *testing.T) {
+	result := NewSanitizer().Sanitize(`<p>before<img src="https://example.com/a.png" alt="图"><img src="/relative.png"><img src="javascript:x"></p>`)
+	if !strings.Contains(result.HTML, `src="https://example.com/a.png"`) {
+		t.Fatalf("绝对图片地址应保留: %s", result.HTML)
+	}
+	if !strings.Contains(result.HTML, `alt="图"`) || !strings.Contains(result.HTML, `loading="lazy"`) {
+		t.Fatalf("图片属性应保留并统一懒加载: %s", result.HTML)
+	}
+	for _, forbidden := range []string{"relative.png", "javascript"} {
+		if strings.Contains(result.HTML, forbidden) {
+			t.Fatalf("不安全图片地址未清理: %s", result.HTML)
+		}
+	}
+}
+
+func TestParserResolvesRelativeContentURLs(t *testing.T) {
+	body := []byte(`<rss version="2.0"><channel><title>t</title><link>https://example.com/feed</link><item>` +
+		`<guid>1</guid><link>https://example.com/posts/a</link>` +
+		`<description><![CDATA[<p><img src="/img/cover.png"><a href="../other">link</a></p>]]></description>` +
+		`</item></channel></rss>`)
+	feed, err := NewParser().Parse(context.Background(), body, "https://example.com/feed")
+	if err != nil || len(feed.Items) != 1 {
+		t.Fatalf("items=%d err=%v", len(feed.Items), err)
+	}
+	description := feed.Items[0].Description
+	if description == nil {
+		t.Fatal("description is nil")
+	}
+	if !strings.Contains(*description, `src="https://example.com/img/cover.png"`) ||
+		!strings.Contains(*description, `href="https://example.com/other"`) {
+		t.Fatalf("相对 URL 未按文章页基准解析: %s", *description)
 	}
 }

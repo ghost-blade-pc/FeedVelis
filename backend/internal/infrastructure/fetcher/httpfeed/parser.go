@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/mmcdole/gofeed"
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
 )
@@ -39,9 +41,14 @@ func (p *Parser) Parse(ctx context.Context, body []byte, baseURL string) (ports.
 			continue
 		}
 		resolved := resolveURL(item.Link, baseURL)
+		// 正文中的相对 URL 以文章页为基准解析，否则图片/链接在清洗后会丢失
+		contentBase := resolved
+		if contentBase == "" {
+			contentBase = baseURL
+		}
 		result.Items = append(result.Items, ports.ParsedItem{
 			ID: optional(item.GUID), URL: resolved, Title: item.Title,
-			AuthorName: authorName(item), Description: optional(item.Description), Content: optional(item.Content),
+			AuthorName: authorName(item), Description: resolveContentURLs(optional(item.Description), contentBase), Content: resolveContentURLs(optional(item.Content), contentBase),
 			Language: feed.Language, PublishedAt: item.PublishedParsed, UpdatedAt: item.UpdatedParsed,
 		})
 	}
@@ -88,4 +95,46 @@ func optional(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+// resolveContentURLs 把 HTML 片段中 a/img 的相对 URL 解析为绝对地址，返回重排后的片段。
+func resolveContentURLs(value *string, base string) *string {
+	if value == nil {
+		return nil
+	}
+	nodes, err := html.ParseFragment(strings.NewReader(*value), &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body})
+	if err != nil {
+		return value
+	}
+	var output bytes.Buffer
+	for _, node := range nodes {
+		resolveNodeURLs(node, base)
+		_ = html.Render(&output, node)
+	}
+	resolved := output.String()
+	return &resolved
+}
+
+func resolveNodeURLs(node *html.Node, base string) {
+	if node.Type == html.ElementNode {
+		attribute := ""
+		switch node.Data {
+		case "a", "area":
+			attribute = "href"
+		case "img":
+			attribute = "src"
+		}
+		if attribute != "" {
+			for index, attr := range node.Attr {
+				if attr.Key == attribute {
+					if resolved := resolveURL(attr.Val, base); resolved != "" {
+						node.Attr[index].Val = resolved
+					}
+				}
+			}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		resolveNodeURLs(child, base)
+	}
 }
