@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -39,7 +40,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("解析迁移目录: %w", err)
 	}
-	m, err := migrate.New("file://"+filepath.ToSlash(absPath), cfg.Database.URL)
+	databaseURL, err := migrationDatabaseURL(cfg.Database.URL)
+	if err != nil {
+		return err
+	}
+	m, err := migrate.New("file://"+filepath.ToSlash(absPath), databaseURL)
 	if err != nil {
 		return fmt.Errorf("初始化迁移器: %w", err)
 	}
@@ -75,4 +80,15 @@ func run() error {
 	}
 	fmt.Printf("migration %s: ok\n", flag.Arg(0))
 	return nil
+}
+
+func migrationDatabaseURL(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("解析迁移数据库 URL: %w", err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", "public")
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }

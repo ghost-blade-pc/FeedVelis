@@ -20,7 +20,8 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	defer pool.Close()
 
 	healthService := health.NewService(pool)
-	h := hertzhttp.NewServer(cfg.HTTP.Address, cfg.HTTP.ShutdownTimeout, logger, healthService)
+	feed := buildFeedServices(pool)
+	h := hertzhttp.NewServer(cfg.HTTP.Address, cfg.HTTP.ShutdownTimeout, logger, healthService, feed.articles)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- h.Run()

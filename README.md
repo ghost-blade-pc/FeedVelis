@@ -1,19 +1,20 @@
 # Velis Feed
 
-Velis 是一个可自托管的个人内容聚合与智能阅读平台。本仓库当前按照《Velis 新项目开发文档》建立 M0 工程骨架，采用 Go、CloudWeGo Hertz、PostgreSQL + pgvector、Redis、RabbitMQ、MinIO 和 Vue 3。
+Velis 是一个可自托管的个人内容聚合与智能阅读平台。本仓库采用 Go、CloudWeGo Hertz、PostgreSQL + pgvector 和 Vue 3，并已具备系统级 Feed 抓取、文章保存与列表展示的基础闭环。
 
 ## 当前状态
 
 已经落地：
 
-- `velis-api`、`velis-worker`、`velis-migrate` 三个独立进程入口；
+- `velis-api`、`velis-worker`、`velis-migrate`、`velis-admin` 四个独立进程入口；
 - Domain、Application、Infrastructure、Interfaces 四层目录和自动依赖边界测试；
-- Hertz `/livez`、`/readyz`、`/api/v1/ping`、Request ID、统一错误、结构化访问日志和优雅关闭；
-- PostgreSQL 连接池、pgvector 初始迁移以及 `golang-migrate` 命令；
-- Vue 3、TypeScript、Vite、Pinia、Vue Router 的最小可构建 Web 客户端；
+- Hertz `/livez`、`/readyz`、`/api/v1/ping`、`GET /api/v1/articles`、Request ID、统一错误、结构化访问日志和优雅关闭；
+- 系统级 Source 管理、RSS 2.0/Atom/JSON Feed 安全抓取、条件请求、租约调度、失败退避以及 Article 幂等入库；
+- PostgreSQL 连接池、pgvector 初始迁移、Source/Article 表以及 `golang-migrate` 命令；
+- Vue 3 最新文章列表，包含加载、空、失败、重试、游标分页和安全原站外链；
 - Docker Compose、CI、Go 竞态测试和前端单元测试入口。
 
-Redis、RabbitMQ、MinIO、推荐、Embedding 和业务领域包目前只有基础设施或目录占位，不代表业务能力已经完成。
+用户订阅关系、站内文章详情、互动、搜索、推荐、Embedding、Redis、RabbitMQ 和 MinIO 不在当前文章基础闭环中；对应目录或 Compose 服务不代表这些业务能力已经完成。
 
 ## 目录
 
@@ -58,7 +59,7 @@ docker compose down
 
 ## 本地开发
 
-后端需要 Go 1.26，Web 需要 Node.js 24。
+后端需要 Go 1.26.6 或更高补丁版本，Web 需要 Node.js 24。
 
 ```bash
 make check
@@ -72,6 +73,19 @@ make migrate-up
 cd backend
 go run ./cmd/velis-api -config configs/config.example.yaml
 ```
+
+登记和管理系统级 Feed：
+
+```bash
+cd backend
+go run ./cmd/velis-admin -config configs/config.example.yaml source add -url https://example.com/feed.xml
+go run ./cmd/velis-admin -config configs/config.example.yaml source list
+go run ./cmd/velis-admin -config configs/config.example.yaml source fetch 1
+go run ./cmd/velis-admin -config configs/config.example.yaml source pause 1
+go run ./cmd/velis-admin -config configs/config.example.yaml source resume 1
+```
+
+Source 管理只提供本地 CLI，不暴露 HTTP 写接口。Worker 会认领到期 Source 并执行抓取；Web 的 `/latest` 页面读取匿名只读文章列表，标题直接跳转 HTTP(S) 原站。
 
 另一个终端运行 Web：
 

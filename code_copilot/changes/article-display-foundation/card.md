@@ -2,10 +2,10 @@
 schema: spec-copilot/change-v3
 change_id: article-display-foundation
 profile: high-risk
-status: ready
+status: testing
 fix_cycle: 0
 failure_source: null
-last_event_id: E000013
+last_event_id: E000015
 blocked_from: null
 resume_to: null
 review_verdict: pending

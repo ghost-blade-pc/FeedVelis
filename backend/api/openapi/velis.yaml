@@ -22,6 +22,34 @@ paths:
                   message:
                     type: string
                     const: pong
+  /articles:
+    get:
+      operationId: listArticles
+      summary: 按发布时间或收录时间倒序读取文章
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: 服务端生成的不透明分页游标
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: 文章分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArticlePage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
   /livez:
     get:
       servers:
@@ -62,6 +90,55 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    ArticlePage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArticleItem"
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
+    ArticleItem:
+      type: object
+      required: [id, title, canonical_url, source, author_name, excerpt, source_published_at, discovered_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        canonical_url:
+          type: string
+          format: uri
+          pattern: "^https?://"
+        source:
+          $ref: "#/components/schemas/ArticleSource"
+        author_name:
+          type: [string, "null"]
+        excerpt:
+          type: string
+        source_published_at:
+          type: [string, "null"]
+          format: date-time
+        discovered_at:
+          type: string
+          format: date-time
+    ArticleSource:
+      type: object
+      required: [id, title, site_url]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        site_url:
+          type: [string, "null"]
+          format: uri
     ErrorResponse:
       type: object
       required: [error]

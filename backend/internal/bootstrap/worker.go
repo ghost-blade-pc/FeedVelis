@@ -3,10 +3,12 @@ package bootstrap
 import (
 	"context"
 	"log/slog"
-	"time"
+	"os"
+	"strconv"
 
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/config"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/persistence/postgres"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/scheduler"
 )
 
 // RunWorker 提供可关闭的 Worker 进程骨架；具体消费者和调度器在后续里程碑注册。
@@ -17,24 +19,22 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	}
 	defer pool.Close()
 
-	ticker := time.NewTicker(cfg.Worker.HeartbeatInterval)
-	defer ticker.Stop()
-	logger.Info("velis-worker 已启动", "environment", cfg.App.Environment)
+	feed := buildFeedServices(pool)
+	owner := workerOwner()
+	logger.Info("velis-worker 已启动", "environment", cfg.App.Environment, "worker_id", owner)
+	err = scheduler.New(feed.sources, logger, owner, cfg.Worker.HeartbeatInterval).Run(ctx)
+	logger.Info("velis-worker 已停止接收新任务")
+	return err
+}
 
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("velis-worker 已停止接收新任务")
-			return nil
-		case <-ticker.C:
-			pingCtx, cancel := context.WithTimeout(ctx, cfg.Database.ConnectTimeout)
-			err := pool.Ping(pingCtx)
-			cancel()
-			if err != nil {
-				logger.Error("Worker 必要依赖检查失败", "error", err)
-				continue
-			}
-			logger.Debug("Worker heartbeat")
-		}
+func workerOwner() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "worker"
 	}
+	value := hostname + "-" + strconv.Itoa(os.Getpid())
+	if len(value) > 128 {
+		value = value[:128]
+	}
+	return value
 }

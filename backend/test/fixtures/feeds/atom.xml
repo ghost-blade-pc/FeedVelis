@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom 示例</title>
+  <link href="https://example.com/" />
+  <entry>
+    <id>atom-1</id>
+    <title>Atom 文章</title>
+    <link href="https://example.com/atom-1" />
+    <updated>2026-09-08T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;正文&lt;/p&gt;</content>
+  </entry>
+</feed>

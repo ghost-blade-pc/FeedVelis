@@ -10,13 +10,14 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
+	articleApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/article"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/handler"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/middleware"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/presenter"
 )
 
-func NewServer(address string, shutdownTimeout time.Duration, logger *slog.Logger, healthService *health.Service) *server.Hertz {
+func NewServer(address string, shutdownTimeout time.Duration, logger *slog.Logger, healthService *health.Service, articleServices ...*articleApp.Service) *server.Hertz {
 	h := server.New(
 		server.WithHostPorts(address),
 		server.WithExitWaitTime(shutdownTimeout),
@@ -32,6 +33,10 @@ func NewServer(address string, shutdownTimeout time.Duration, logger *slog.Logge
 	h.GET("/api/v1/ping", func(_ context.Context, c *app.RequestContext) {
 		c.JSON(consts.StatusOK, map[string]string{"message": "pong"})
 	})
+	if len(articleServices) > 0 && articleServices[0] != nil {
+		articleHandler := handler.NewArticle(articleServices[0])
+		h.GET("/api/v1/articles", articleHandler.List)
+	}
 	h.NoRoute(func(_ context.Context, c *app.RequestContext) {
 		presenter.WriteNotFound(c, middleware.RequestIDFrom(c))
 	})

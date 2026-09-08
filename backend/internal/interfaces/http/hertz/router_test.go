@@ -12,7 +12,10 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
+	articleApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/article"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
+	articleDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/article"
 )
 
 type readyChecker struct{ err error }
@@ -49,6 +52,44 @@ func TestNoRouteUsesErrorEnvelope(t *testing.T) {
 	}
 	if body := response.Body.String(); !strings.Contains(body, `"code":"NOT_FOUND"`) {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+type listRepository struct{ items []articleDomain.ListItem }
+
+func (*listRepository) Upsert(context.Context, articleDomain.Candidate, time.Time) (articleDomain.UpsertResult, int64, error) {
+	return articleDomain.UpsertInserted, 1, nil
+}
+func (r *listRepository) ListPublished(context.Context, *articleDomain.Cursor, int) ([]articleDomain.ListItem, error) {
+	return r.items, nil
+}
+
+type noOpSanitizer struct{}
+
+func (noOpSanitizer) Sanitize(string) ports.SanitizedContent { return ports.SanitizedContent{} }
+
+type testClock struct{}
+
+func (testClock) Now() time.Time { return time.Now().UTC() }
+
+func TestArticleListContractAndInvalidCursor(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	healthService := health.NewService(readyChecker{})
+	published := time.Date(2026, 9, 1, 8, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	repository := &listRepository{items: []articleDomain.ListItem{{
+		ID: 1, Title: "文章", CanonicalURL: "https://example.com/a", Source: articleDomain.SourceSummary{ID: 2, Title: "来源"},
+		Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
+	}}}
+	service := articleApp.NewService(repository, noOpSanitizer{}, testClock{})
+	h := NewServer("127.0.0.1:0", time.Second, logger, healthService, service)
+	response := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles?limit=20", nil)
+	if response.Code != consts.StatusOK || !strings.Contains(response.Body.String(), `"canonical_url":"https://example.com/a"`) ||
+		!strings.Contains(response.Body.String(), `"discovered_at":"2026-09-01T00:00:00Z"`) || strings.Contains(response.Body.String(), "content_hash") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	invalid := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles?cursor=bad", nil)
+	if invalid.Code != consts.StatusBadRequest || !strings.Contains(invalid.Body.String(), `"code":"INVALID_CURSOR"`) {
+		t.Fatalf("status=%d body=%s", invalid.Code, invalid.Body.String())
 	}
 }
 

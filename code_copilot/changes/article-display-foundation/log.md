@@ -239,3 +239,73 @@
 | inspect_change.py code_copilot/changes/article-display-foundation | Spec Copilot workspace v3 | passed | 完成转换前 change 可读取，状态 draft，事件链截至 E000012 有效 |
 | Mermaid CLI 渲染 | 本地环境 | not-run | 本地未安装 mmdc；已完成围栏、章节和关键契约静态检查，未验证实际渲染 |
 | 应用测试 | Proposal 文档阶段 | not-run | Proposal 阶段没有修改应用代码或测试；运行验证留到 Apply/Test |
+
+## E000014 — apply / start
+- 时间：2026-09-07T15:38:08Z
+- 状态：`ready` → `applying`
+- 原因：开始实现已确认的文章展示基础能力 change；按 tasks.md 从 Task 2 到 Task 8 推进，保持已确认的四层架构、数据契约和安全边界。
+- 输入/输出依据：- / -
+
+### 验证证据
+| 命令/方式 | 环境 | 结果 | 摘要 |
+|---|---|---|---|
+| inspect_change.py code_copilot/changes/article-display-foundation | Spec Copilot workspace v3 | passed | change 状态为 ready，最后事件 E000013，事件链有效且建议下一阶段为 apply |
+| git status --short --branch | 本地 Git 工作区 | passed | 已识别并保留 AGENTS.md、CLAUDE.md、agnet/ 等无关用户改动 |
+
+## E000015 — apply / complete
+- 时间：2026-09-07T16:59:34Z
+- 状态：`applying` → `testing`
+- 原因：Task 2 至 Task 8 已完成：系统级 Source 管理、安全 Feed 抓取、三格式解析、Article/Content 幂等事务入库、租约调度、列表 API、Web 最新文章页及配套迁移和验证均已落地。
+- 输入/输出依据：- / -
+
+### 实际改动
+| 文件 | 操作 | Task/Finding | 符号/行 | 原因 | 版本依据 |
+|---|---|---|---|---|---|
+| backend/internal/domain/shared/url.go | add | Task 2 | NormalizeHTTPURL | 实现保留 query 语义和 percent-encoding 的 HTTP(S) URL 规范化 | - |
+| backend/internal/domain/source/source.go | add | Task 2 | Source, Repository, NextFailure | 实现 Source 状态、租约、退避与 Repository 抽象 | - |
+| backend/internal/domain/article/article.go | add | Task 2 | Article, Content, DedupeKey, ContentHash | 实现外部文章身份、内容哈希、截断与列表领域模型 | - |
+| backend/migrations/000002_create_sources_and_articles.up.sql | add | Task 2 | - | 创建 sources、articles、article_contents、约束与索引 | - |
+| backend/migrations/000002_create_sources_and_articles.down.sql | add | Task 2 | - | 按反向依赖顺序回滚三张新表 | - |
+| backend/cmd/velis-migrate/main.go | modify | Task 2 | migrationDatabaseURL | 固定迁移 metadata 的 public search_path，避免 velis 用户同名 schema 导致版本漂移 | - |
+| backend/internal/application/ports/feed.go | add | Task 3 | FeedFetcher, FeedParser, ContentSanitizer, Clock | 声明抓取解析清理和时钟技术端口 | - |
+| backend/internal/infrastructure/fetcher/httpfeed/fetcher.go | add | Task 3 | Fetcher.Fetch, validateRemoteURL, isRestrictedIP | 实现条件请求、逐跳 SSRF 防护、超时、重定向和响应大小限制 | - |
+| backend/internal/infrastructure/fetcher/httpfeed/parser.go | add | Task 3 | Parser.Parse | 通过 gofeed 统一解析 RSS 2.0、Atom 和 JSON Feed | - |
+| backend/internal/infrastructure/fetcher/httpfeed/sanitizer.go | add | Task 3 | Sanitizer.Sanitize | 通过 bluemonday 实现 HTML allowlist、链接加固与纯文本派生 | - |
+| backend/go.mod | modify | Task 3 | - | 加入 gofeed v1.4.2、bluemonday v1.0.27，升级 pgx v5.9.2 并要求 Go 1.26.6 | - |
+| backend/go.sum | modify | Task 3 | - | 记录新增及安全升级依赖的模块校验和 | - |
+| backend/Dockerfile | modify | Task 3 | - | 容器构建工具链固定到已修复漏洞的 Go 1.26.6 | - |
+| backend/internal/application/article/service.go | add | Task 4 | Service.Ingest, Service.List | 编排条目校验、清理、哈希、事务入库和稳定游标列表 | - |
+| backend/internal/application/source/service.go | add | Task 4 | Service.Add, Service.FetchByID, Service.FetchClaimed | 编排 Source 管理、条件抓取、304、成功和失败状态 | - |
+| backend/internal/application/ports/transaction.go | add | Task 4 | TxManager | 声明 Application 事务技术端口 | - |
+| backend/internal/infrastructure/persistence/postgres/article_repository.go | add | Task 4 | ArticleRepository.Upsert, ArticleRepository.ListPublished | 实现 Article/Content 原子 upsert 与 keyset 列表查询 | - |
+| backend/internal/infrastructure/persistence/postgres/source_repository.go | add | Task 4 | SourceRepository.ClaimDue, SourceRepository.ClaimByID | 实现 Source 幂等添加、人工和自动租约、状态持久化 | - |
+| backend/internal/infrastructure/persistence/postgres/transaction.go | add | Task 4 | TxManager.WithinTransaction | 实现 pgx 事务端口并让 Repository 复用事务上下文 | - |
+| backend/internal/bootstrap/feed.go | add | Task 4 | buildFeedServices | 集中装配 Source、Article、Fetcher、Parser、Sanitizer、Repository 和 TxManager | - |
+| backend/internal/interfaces/scheduler/scheduler.go | add | Task 5 | Scheduler.Run | 实现批量认领、跨 Source 并发和受限结构化抓取日志 | - |
+| backend/internal/bootstrap/worker.go | modify | Task 5 | RunWorker | 将 Worker 占位 heartbeat 替换为可取消的 Source 调度器 | - |
+| backend/cmd/velis-admin/main.go | add | Task 6 | run | 新增本地管理命令入口 | - |
+| backend/internal/interfaces/cli/source.go | add | Task 6 | Runner.Run | 实现 source add/list/pause/resume/fetch 协议适配 | - |
+| backend/internal/interfaces/http/hertz/handler/article.go | add | Task 6 | Article.List | 实现文章列表参数校验、错误映射和 UTC DTO | - |
+| backend/internal/interfaces/http/hertz/router.go | modify | Task 6 | NewServer | 注册 GET /api/v1/articles | - |
+| backend/api/openapi/velis.yaml | modify | Task 6 | listArticles | 同步文章分页 API、DTO 与稳定错误契约 | - |
+| web/src/api/client.ts | modify | Task 7 | listArticles | 新增不透明游标文章列表客户端 | - |
+| web/src/features/article/ArticleList.vue | add | Task 7 | - | 实现加载、空、失败、重试、分页和安全文本卡片 | - |
+| web/src/features/article/model.ts | add | Task 7 | safeArticleURL, articleTime | 实现 HTTP(S) 外链防御和发布/收录时间语义 | - |
+| web/src/views/LatestView.vue | add | Task 7 | - | 将 /latest 接入真实文章列表 | - |
+| backend/test/integration/article_repository_test.go | add | Task 8 | TestSourceAndArticleRepositories | 覆盖真实 PostgreSQL 幂等、事务、分页和租约并发 | - |
+| README.md | modify | Task 8 | - | 同步当前能力、Go 安全补丁要求和本地 Source 管理用法 | - |
+| code_copilot/changes/article-display-foundation/tasks.md | modify | Task 1 | - | 同步 Task 2 至 Task 8 的实际文件与 Apply 验证结果 | - |
+
+### 验证证据
+| 命令/方式 | 环境 | 结果 | 摘要 |
+|---|---|---|---|
+| make check | 本地 Go 1.26.6 与 Node.js 24；PostgreSQL integration 未设置环境变量时按测试保护跳过 | passed | Go 单测、全包 race、四层依赖、四个进程构建、Vitest、vue-tsc 和 Vite build 全部通过 |
+| cd backend && GOCACHE=/tmp/feedvelis-go-cache go vet ./... | 本地 Go 1.26.6 | passed | 全包静态检查通过 |
+| VELIS_TEST_DATABASE_URL=<isolated> go test -race -count=1 ./test/integration | 本地 PostgreSQL 17 + pgvector，template0 隔离数据库 | passed | Source 幂等与租约、Article inserted/unchanged/updated、updated_at、不重复分页和过期租约恢复均通过 |
+| velis-migrate up; down -steps 2; up; version | template0 隔离 PostgreSQL 数据库 | passed | 迁移 round-trip 成功，最终 version=2 dirty=false；同时修复 public schema_migrations search_path |
+| govulncheck ./... | Go 1.26.6；pgx v5.9.2；gofeed v1.4.2；bluemonday v1.0.27 | passed | No vulnerabilities found；初扫暴露的旧 Go 补丁和 pgx 可达漏洞已通过版本升级消除 |
+| velis-admin source fetch <controlled source> | 隔离 PostgreSQL + 受控公网 Feed | passed | Atom Go 官方 Feed 插入 10 篇、RSS 2.0 插入 20 篇、JSON Feed 官方示例插入 2 篇；重复 Atom 抓取收敛为 unchanged |
+| curl GET /api/v1/articles?limit=2 及第二页 cursor | 本地 Hertz API + 隔离 PostgreSQL | passed | 200、X-Request-ID、UTC 时间、第一页 has_more=true、第二页无重复且 next_cursor=null |
+| EXPLAIN (ANALYZE, BUFFERS) 文章列表查询 | 100 Source / 100,000 Article 隔离 PostgreSQL fixture | passed | 使用 articles_list_idx，LIMIT 21 执行时间约 0.034 ms；仅作为本机查询计划基线 |
+| docker compose build velis-migrate velis-api velis-worker | Docker，golang:1.26.6-alpine | passed | 三个后端镜像构建成功 |
+| OpenAPI YAML 解析与 git diff --check | 本地静态检查 | passed | OpenAPI 文法可解析，工作区差异无空白错误 |

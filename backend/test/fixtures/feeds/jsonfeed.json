@@ -1,0 +1,13 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "JSON Feed 示例",
+  "home_page_url": "https://example.com/",
+  "items": [
+    {
+      "id": "json-1",
+      "url": "https://example.com/json-1",
+      "title": "JSON Feed 文章",
+      "content_html": "<p>正文</p>"
+    }
+  ]
+}
