@@ -1,0 +1,65 @@
+{
+  "change_id": "article-display-foundation",
+  "stage": "test",
+  "action": "complete",
+  "reason": "Fix cycle 1 完成后新 basis 上的正式 Test 全部通过：targeted 单测、静态检查、真实 PostgreSQL 集成+race、迁移 round-trip、约束/索引核对与 make check 全量回归均 passed，未发现新缺陷，无需产生 T1-F<n> finding。",
+  "validations": [
+    {
+      "layer": "targeted",
+      "command": "cd backend && GOCACHE=/tmp/feedvelis-go-cache go test -count=1 ./internal/domain/... ./internal/application/... ./internal/infrastructure/... ./internal/interfaces/... ./internal/architecture ./cmd/...",
+      "environment": "本地 Go 1.26.6；无 DB/网络依赖",
+      "result": "passed",
+      "summary": "domain/shared、domain/source、domain/article、application/source、application/article、fetcher/httpfeed、interfaces/cli、interfaces/http/hertz、architecture、cmd/velis-migrate 全部 ok；覆盖 URL 规范化、content_hash、dedupe、退避、SSRF、条件请求/304、三格式解析、畸形输入、sanitizer allowlist、分页契约、Hertz 错误信封。"
+    },
+    {
+      "layer": "targeted",
+      "command": "cd web && npx vitest run",
+      "environment": "本地 Node.js 24",
+      "result": "passed",
+      "summary": "2 文件 5 项通过：HTTP(S) 原文链接校验、时间回退、ping、ApiError 映射、listArticles 游标。组件级渲染转义无专项测试，如实列入未覆盖。"
+    },
+    {
+      "layer": "static",
+      "command": "cd backend && go vet ./... && gofmt -l . && cd .. && git diff --check",
+      "environment": "本地 Go 1.26.6；当前工作区",
+      "result": "passed",
+      "summary": "vet 无告警；gofmt 无差异；diff --check 退出码 0（仅既有 LF/CRLF 行尾提示）。架构依赖测试 TestLayerDependencies 在 targeted 中通过。"
+    },
+    {
+      "layer": "integration",
+      "command": "docker compose up -d postgres；创建临时库 velis_migrate_test 与 velis_integ_test；VELIS_DATABASE_URL=…/velis_migrate_test go run ./cmd/velis-migrate up/down/up + version；VELIS_TEST_DATABASE_URL=…/velis_integ_test GOCACHE=/tmp/feedvelis-go-cache go test -race -count=1 -v ./test/integration",
+      "environment": "PostgreSQL 17 + pgvector（Docker Compose）；临时库迁移 up 后执行，完成后临时库已 DROP、容器已 stop",
+      "result": "passed",
+      "summary": "迁移 round-trip up→version=2 dirty=false、down→version=1、up→version=2 全部 ok；真实库集成测试 PASS 且 race 无告警（租约 fencing、pause/过期/重新认领、hidden 保留、原子回滚、幂等）。"
+    },
+    {
+      "layer": "integration",
+      "command": "psql \\d velis.sources / velis.articles + EXPLAIN 列表查询",
+      "environment": "临时库 velis_integ_test（迁移 up 后）",
+      "result": "passed",
+      "summary": "sources_normalized_feed_url_key UNIQUE、(source_id, dedupe_key) UNIQUE、租约 fencing CHECK、URL/长度/状态枚举 CHECK、FK RESTRICT 存在；列表查询 Index Scan 命中 articles_list_idx。"
+    },
+    {
+      "layer": "e2e/build",
+      "command": "make check",
+      "environment": "本地 Go 1.26.6、Node.js 24；仓库根",
+      "result": "passed",
+      "summary": "退出码 0：backend-fmt（无改动）、backend-test 26 包 ok、backend-race（集成包无 DB URL 自动 skip）、四个 cmd 构建、Vitest 5 项、vue-tsc、Vite production build 全部通过。"
+    }
+  ],
+  "coverage": "test-spec.md 风险矩阵 15 行全部获得通过证据；CLI 幂等添加路径由集成测试与 unique 约束覆盖。",
+  "uncovered": [
+    "公网真实 Feed 兼容矩阵与生产网络策略（无真实环境验证）",
+    "Playwright 真实浏览器 E2E（web/e2e 占位）",
+    "恶意标题/摘要的 Vue 组件级渲染转义专项组件测试（依赖框架默认转义 + model 层校验）",
+    "站内 HTML 详情、用户鉴权（不在 MVP）"
+  ],
+  "deferred": ["Review I1 OpenAPI Request ID 契约", "Review I2 Test 文档同步", "Review I3 CLI 网络错误 URL query 脱敏"],
+  "alternative_evidence": "SSRF 用本地受限地址矩阵在拨号前拒绝（单测层）；HTML 清理用恶意 corpus 单测；Web 安全用 model 层 HTTP(S) 校验单测。",
+  "remaining_risks": [
+    "Mock 网络不能证明所有云环境 SSRF 防线。",
+    "第三方 parser/sanitizer 依赖漏洞需随升级持续审查。",
+    "生产网络策略与长期容量未经真实环境验证。"
+  ],
+  "finding_ids": []
+}

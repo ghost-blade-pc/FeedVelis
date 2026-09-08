@@ -34,3 +34,22 @@ func TestNormalizeCanonicalURLRejectsDangerousSchemes(t *testing.T) {
 		}
 	}
 }
+
+func TestContentHashIncludesTruncationFlags(t *testing.T) {
+	rawDescription := strings.Repeat("d", MaxRawDescriptionBytes)
+	rawContent := strings.Repeat("c", MaxRawContentBytes)
+	article := Article{CanonicalURL: "https://example.com/article", Title: "标题", Language: "zh-CN"}
+	base := Content{RawDescription: &rawDescription, RawContent: &rawContent}
+
+	descriptionTruncated := base
+	descriptionTruncated.RawDescriptionTruncated = true
+	if ContentHash(article, base) == ContentHash(article, descriptionTruncated) {
+		t.Fatal("摘要截断标志变化必须改变 content hash")
+	}
+
+	contentTruncated := base
+	contentTruncated.RawContentTruncated = true
+	if ContentHash(article, base) == ContentHash(article, contentTruncated) {
+		t.Fatal("正文截断标志变化必须改变 content hash")
+	}
+}

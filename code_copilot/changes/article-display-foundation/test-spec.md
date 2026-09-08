@@ -1,8 +1,8 @@
 ---
 schema: spec-copilot/test-v3
 change_id: article-display-foundation
-test_result: not-run
-updated: 2026-09-07
+test_result: passed
+updated: 2026-09-08
 ---
 
 # 测试规格 — 文章展示基础能力与库表设计
@@ -32,7 +32,24 @@ updated: 2026-09-07
 
 | 命令/方式 | 环境 | 结果 | 摘要 |
 |---|---|---|---|
-| 未执行 | propose 阶段 | `not-run` | 本轮只形成规格，未修改应用代码或运行测试。 |
+| `go test -count=1 ./internal/... ./cmd/...`（targeted 单测） | 本地 Go 1.26.6；无 DB/网络依赖 | passed | domain/shared、domain/source、domain/article、application/source、application/article、fetcher/httpfeed、interfaces/cli、interfaces/http/hertz、architecture、cmd/velis-migrate 全部 ok。覆盖 URL 规范化与 dot-segment、content_hash 含截断标志、dedupe key、退避参数与抖动边界、条件请求/304、SSRF 拒绝、三种 Feed 格式与 500 条上限、畸形输入、sanitizer allowlist、分页契约与不透明游标、CLI 参数校验、Hertz 错误信封。 |
+| `npx vitest run` | 本地 Node.js 24；Web | passed | 2 文件 5 项通过：只允许 HTTP(S) 原文链接、缺发布时间回退、ping、ApiError 映射、listArticles 游标。恶意标题/摘要的组件级渲染转义无专项组件测试，依赖 Vue 模板默认转义（见未覆盖）。 |
+| `go vet ./...` | 本地 Go 1.26.6 | passed | 后端全包静态检查无告警。 |
+| `gofmt -l .` | 本地 Go 1.26.6 | passed | 无输出，无未格式化 Go 文件。 |
+| `git diff --check` | 当前工作区 | passed | 退出码 0，无空白错误；仅有既有 Git 行尾 LF→CRLF 提示。 |
+| 迁移 round-trip `up/down/up` + `version` | PostgreSQL 17 + pgvector（Docker），临时库 `velis_migrate_test` | passed | up→`version=2 dirty=false`、down→`version=1`、再 up→`version=2 dirty=false`，空库可重复回滚。 |
+| 约束与索引检查（psql `\d` + `EXPLAIN`） | 同上，临时库 `velis_integ_test`（迁移 up 后） | passed | `sources_normalized_feed_url_key` UNIQUE、`articles (source_id, dedupe_key)` UNIQUE、租约 fencing CHECK、URL/长度/状态枚举 CHECK、FK RESTRICT 全部存在；列表查询 `EXPLAIN` 命中 `articles_list_idx`（Index Scan）。 |
+| `go test -race -count=1 -v ./test/integration` | PostgreSQL 17 + pgvector，临时库 `velis_integ_test`（`VELIS_TEST_DATABASE_URL` 注入，迁移 up 后） | passed | 真实库下租约 fencing、pause/过期/重新认领、hidden 状态保留、Source 完成失败时文章事务回滚、重复抓取幂等全部通过，race 无告警。 |
+| `make check` | 本地 Go 1.26.6、Node.js 24 | passed | 退出码 0：backend-fmt（无改动）、backend-test 26 包 ok、backend-race（集成包无 DB URL 自动 skip）、四个 cmd 构建、Vitest 5 项、vue-tsc、Vite production build 全部通过；真实 PG 集成层由上一条独立命令补足。 |
+| Spec Copilot formal Test | Fix 完成后的新 basis | passed | 本轮即正式 Test；全部通过，无新 finding。 |
+
+## 未覆盖与 Deferred
+
+- 未覆盖：公网真实 Feed 兼容矩阵、生产网络策略、长期容量、站内 HTML 详情、用户鉴权、Playwright 真实浏览器 E2E、恶意标题/摘要的 Vue 组件级渲染转义专项测试（依赖 Vue 模板默认转义 + 模型层 HTTP(S) 校验，无独立组件测试证据）。
+- 原因：公网/浏览器与生产网络验证不在本轮测试范围；详情与用户鉴权不在 MVP。
+- 替代证据：SSRF 用本地 loopback/私网/受限地址矩阵在拨号前拒绝（单测层）；HTML 清理用恶意 corpus 单测；Web 安全用 model 层 URL 校验单测。
+- Deferred：Review I1 至 I3（OpenAPI Request ID 契约、Test 文档同步、CLI 网络错误 URL query 脱敏）按 Fix 范围协议延期，未在本轮验证。
+- 剩余风险：Mock 网络不能证明所有云环境 SSRF 防线；第三方 parser/sanitizer 依赖漏洞审查需随依赖升级持续进行。
 
 ## 未覆盖与 Deferred
 

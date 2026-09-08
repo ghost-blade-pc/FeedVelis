@@ -22,8 +22,9 @@ func buildFeedServices(pool *pgxpool.Pool) feedServices {
 	sourceRepository := postgres.NewSourceRepository(pool)
 	sanitizer := httpfeed.NewSanitizer()
 	clockValue := clock.System{}
-	articleService := articleApp.NewService(articleRepository, sanitizer, clockValue, postgres.NewTxManager(pool))
-	sourceService := sourceApp.NewService(sourceRepository, httpfeed.NewFetcher(), httpfeed.NewParser(), articleService, clockValue, randomJitter)
+	txManager := postgres.NewTxManager(pool)
+	articleService := articleApp.NewService(articleRepository, sanitizer, clockValue, txManager)
+	sourceService := sourceApp.NewService(sourceRepository, httpfeed.NewFetcher(), httpfeed.NewParser(), articleService, clockValue, txManager, randomJitter)
 	return feedServices{articles: articleService, sources: sourceService}
 }
 

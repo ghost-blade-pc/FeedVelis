@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	sourceDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/source"
@@ -128,19 +129,55 @@ RETURNING `+returnedSourceColumns, now, limit, owner, leaseUntil)
 	return items, rows.Err()
 }
 
-func (r *SourceRepository) MarkNotModified(ctx context.Context, id int64, etag, lastModified *string, checkedAt, nextFetchAt time.Time) error {
-	_, err := r.pool.Exec(ctx, `UPDATE velis.sources SET etag=COALESCE($2, etag), last_modified=COALESCE($3, last_modified), last_checked_at=$4, last_success_at=$4, consecutive_failures=0, last_error_code=NULL, status='active', next_fetch_at=$5, lease_owner=NULL, lease_expires_at=NULL, updated_at=$4 WHERE id=$1`, id, etag, lastModified, checkedAt, nextFetchAt)
-	return err
+func (r *SourceRepository) MarkNotModified(ctx context.Context, id int64, lease sourceDomain.Lease, etag, lastModified *string, checkedAt, nextFetchAt time.Time) error {
+	tag, err := r.executor(ctx).Exec(ctx, `UPDATE velis.sources
+SET etag=COALESCE($2, etag), last_modified=COALESCE($3, last_modified), last_checked_at=$4,
+    last_success_at=$4, consecutive_failures=0, last_error_code=NULL, status='active', next_fetch_at=$5,
+    lease_owner=NULL, lease_expires_at=NULL, updated_at=$4
+WHERE id=$1 AND status IN ('active','degraded') AND lease_owner=$6 AND lease_expires_at=$7 AND lease_expires_at > $4`,
+		id, etag, lastModified, checkedAt, nextFetchAt, lease.Owner, lease.ExpiresAt)
+	return leaseWriteResult(tag, err)
 }
 
-func (r *SourceRepository) MarkSuccess(ctx context.Context, id int64, metadata sourceDomain.Metadata, checkedAt, nextFetchAt time.Time) error {
-	_, err := r.pool.Exec(ctx, `UPDATE velis.sources SET title=$2, site_url=$3, etag=$4, last_modified=$5, last_checked_at=$6, last_success_at=$6, consecutive_failures=0, last_error_code=NULL, status='active', next_fetch_at=$7, lease_owner=NULL, lease_expires_at=NULL, updated_at=$6 WHERE id=$1`, id, metadata.Title, metadata.SiteURL, metadata.ETag, metadata.LastModified, checkedAt, nextFetchAt)
-	return err
+func (r *SourceRepository) MarkSuccess(ctx context.Context, id int64, lease sourceDomain.Lease, metadata sourceDomain.Metadata, checkedAt, nextFetchAt time.Time) error {
+	tag, err := r.executor(ctx).Exec(ctx, `UPDATE velis.sources
+SET title=$2, site_url=$3, etag=$4, last_modified=$5, last_checked_at=$6, last_success_at=$6,
+    consecutive_failures=0, last_error_code=NULL, status='active', next_fetch_at=$7,
+    lease_owner=NULL, lease_expires_at=NULL, updated_at=$6
+WHERE id=$1 AND status IN ('active','degraded') AND lease_owner=$8 AND lease_expires_at=$9 AND lease_expires_at > $6`,
+		id, metadata.Title, metadata.SiteURL, metadata.ETag, metadata.LastModified, checkedAt, nextFetchAt, lease.Owner, lease.ExpiresAt)
+	return leaseWriteResult(tag, err)
 }
 
-func (r *SourceRepository) MarkFailure(ctx context.Context, id int64, update sourceDomain.FailureUpdate) error {
-	_, err := r.pool.Exec(ctx, `UPDATE velis.sources SET status=$2, consecutive_failures=$3, last_error_code=$4, last_checked_at=$5, next_fetch_at=$6, lease_owner=NULL, lease_expires_at=NULL, updated_at=$5 WHERE id=$1`, id, update.Status, update.ConsecutiveFailures, update.LastErrorCode, update.LastCheckedAt, update.NextFetchAt)
-	return err
+func (r *SourceRepository) MarkFailure(ctx context.Context, id int64, lease sourceDomain.Lease, update sourceDomain.FailureUpdate) error {
+	tag, err := r.executor(ctx).Exec(ctx, `UPDATE velis.sources
+SET status=$2, consecutive_failures=$3, last_error_code=$4, last_checked_at=$5, next_fetch_at=$6,
+    lease_owner=NULL, lease_expires_at=NULL, updated_at=$5
+WHERE id=$1 AND status IN ('active','degraded') AND lease_owner=$7 AND lease_expires_at=$8 AND lease_expires_at > $5`,
+		id, update.Status, update.ConsecutiveFailures, update.LastErrorCode, update.LastCheckedAt, update.NextFetchAt,
+		lease.Owner, lease.ExpiresAt)
+	return leaseWriteResult(tag, err)
+}
+
+type commandExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func (r *SourceRepository) executor(ctx context.Context) commandExecutor {
+	if tx, ok := transactionFromContext(ctx); ok {
+		return tx
+	}
+	return r.pool
+}
+
+func leaseWriteResult(tag pgconn.CommandTag, err error) error {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return sourceDomain.ErrLeaseLost
+	}
+	return nil
 }
 
 type scanner interface{ Scan(...any) error }

@@ -96,7 +96,20 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if err != nil || result != articleDomain.UpsertUpdated || sameID != articleID {
 		t.Fatalf("update article: result=%s id=%d err=%v", result, sameID, err)
 	}
-	for index := 2; index <= 3; index++ {
+	if _, err := pool.Exec(ctx, `UPDATE velis.articles SET status='hidden' WHERE id=$1`, articleID); err != nil {
+		t.Fatal(err)
+	}
+	candidate.Article.Title = "隐藏文章的新内容"
+	candidate.Article.ContentHash = strings.Repeat("e", 64)
+	result, sameID, err = articles.Upsert(ctx, candidate, now.Add(3*time.Minute))
+	if err != nil || result != articleDomain.UpsertUpdated || sameID != articleID {
+		t.Fatalf("update hidden article: result=%s id=%d err=%v", result, sameID, err)
+	}
+	var hiddenStatus articleDomain.Status
+	if err := pool.QueryRow(ctx, `SELECT status FROM velis.articles WHERE id=$1`, articleID).Scan(&hiddenStatus); err != nil || hiddenStatus != articleDomain.StatusHidden {
+		t.Fatalf("hidden status=%s err=%v", hiddenStatus, err)
+	}
+	for index := 2; index <= 4; index++ {
 		candidate.Article.DedupeKey = strings.Repeat(string(rune('a'+index)), 64)
 		candidate.Article.CanonicalURL = "https://example.com/article-" + string(rune('0'+index))
 		candidate.Article.ContentHash = strings.Repeat(string(rune('d'+index)), 64)
@@ -148,7 +161,12 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sources.ClaimByID(ctx, manual.ID, "manual-1", now, now.Add(2*time.Minute)); err != nil {
+	oldClaim, err := sources.ClaimByID(ctx, manual.ID, "manual-1", now, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldLease, err := oldClaim.CurrentLease()
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sources.ClaimByID(ctx, manual.ID, "manual-2", now, now.Add(2*time.Minute)); !errors.Is(err, sourceDomain.ErrLeaseHeld) {
@@ -157,7 +175,95 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE velis.sources SET lease_expires_at=$2 WHERE id=$1`, manual.ID, now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sources.ClaimByID(ctx, manual.ID, "manual-2", now, now.Add(2*time.Minute)); err != nil {
+	newClaim, err := sources.ClaimByID(ctx, manual.ID, "manual-2", now, now.Add(2*time.Minute))
+	if err != nil {
 		t.Fatalf("expired lease was not recoverable: %v", err)
+	}
+	if err := sources.MarkFailure(ctx, manual.ID, oldLease, sourceDomain.NextFailure(now.Add(time.Minute), 0, "FETCH_FAILED", 0)); !errors.Is(err, sourceDomain.ErrLeaseLost) {
+		t.Fatalf("stale lease failure err=%v", err)
+	}
+	newLease, err := newClaim.CurrentLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sources.Pause(ctx, manual.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	metadata := sourceDomain.Metadata{Title: "Example 3"}
+	if err := sources.MarkSuccess(ctx, manual.ID, newLease, metadata, now.Add(time.Minute), now.Add(31*time.Minute)); !errors.Is(err, sourceDomain.ErrLeaseLost) {
+		t.Fatalf("paused source accepted stale success: %v", err)
+	}
+	var pausedStatus sourceDomain.Status
+	if err := pool.QueryRow(ctx, `SELECT status FROM velis.sources WHERE id=$1`, manual.ID).Scan(&pausedStatus); err != nil || pausedStatus != sourceDomain.StatusPaused {
+		t.Fatalf("paused status=%s err=%v", pausedStatus, err)
+	}
+	if err := sources.Resume(ctx, manual.ID, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	finalClaim, err := sources.ClaimByID(ctx, manual.ID, "manual-3", now.Add(2*time.Minute), now.Add(4*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalLease, err := finalClaim.CurrentLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sources.MarkSuccess(ctx, manual.ID, finalLease, metadata, now.Add(3*time.Minute), now.Add(33*time.Minute)); err != nil {
+		t.Fatalf("current lease success: %v", err)
+	}
+	expiredSource, _, err := sources.Add(ctx, "https://expired.example/feed", "https://expired.example/feed", "Expired", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredClaim, err := sources.ClaimByID(ctx, expiredSource.ID, "worker-expired", now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredLease, err := expiredClaim.CurrentLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sources.MarkNotModified(ctx, expiredSource.ID, expiredLease, nil, nil, now.Add(2*time.Minute), now.Add(32*time.Minute)); !errors.Is(err, sourceDomain.ErrLeaseLost) {
+		t.Fatalf("expired lease completion err=%v", err)
+	}
+
+	fencedSource, _, err := sources.Add(ctx, "https://fenced.example/feed", "https://fenced.example/feed", "Fenced", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fencedClaim, err := sources.ClaimByID(ctx, fencedSource.ID, "worker-old", now, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fencedLease, err := fencedClaim.CurrentLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sources.Pause(ctx, fencedSource.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	atomicCandidate := candidate
+	atomicCandidate.Article.SourceID = fencedSource.ID
+	atomicCandidate.Article.DedupeKey = strings.Repeat("9", 64)
+	atomicCandidate.Article.CanonicalURL = "https://fenced.example/article"
+	atomicCandidate.Article.ContentHash = strings.Repeat("8", 64)
+	atomicCandidate.Article.Status = articleDomain.StatusPublished
+	txManager := postgres.NewTxManager(pool)
+	err = txManager.WithinTransaction(ctx, func(txContext context.Context) error {
+		result, _, upsertErr := articles.Upsert(txContext, atomicCandidate, now.Add(time.Minute))
+		if upsertErr != nil {
+			return upsertErr
+		}
+		if result != articleDomain.UpsertInserted {
+			return errors.New("fenced transaction did not insert article fixture")
+		}
+		return sources.MarkSuccess(txContext, fencedSource.ID, fencedLease, sourceDomain.Metadata{Title: "Fenced"}, now.Add(time.Minute), now.Add(31*time.Minute))
+	})
+	if !errors.Is(err, sourceDomain.ErrLeaseLost) {
+		t.Fatalf("fenced transaction err=%v", err)
+	}
+	var fencedArticles int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM velis.articles WHERE source_id=$1`, fencedSource.ID).Scan(&fencedArticles); err != nil || fencedArticles != 0 {
+		t.Fatalf("fenced articles=%d err=%v", fencedArticles, err)
 	}
 }

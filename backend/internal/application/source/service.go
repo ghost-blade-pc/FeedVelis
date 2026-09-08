@@ -19,6 +19,7 @@ type Service struct {
 	parser     ports.FeedParser
 	articles   *articleApp.Service
 	clock      ports.Clock
+	txManager  ports.TxManager
 	jitter     func() float64
 }
 
@@ -36,11 +37,11 @@ func (e *FailureError) Error() string { return e.code + ": " + e.cause.Error() }
 func (e *FailureError) Unwrap() error { return e.cause }
 func (e *FailureError) Code() string  { return e.code }
 
-func NewService(repository sourceDomain.Repository, fetcher ports.FeedFetcher, parser ports.FeedParser, articles *articleApp.Service, clock ports.Clock, jitter func() float64) *Service {
+func NewService(repository sourceDomain.Repository, fetcher ports.FeedFetcher, parser ports.FeedParser, articles *articleApp.Service, clock ports.Clock, txManager ports.TxManager, jitter func() float64) *Service {
 	if jitter == nil {
 		jitter = func() float64 { return 0 }
 	}
-	return &Service{repository: repository, fetcher: fetcher, parser: parser, articles: articles, clock: clock, jitter: jitter}
+	return &Service{repository: repository, fetcher: fetcher, parser: parser, articles: articles, clock: clock, txManager: txManager, jitter: jitter}
 }
 
 func (s *Service) Add(ctx context.Context, rawURL string) (sourceDomain.Source, bool, error) {
@@ -83,32 +84,45 @@ func (s *Service) ClaimDue(ctx context.Context, owner string, limit int, leaseDu
 }
 
 func (s *Service) fetch(ctx context.Context, src sourceDomain.Source) (FetchOutcome, error) {
-	now := s.clock.Now().UTC()
+	lease, err := src.CurrentLease()
+	if err != nil {
+		return FetchOutcome{}, err
+	}
 	response, err := s.fetcher.Fetch(ctx, ports.FetchRequest{URL: src.FeedURL, ETag: src.ETag, LastModified: src.LastModified})
 	if err != nil {
-		return FetchOutcome{}, s.fail(ctx, src, classifyFetchError(err), err)
+		return FetchOutcome{}, s.fail(ctx, src, lease, classifyFetchError(err), err)
 	}
 	if response.NotModified {
-		if err := s.repository.MarkNotModified(ctx, src.ID, response.ETag, response.LastModified, now, now.Add(normalFetchInterval)); err != nil {
+		completedAt := s.clock.Now().UTC()
+		if err := s.repository.MarkNotModified(ctx, src.ID, lease, response.ETag, response.LastModified, completedAt, completedAt.Add(normalFetchInterval)); err != nil {
 			return FetchOutcome{}, err
 		}
 		return FetchOutcome{NotModified: true}, nil
 	}
 	feed, err := s.parser.Parse(ctx, response.Body, response.FinalURL)
 	if err != nil {
-		return FetchOutcome{}, s.fail(ctx, src, "PARSE_FAILED", err)
-	}
-	report, err := s.articles.Ingest(ctx, src.ID, feed.Items)
-	if err != nil {
-		return FetchOutcome{}, s.fail(ctx, src, "INGEST_FAILED", err)
+		return FetchOutcome{}, s.fail(ctx, src, lease, "PARSE_FAILED", err)
 	}
 	siteURL := normalizeSiteURL(feed.SiteURL)
 	metadata := sourceDomain.Metadata{Title: sourceDomain.TruncateRunes(feed.Title, sourceDomain.MaxTitleRunes), SiteURL: siteURL, ETag: response.ETag, LastModified: response.LastModified}
 	if metadata.Title == "" {
 		metadata.Title = sourceDomain.DefaultTitle(src.NormalizedFeedURL)
 	}
-	if err := s.repository.MarkSuccess(ctx, src.ID, metadata, now, now.Add(normalFetchInterval)); err != nil {
-		return FetchOutcome{}, err
+	var report articleApp.IngestReport
+	err = s.txManager.WithinTransaction(ctx, func(txContext context.Context) error {
+		var ingestErr error
+		report, ingestErr = s.articles.Ingest(txContext, src.ID, feed.Items)
+		if ingestErr != nil {
+			return ingestErr
+		}
+		completedAt := s.clock.Now().UTC()
+		return s.repository.MarkSuccess(txContext, src.ID, lease, metadata, completedAt, completedAt.Add(normalFetchInterval))
+	})
+	if err != nil {
+		if errors.Is(err, sourceDomain.ErrLeaseLost) {
+			return FetchOutcome{}, err
+		}
+		return FetchOutcome{}, s.fail(ctx, src, lease, "INGEST_FAILED", err)
 	}
 	return FetchOutcome{Report: report}, nil
 }
@@ -124,9 +138,9 @@ func normalizeSiteURL(value *string) *string {
 	return &normalized
 }
 
-func (s *Service) fail(ctx context.Context, src sourceDomain.Source, code string, cause error) error {
+func (s *Service) fail(ctx context.Context, src sourceDomain.Source, lease sourceDomain.Lease, code string, cause error) error {
 	update := sourceDomain.NextFailure(s.clock.Now().UTC(), src.ConsecutiveFailures, code, s.jitter())
-	if err := s.repository.MarkFailure(ctx, src.ID, update); err != nil {
+	if err := s.repository.MarkFailure(ctx, src.ID, lease, update); err != nil {
 		return errors.Join(cause, err)
 	}
 	return &FailureError{code: code, cause: cause}

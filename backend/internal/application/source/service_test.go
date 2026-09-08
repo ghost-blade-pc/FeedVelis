@@ -25,10 +25,12 @@ func (r *sourceRepositoryFake) List(context.Context) ([]sourceDomain.Source, err
 func (r *sourceRepositoryFake) Get(context.Context, int64) (sourceDomain.Source, error) {
 	return r.source, nil
 }
-func (r *sourceRepositoryFake) ClaimByID(context.Context, int64, string, time.Time, time.Time) (sourceDomain.Source, error) {
+func (r *sourceRepositoryFake) ClaimByID(_ context.Context, _ int64, owner string, _ time.Time, leaseUntil time.Time) (sourceDomain.Source, error) {
 	if r.source.Status == sourceDomain.StatusPaused {
 		return sourceDomain.Source{}, sourceDomain.ErrInvalidStatus
 	}
+	r.source.LeaseOwner = &owner
+	r.source.LeaseExpiresAt = &leaseUntil
 	return r.source, nil
 }
 func (*sourceRepositoryFake) Pause(context.Context, int64, time.Time) error  { return nil }
@@ -36,14 +38,14 @@ func (*sourceRepositoryFake) Resume(context.Context, int64, time.Time) error { r
 func (*sourceRepositoryFake) ClaimDue(context.Context, string, time.Time, time.Time, int) ([]sourceDomain.Source, error) {
 	return nil, nil
 }
-func (r *sourceRepositoryFake) MarkNotModified(context.Context, int64, *string, *string, time.Time, time.Time) error {
+func (r *sourceRepositoryFake) MarkNotModified(context.Context, int64, sourceDomain.Lease, *string, *string, time.Time, time.Time) error {
 	r.notModified = true
 	return nil
 }
-func (*sourceRepositoryFake) MarkSuccess(context.Context, int64, sourceDomain.Metadata, time.Time, time.Time) error {
+func (*sourceRepositoryFake) MarkSuccess(context.Context, int64, sourceDomain.Lease, sourceDomain.Metadata, time.Time, time.Time) error {
 	return nil
 }
-func (*sourceRepositoryFake) MarkFailure(context.Context, int64, sourceDomain.FailureUpdate) error {
+func (*sourceRepositoryFake) MarkFailure(context.Context, int64, sourceDomain.Lease, sourceDomain.FailureUpdate) error {
 	return nil
 }
 
@@ -77,12 +79,18 @@ type clockFake struct{ now time.Time }
 
 func (c clockFake) Now() time.Time { return c.now }
 
+type transactionManagerFake struct{}
+
+func (transactionManagerFake) WithinTransaction(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
 func TestNotModifiedDoesNotParseOrIngest(t *testing.T) {
 	repository := &sourceRepositoryFake{source: sourceDomain.Source{ID: 1, FeedURL: "https://example.com/feed", Status: sourceDomain.StatusActive}}
 	parser := &parserFake{}
 	clock := clockFake{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
 	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
-	service := NewService(repository, fetcherFake{response: ports.FetchResponse{NotModified: true}}, parser, articles, clock, nil)
+	service := NewService(repository, fetcherFake{response: ports.FetchResponse{NotModified: true}}, parser, articles, clock, transactionManagerFake{}, nil)
 	outcome, err := service.FetchByID(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +104,7 @@ func TestPausedSourceCannotBeFetched(t *testing.T) {
 	repository := &sourceRepositoryFake{source: sourceDomain.Source{ID: 1, Status: sourceDomain.StatusPaused}}
 	clock := clockFake{now: time.Now()}
 	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
-	service := NewService(repository, fetcherFake{}, &parserFake{}, articles, clock, nil)
+	service := NewService(repository, fetcherFake{}, &parserFake{}, articles, clock, transactionManagerFake{}, nil)
 	if _, err := service.FetchByID(context.Background(), 1); err != sourceDomain.ErrInvalidStatus {
 		t.Fatalf("err=%v", err)
 	}

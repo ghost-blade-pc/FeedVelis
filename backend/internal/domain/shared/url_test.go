@@ -24,3 +24,19 @@ func TestNormalizeHTTPURLChecksEncodedLength(t *testing.T) {
 		t.Fatal("expected encoded URL length rejection")
 	}
 }
+
+func TestNormalizeHTTPURLRemovesOnlyDotSegments(t *testing.T) {
+	tests := map[string]string{
+		"https://example.com/feed":         "https://example.com/feed",
+		"https://example.com/feed/":        "https://example.com/feed/",
+		"https://example.com/a//b":         "https://example.com/a//b",
+		"https://example.com/a/./b/../c/":  "https://example.com/a/c/",
+		"https://example.com/%2e/%2E%2E/x": "https://example.com/%2e/%2E%2E/x",
+	}
+	for raw, want := range tests {
+		got, err := NormalizeHTTPURL(raw, 4096)
+		if err != nil || got != want {
+			t.Errorf("NormalizeHTTPURL(%q)=%q err=%v want=%q", raw, got, err, want)
+		}
+	}
+}

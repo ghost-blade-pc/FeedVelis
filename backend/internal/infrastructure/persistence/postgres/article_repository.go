@@ -66,8 +66,8 @@ ON CONFLICT (source_id, dedupe_key) DO NOTHING RETURNING id`,
 	}
 
 	_, err = tx.Exec(ctx, `UPDATE velis.articles SET source_item_id=$2, canonical_url=$3, title=$4, author_name=$5,
- excerpt=$6, language=$7, source_published_at=$8, source_updated_at=$9, content_hash=$10,
- status='published', last_seen_at=$11, updated_at=$11 WHERE id=$1`, id, a.SourceItemID, a.CanonicalURL,
+	 excerpt=$6, language=$7, source_published_at=$8, source_updated_at=$9, content_hash=$10,
+	 last_seen_at=$11, updated_at=$11 WHERE id=$1`, id, a.SourceItemID, a.CanonicalURL,
 		a.Title, a.AuthorName, a.Excerpt, a.Language, a.SourcePublishedAt, a.SourceUpdatedAt, a.ContentHash, now)
 	if err != nil {
 		return "", 0, err

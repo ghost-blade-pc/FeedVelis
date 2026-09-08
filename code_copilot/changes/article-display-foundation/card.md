@@ -2,16 +2,16 @@
 schema: spec-copilot/change-v3
 change_id: article-display-foundation
 profile: high-risk
-status: testing
-fix_cycle: 0
+status: archived
+fix_cycle: 1
 failure_source: null
-last_event_id: E000015
+last_event_id: E000027
 blocked_from: null
 resume_to: null
-review_verdict: pending
-review_basis: null
+review_verdict: passed
+review_basis: sha256-v1:d7c9f8a4b125ffd335aec5175a2c72f8b65cd8411c0f58b9fa05d77b1d6d9c9e
 created: 2026-09-07
-updated: 2026-09-07
+updated: 2026-09-08
 ---
 
 # Change Card — 文章展示基础能力与库表设计

@@ -1,0 +1,32 @@
+{
+  "change_id": "article-display-foundation",
+  "stage": "test",
+  "action": "start",
+  "reason": "用户指示 fix 阶段已完成、开始正式 test 阶段；Fix cycle 1 已关闭 R0-F1 至 R0-F4，旧 Test/Review 证据已失效，需在修复后的新 basis 上执行独立正式测试。",
+  "baseline": {
+    "git_head": "9fe8a14f970d98deb33f35bb38a87784187816d6",
+    "card_status": "testing",
+    "last_event_id": "E000021",
+    "last_event": "fix/complete",
+    "fix_cycle": 1
+  },
+  "plan": [
+    {"layer": "targeted", "scope": "Domain/Application 单测（domain/shared、domain/source、domain/article、application/source、application/article、persistence/postgres）、Hertz HTTP 测试、Vitest", "note": "覆盖 test-spec.md 风险矩阵中 URL 规范化、去重、hash、退避、分页、条件请求、HTML 清理等单元层场景"},
+    {"layer": "static", "scope": "go vet ./...、gofmt 差异检查、git diff --check、架构依赖测试（internal/architecture）", "note": "分层边界与静态质量"},
+    {"layer": "integration", "scope": "真实 PostgreSQL 集成测试（test/integration）+ -race；迁移 up/down/up round-trip 与约束检查", "note": "覆盖租约 fencing、幂等 upsert、原子回滚、分页索引、迁移回滚"},
+    {"layer": "e2e/build", "scope": "make check（Go 全包测试、race、四个 cmd 构建、Vitest、vue-tsc、Vite build）", "note": "构建与前端回归；不包含 Playwright 真实浏览器 E2E（已列未覆盖）"},
+    {"layer": "security", "scope": "Fetcher SSRF 单测矩阵、sanitizer 恶意 HTML corpus、CLI 网络错误脱敏", "note": "本地 Mock/单测层级；真实生产网络 SSRF 列为未覆盖"},
+    {"layer": "real-env", "scope": "无", "note": "公网真实 Feed 兼容矩阵、生产网络策略不在本轮范围（test-spec.md 未覆盖清单）"}
+  ],
+  "env": {
+    "os": "Linux 6.6.87.2-microsoft-standard-WSL2",
+    "go": "本地 Go 1.26.6",
+    "node": "Node.js 24",
+    "postgres": "Docker Compose PostgreSQL 17 + pgvector，测试专用临时数据库"
+  },
+  "constraints": [
+    "test 阶段只验证既定实现，不顺手修复缺陷；发现缺陷记录稳定 T1-F<n> finding 并以 test/fail 收尾。",
+    "不执行 git commit/push、不操作生产；临时数据库用后删除。",
+    "测试文件仅在有 Spec 已授权测试任务时修改；否则只读执行。"
+  ]
+}

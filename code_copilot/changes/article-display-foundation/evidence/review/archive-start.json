@@ -1,0 +1,19 @@
+{
+  "change_id": "article-display-foundation",
+  "stage": "archive",
+  "action": "start",
+  "reason": "用户明确指示「archive开始整理相关文档」；前置状态 verified（review/complete E000025 passed）。",
+  "authorization": "用户消息「archive开始整理相关文档」构成显式 /archive 授权。",
+  "precheck": {
+    "review_basis": "sha256-v1:d7c9f8a4b125ffd335aec5175a2c72f8b65cd8411c0f58b9fa05d77b1d6d9c9e",
+    "basis_verify": "valid=true（归档前只读重算，被审输入未变化）",
+    "verdict": "passed",
+    "consistency": "tasks.md 9 项任务全部 completed；test-spec.md test_result=passed 且风险矩阵全部有证据；review.md R1 passed；deferred 仅 I1/I3；card.md 验收项与 test-spec 映射一致（checkbox 保持提案态，验收状态以 test-spec/events 为准）",
+    "evidence_layers": "测试证据按 Mock/本地/集成/构建分层记录；公网真实 Feed 与 Playwright E2E 保持未覆盖表述，不升级为生产验证",
+    "knowledge_files_in_basis": "knowledge/ 不在 review basis 文件清单中，归档期间更新 index.md 不会使 verify 失效"
+  },
+  "plan": [
+    "整理 knowledge/index.md：提升 4 类已验证且可复用的长期事实（URL 规范化、租约 fencing、文章幂等入库、PostgreSQL 集成测试约定）",
+    "archive/complete 声明 knowledge_updates 并保留 deferred 与剩余风险"
+  ]
+}

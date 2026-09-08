@@ -1,0 +1,37 @@
+{
+  "change_id": "article-display-foundation",
+  "stage": "review",
+  "action": "complete",
+  "reason": "R1 审查（Fix cycle 1 之后）无 must-fix：R0-F1 至 R0-F4 修复均正确完整，新增实现（嵌套事务、手动抓取认领、fencing 时间条件）经逐项核验无缺陷；测试证据分层真实（Mock/本地/集成/构建回归），结论形成前 basis 重算并 verify valid=true。",
+  "verdict": "passed",
+  "review_basis": "sha256-v1:d7c9f8a4b125ffd335aec5175a2c72f8b65cd8411c0f58b9fa05d77b1d6d9c9e",
+  "verified_fixes": [
+    "R0-F1：Lease{Owner,ExpiresAt} + 完成写入 WHERE fencing（owner/expiry/status/未过期）+ RowsAffected==0 → ErrLeaseLost；pause 清租约拒绝旧任务；集成测试覆盖 stale/paused/过期/原子回滚。",
+    "R0-F2：removeDotSegments 与 RFC 3986 §5.2.4 逐条对应，保留重复斜杠、尾斜杠、percent-encoding；不影响 host。",
+    "R0-F3：冲突 UPDATE 与 unchanged 分支不再触碰 status；插入默认 published。",
+    "R0-F4：两个截断标志纳入可重算 content_hash payload。"
+  ],
+  "new_checks": [
+    "TxManager 嵌套事务短路由正确；fetch 成功路径单事务包裹 Ingest+MarkSuccess，fencing 失败回滚文章；Ingest fail-fast 无 tx-aborted 后继续风险。",
+    "FetchByID 经 ClaimByID（active/degraded、租约空闲；paused → ErrInvalidStatus），degraded 手动成功恢复 active。",
+    "SQL 全参数化；事务上下文私有 key；fencing 单语句条件更新无 TOCTOU。"
+  ],
+  "findings": {
+    "must_fix": [],
+    "important": [],
+    "deferred": ["I1 OpenAPI Request ID 契约", "I3 CLI 网络错误 URL query 脱敏"],
+    "suggestions": [
+      "application/source 编排层补 fetch 成功路径与 ErrLeaseLost 传播单测",
+      "url_test 补 /a/b/.. 尾段回退与首段 .. 用例",
+      "Web 加载更多 pending/序号防护（R0 遗留）",
+      "RunWorker 占位注释（R0 遗留）"
+    ]
+  },
+  "test_evidence_layers": {
+    "mock_local": "E000023 targeted Go 全包、Vitest 5 项、vet/gofmt/diff --check",
+    "integration": "E000023 真实 PostgreSQL 迁移 round-trip、-race 集成测试、\\d 约束与 EXPLAIN 索引",
+    "build": "E000023 make check 退出码 0",
+    "real_env": "未运行：公网 Feed 矩阵、Playwright E2E（未覆盖清单）"
+  },
+  "independence_note": "Reviewer 未参与 Apply/Fix 实现；与正式 Test 同一上下文，测试证据按层区分未因同源升级。"
+}

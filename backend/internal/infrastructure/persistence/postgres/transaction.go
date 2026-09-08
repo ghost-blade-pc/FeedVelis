@@ -12,6 +12,9 @@ type TxManager struct{ pool *pgxpool.Pool }
 func NewTxManager(pool *pgxpool.Pool) *TxManager { return &TxManager{pool: pool} }
 
 func (m *TxManager) WithinTransaction(ctx context.Context, fn func(context.Context) error) error {
+	if _, ok := transactionFromContext(ctx); ok {
+		return fn(ctx)
+	}
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err

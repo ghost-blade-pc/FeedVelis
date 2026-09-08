@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/url"
-	"path"
 	"strings"
 
 	"golang.org/x/net/idna"
@@ -49,7 +48,7 @@ func NormalizeHTTPURL(raw string, maxBytes int) (string, error) {
 	if escapedPath == "" {
 		escapedPath = "/"
 	} else {
-		escapedPath = path.Clean(escapedPath)
+		escapedPath = removeDotSegments(escapedPath)
 		if !strings.HasPrefix(escapedPath, "/") {
 			escapedPath = "/" + escapedPath
 		}
@@ -65,4 +64,48 @@ func NormalizeHTTPURL(raw string, maxBytes int) (string, error) {
 		return "", ErrInvalidHTTPURL
 	}
 	return result, nil
+}
+
+// removeDotSegments 实现 RFC 3986 5.2.4，同时保留重复斜杠、尾斜杠和 percent-encoding。
+func removeDotSegments(input string) string {
+	output := ""
+	for input != "" {
+		switch {
+		case strings.HasPrefix(input, "../"):
+			input = input[3:]
+		case strings.HasPrefix(input, "./"):
+			input = input[2:]
+		case strings.HasPrefix(input, "/./"):
+			input = "/" + input[3:]
+		case input == "/.":
+			input = "/"
+		case strings.HasPrefix(input, "/../"):
+			input = "/" + input[4:]
+			output = removeLastPathSegment(output)
+		case input == "/..":
+			input = "/"
+			output = removeLastPathSegment(output)
+		case input == "." || input == "..":
+			input = ""
+		default:
+			end := len(input)
+			searchFrom := 0
+			if strings.HasPrefix(input, "/") {
+				searchFrom = 1
+			}
+			if next := strings.IndexByte(input[searchFrom:], '/'); next >= 0 {
+				end = searchFrom + next
+			}
+			output += input[:end]
+			input = input[end:]
+		}
+	}
+	return output
+}
+
+func removeLastPathSegment(value string) string {
+	if index := strings.LastIndexByte(value, '/'); index >= 0 {
+		return value[:index]
+	}
+	return ""
 }

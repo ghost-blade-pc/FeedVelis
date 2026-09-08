@@ -30,6 +30,7 @@ var (
 	ErrInvalidStatus = errors.New("来源状态无效")
 	ErrNotFound      = errors.New("来源不存在")
 	ErrLeaseHeld     = errors.New("来源正在被其他抓取任务处理")
+	ErrLeaseLost     = errors.New("来源抓取租约已失效")
 )
 
 type Source struct {
@@ -59,6 +60,12 @@ type Metadata struct {
 	LastModified *string
 }
 
+// Lease 是一次认领返回的 fencing generation。Owner 与 ExpiresAt 必须原样参与完成写入。
+type Lease struct {
+	Owner     string
+	ExpiresAt time.Time
+}
+
 type FailureUpdate struct {
 	Status              Status
 	ConsecutiveFailures int
@@ -75,9 +82,16 @@ type Repository interface {
 	Pause(context.Context, int64, time.Time) error
 	Resume(context.Context, int64, time.Time) error
 	ClaimDue(context.Context, string, time.Time, time.Time, int) ([]Source, error)
-	MarkNotModified(context.Context, int64, *string, *string, time.Time, time.Time) error
-	MarkSuccess(context.Context, int64, Metadata, time.Time, time.Time) error
-	MarkFailure(context.Context, int64, FailureUpdate) error
+	MarkNotModified(context.Context, int64, Lease, *string, *string, time.Time, time.Time) error
+	MarkSuccess(context.Context, int64, Lease, Metadata, time.Time, time.Time) error
+	MarkFailure(context.Context, int64, Lease, FailureUpdate) error
+}
+
+func (s Source) CurrentLease() (Lease, error) {
+	if s.LeaseOwner == nil || *s.LeaseOwner == "" || s.LeaseExpiresAt == nil || s.LeaseExpiresAt.IsZero() {
+		return Lease{}, ErrLeaseLost
+	}
+	return Lease{Owner: *s.LeaseOwner, ExpiresAt: *s.LeaseExpiresAt}, nil
 }
 
 func NormalizeFeedURL(raw string) (string, error) {

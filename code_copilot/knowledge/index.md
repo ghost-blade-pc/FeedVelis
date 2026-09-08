@@ -20,7 +20,11 @@
 ```
 
 - **技术栈/构建**：Go 1.26、Hertz、PostgreSQL/pgvector、Vue 3；统一命令入口为根目录 `Makefile` → `backend/go.mod`、`web/package.json`、`Makefile`；最近验证：2026-09-04 工作区初始化静态核对。
-- **根包/依赖**：根包为 `github.com/ghost-blade-pc/Velis_Feed/backend`，四层 import 方向由测试强制 → `backend/go.mod`、`backend/internal/architecture/dependencies_test.go#TestLayerDependencies`；最近验证：2026-09-04 工作区初始化静态核对。
+- **根包/依赖**：根包为 `github.com/ghost-blade-pc/Velis_Feed/backend`，四层 import 方向由测试强制 → `backend/go.mod`、`backend/internal/architecture/dependencies_test.go#TestLayerDependencies`；最近验证：2026-09-08 `changes/article-display-foundation` 归档时测试通过。
 - **风险导航**：认证授权、事务/Outbox、幂等并发、迁移、SSRF、隐私及缓存/MQ/Embedding 降级 → `rules/project-context.md`、`Velis新项目开发文档.md`；最近验证：2026-09-04 工作区初始化静态核对。
+- **URL 规范化**：只移除 fragment、默认端口与 dot-segment（RFC 3986 §5.2.4 语义），保留重复斜杠、尾斜杠、percent-encoding 与 query 顺序；只接受 http/https、拒绝 userinfo 与非 80/443 端口 → `backend/internal/domain/shared/url.go#NormalizeHTTPURL`；最近验证：2026-09-08 `changes/article-display-foundation`（R0-F2 修复后单测 + R1 passed）。
+- **租约 fencing**：认领返回 `Lease{Owner, ExpiresAt}`，完成写入必须以 owner+expiry+status+未过期为 SQL 条件，0 行受影响返回 `ErrLeaseLost`；pause/过期/新认领均拒绝旧任务提交，过期租约可由新 Worker 重新认领自愈 → `backend/internal/domain/source/source.go#Lease`、`backend/internal/infrastructure/persistence/postgres/source_repository.go#MarkSuccess`；最近验证：2026-09-08 `changes/article-display-foundation`（R0-F1 修复后真实 PostgreSQL 集成测试 + race）。
+- **文章幂等入库**：dedupe_key = source_id + (GUID 或规范化 canonical URL)；content_hash 覆盖标题/URL/作者/语言/发布时间/原始描述与正文及其截断标志；hash 相同不写正文，冲突更新保留受控 status（如 hidden），插入默认 published；文章与 Source 完成写入同事务原子提交 → `backend/internal/domain/article/article.go#ContentHash`、`backend/internal/infrastructure/persistence/postgres/article_repository.go#upsertArticle`；最近验证：2026-09-08 `changes/article-display-foundation`（R0-F3/F4 修复后集成测试）。
+- **PostgreSQL 集成测试约定**：`VELIS_TEST_DATABASE_URL` 仅接受名称以 `_test` 结尾的数据库，测试自 TRUNCATE 三表后运行；真实库验证租约/幂等/回滚，临时库用后 DROP、容器 stop → `backend/test/integration/article_repository_test.go`；最近验证：2026-09-08 `changes/article-display-foundation` 正式 Test 阶段。
 
 发现冲突时重新验证当前事实，更新最近验证依据，并保留导致变化的 change/ADR 链接。

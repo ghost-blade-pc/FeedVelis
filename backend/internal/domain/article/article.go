@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -179,7 +180,9 @@ func ContentHash(a Article, c Content) string {
 		NormalizeText(a.Language),
 		published,
 		stringValue(c.RawDescription),
+		strconv.FormatBool(c.RawDescriptionTruncated),
 		stringValue(c.RawContent),
+		strconv.FormatBool(c.RawContentTruncated),
 	})
 	return digest(string(payload))
 }

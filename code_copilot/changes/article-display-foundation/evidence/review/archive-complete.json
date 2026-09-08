@@ -1,0 +1,22 @@
+{
+  "change_id": "article-display-foundation",
+  "stage": "archive",
+  "action": "complete",
+  "reason": "Change 已通过正式 Test 与 R1 Review（passed，basis d7c9f8a4），归档前只读重算 verify 仍为 valid=true；归档期间仅整理 knowledge/index.md（不在 review basis 中），提升 4 类已验证且未来可复用的事实，并保留 deferred、未覆盖与剩余风险记录。",
+  "knowledge_updates": [
+    {
+      "path": "knowledge/index.md",
+      "keywords": ["URL 规范化", "dot-segment", "RFC 3986", "租约 fencing", "ErrLeaseLost", "content_hash", "去重", "hidden 保留", "幂等入库", "VELIS_TEST_DATABASE_URL", "集成测试约定", "article-display-foundation"]
+    }
+  ],
+  "preserved": {
+    "deferred": ["I1 OpenAPI 未完整声明 Request ID 契约", "I3 本地手工抓取错误可能泄露 Feed URL query"],
+    "suggestions": ["application/source 编排层补 fetch 成功/ErrLeaseLost 单测", "url_test 补 /a/b/.. 尾段回退与首段 .. 用例", "Web 加载更多 pending/序号防护", "RunWorker 占位注释"],
+    "uncovered": ["公网真实 Feed 兼容矩阵与生产网络策略", "Playwright 真实浏览器 E2E", "Vue 组件级渲染转义专项组件测试", "站内 HTML 详情与用户鉴权（不在 MVP）"],
+    "remaining_risks": ["Mock 网络不能证明所有云环境 SSRF 防线", "第三方 parser/sanitizer 依赖漏洞需随升级持续审查", "生产网络策略与长期容量未经真实环境验证"]
+  },
+  "notes": [
+    "测试证据分层：Mock/本地（Go 单测、Vitest）、集成（真实 PostgreSQL + race + 迁移 round-trip）、构建回归（make check）；未运行项保持未覆盖表述，不升级为生产验证。",
+    "不执行 Git/发布动作；应用代码与测试在归档阶段零修改。"
+  ]
+}

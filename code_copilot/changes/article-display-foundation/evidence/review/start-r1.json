@@ -1,0 +1,28 @@
+{
+  "change_id": "article-display-foundation",
+  "stage": "review",
+  "action": "start",
+  "reason": "用户明确指示开始 review；前置状态 reviewing（test/complete E000023 通过）。",
+  "authorization": "用户在 test/complete 交接后明确发送「开始review」，构成显式 /review 授权（Runner 路由：显式 /review 默认授权记录 verdict/card/events/log，应用代码与测试仍严格只读）。",
+  "reviewer": {
+    "identity": "当前上下文（Claude Code 会话）",
+    "independence_note": "本上下文未参与 apply/fix 实现（实现由先前上下文完成，Git 历史与事件链可查）；限制为本上下文执行了正式 test 阶段，Test 结论与 Review 结论出自同一上下文，verdict 中据此保守处理测试证据可信度（机械证据按层区分，不因同源而升级）。",
+    "agent": "spec-copilot-runner /review（普通 Review，未加载专项 reviewer）"
+  },
+  "inputs": [
+    "card.md（status=reviewing, fix_cycle=1）",
+    "spec.md、tasks.md、test-spec.md（test_result=passed）",
+    "events.jsonl E000001..E000023、log.md",
+    "review.md（R0 轮 Review 报告与 R0-F1..F4）",
+    "code_copilot/agents/review-protocol.md、rules/project-context.md",
+    "git diff HEAD（工作区 12 个后端文件 + integration 测试 + change 文档）"
+  ],
+  "basis_sha256": "sha256-v1:9381413284e59bbb2aa59216b9296268de749f7aee85690254f21ecd6b39cbbe",
+  "plan": [
+    "Spec/业务符合性：card 验收项与 spec 决策逐一对照实现。",
+    "正确性与外部契约：URL 规范化、content_hash、租约 fencing、事务边界、分页游标、OpenAPI 契约一致性。",
+    "安全：SSRF 防护链路、sanitizer allowlist、CLI 错误脱敏、SQL 注入面。",
+    "可维护/可测试：分层依赖、测试真实性（Mock/本地/集成区分）。",
+    "可运维：迁移回滚、约束、调度退避、日志。"
+  ]
+}
