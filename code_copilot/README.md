@@ -5,8 +5,9 @@
 ## 最小导航
 
 - 项目模式：`scaffolded`
-- 应用/技术栈：`Velis Feed（API、Worker、迁移工具与 Web）` / `Go 1.26、CloudWeGo Hertz、PostgreSQL + pgvector、Vue 3 + TypeScript`
+- 应用/技术栈：`Velis Feed（API、Worker、迁移、管理 CLI 与 Web）` / `Go 1.26、CloudWeGo Hertz、PostgreSQL/pgx、Vue 3 + TypeScript`
 - 构建与测试：`Make、Go toolchain、npm/Vite` / `Go testing、竞态检测、Vitest、架构依赖测试`
+- 项目总览：[README](../README.md)；唯一目标与路线：[Velis Roadmap][roadmap]。本工作区管理执行与证据，不另立产品目标。
 - 项目事实：`rules/project-context.md`
 - 状态协议：`protocol/change-v3.json`
 - 当前 change：`changes/<id>/card.md`
@@ -26,6 +27,8 @@ Review 对应用代码严格只读；显式 `/review` 授权记录报告、verdi
 
 - 根包/命名空间：`github.com/ghost-blade-pc/Velis_Feed/backend`
 - 业务域：`account、source、article、feed、interaction、relation、exposure、recommendation、embedding`
-- 入口：`backend/cmd/velis-api、backend/cmd/velis-worker、backend/cmd/velis-migrate、web/src/main.ts`
-- 依赖：`Hertz、pgx、golang-migrate、PostgreSQL/pgvector、Redis、RabbitMQ、MinIO、Vue、Pinia、Vue Router`
+- 入口：`backend/cmd/velis-api、backend/cmd/velis-worker、backend/cmd/velis-migrate、backend/cmd/velis-admin、web/src/main.ts`
+- 依赖：`Hertz、pgx、golang-migrate、PostgreSQL、Vue、Pinia、Vue Router；中间件接入状态见项目 README`
 - 风险：`认证授权、事务与 Outbox、幂等、并发、迁移、SSRF、隐私、缓存降级、消息重试、Embedding 降级`
+
+[roadmap]: <../Velis Roadmap.md>

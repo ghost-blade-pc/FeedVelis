@@ -9,13 +9,15 @@
 3. 只按当前阶段与风险读取 spec/tasks/test-spec、可选 rules、knowledge 或 reviewer。
 4. 源码结论附路径、符号、配置键、测试或命令证据；未知项保留为 TODO。
 
+项目功能现状见仓库根 README；唯一目标与实施路线见仓库根 `Velis Roadmap.md`。OpenSearch/Eino 是已确认目标，尚未实现；不要从历史 pgvector 配置推导未来选型。
+
 ## 项目导航
 
 - 模式：`scaffolded`
-- 应用：`Velis Feed（API、Worker、迁移工具与 Web）`
-- 技术栈与构建：`Go 1.26、CloudWeGo Hertz、PostgreSQL + pgvector、Vue 3 + TypeScript` / `Make、Go toolchain、npm/Vite`
+- 应用：`Velis Feed（API、Worker、迁移、管理 CLI 与 Web）`
+- 技术栈与构建：`Go 1.26、CloudWeGo Hertz、PostgreSQL/pgx、Vue 3 + TypeScript` / `Make、Go toolchain、npm/Vite`
 - 根包/命名空间：`github.com/ghost-blade-pc/Velis_Feed/backend`
-- 模块与入口：`backend/internal 四层、backend/migrations、web/src` / `backend/cmd/velis-api、velis-worker、velis-migrate 与 web/src/main.ts`
-- 依赖与测试：`Hertz、pgx、golang-migrate、PostgreSQL/pgvector、Redis、RabbitMQ、MinIO、Vue` / `Go testing、竞态检测、Vitest、架构依赖测试`
+- 模块与入口：`backend/internal 四层、backend/migrations、web/src` / `backend/cmd/velis-api、velis-worker、velis-migrate、velis-admin 与 web/src/main.ts`
+- 依赖与测试：`Hertz、pgx、golang-migrate、PostgreSQL、Vue` / `Go testing、竞态检测、Vitest、架构依赖测试`
 
 按 `project-context.md` 的真实架构工作，不默认 DDD。不要覆盖无关修改，不把未运行、Mock 或本地验证写成生产事实，也不自动安装依赖、commit、push、部署或跨越用户未授权的下一阶段。
