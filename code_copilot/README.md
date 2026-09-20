@@ -1,5 +1,11 @@
 # code_copilot — FeedVelis
 
+⚠️ **历史工作区（已冻结）**
+
+本目录仅保留迁移前的 Spec Copilot change、事件链、审查报告和知识记录，用于历史追溯。自 2026-09-20 起，项目的当前 Spec 工作区为 [`openspec/`](../openspec/)；不再于 `code_copilot/` 中新建、继续、修复、Review 或归档 change。历史文件中的状态和表述反映其当时上下文，不代表当前项目计划。
+
+`changes/i1-status-documentation-sync/` 停留在 `ready` 是迁移时的历史状态；它已由 OpenSpec change `migrate-spec-workflow-to-openspec` 取代，不再执行。
+
 本目录采用 `spec-copilot/workspace` v3，以严格阶段、内容寻址证据和事件链支持跨 Agent 交接。
 
 ## 最小导航

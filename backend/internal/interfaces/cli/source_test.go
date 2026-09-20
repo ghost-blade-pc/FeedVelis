@@ -36,7 +36,7 @@ func (s *cliSourceService) FetchByID(_ context.Context, id int64, force bool) (s
 func TestSourceAddAndPause(t *testing.T) {
 	service := &cliSourceService{}
 	var stdout bytes.Buffer
-	runner := New(service, &stdout, &bytes.Buffer{})
+	runner := New(Options{Sources: service, Stdout: &stdout, Stderr: &bytes.Buffer{}})
 	if err := runner.Run(context.Background(), []string{"source", "add", "-url", "https://example.com/feed"}); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestSourceAddAndPause(t *testing.T) {
 }
 
 func TestSourceCommandRejectsInvalidID(t *testing.T) {
-	runner := New(&cliSourceService{}, &bytes.Buffer{}, &bytes.Buffer{})
+	runner := New(Options{Sources: &cliSourceService{}, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}})
 	if err := runner.Run(context.Background(), []string{"source", "fetch", "0"}); err == nil {
 		t.Fatal("expected invalid id")
 	}
@@ -61,14 +61,14 @@ func TestSourceCommandRejectsInvalidID(t *testing.T) {
 func TestSourceFetchForceFlag(t *testing.T) {
 	service := &cliSourceService{}
 	var stdout bytes.Buffer
-	runner := New(service, &stdout, &bytes.Buffer{})
+	runner := New(Options{Sources: service, Stdout: &stdout, Stderr: &bytes.Buffer{}})
 	if err := runner.Run(context.Background(), []string{"source", "fetch", "2", "--force"}); err != nil {
 		t.Fatal(err)
 	}
 	if service.fetchedID != 2 || !service.fetchedForce {
 		t.Fatalf("fetched=%d force=%t", service.fetchedID, service.fetchedForce)
 	}
-	runner = New(service, &stdout, &bytes.Buffer{})
+	runner = New(Options{Sources: service, Stdout: &stdout, Stderr: &bytes.Buffer{}})
 	if err := runner.Run(context.Background(), []string{"source", "fetch", "2"}); err != nil {
 		t.Fatal(err)
 	}

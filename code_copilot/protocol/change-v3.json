@@ -58,7 +58,7 @@
     "verified": ["verified"]
   },
   "loop_guard": {
-    "max_completed_fix_cycles": 3,
+    "max_completed_fix_cycles": 4,
     "max_failed_occurrences_per_finding": 3
   }
 }

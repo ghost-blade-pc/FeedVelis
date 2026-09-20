@@ -91,7 +91,7 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 		Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
 	}}}
 	service := articleApp.NewService(repository, noOpSanitizer{}, testClock{})
-	h := NewServer("127.0.0.1:0", time.Second, logger, healthService, service)
+	h := NewServer(Options{Address: "127.0.0.1:0", ShutdownTimeout: time.Second, Logger: logger, Health: healthService, Articles: service})
 	response := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles?limit=20", nil)
 	if response.Code != consts.StatusOK || !strings.Contains(response.Body.String(), `"canonical_url":"https://example.com/a"`) ||
 		!strings.Contains(response.Body.String(), `"discovered_at":"2026-09-01T00:00:00Z"`) || strings.Contains(response.Body.String(), "content_hash") {
@@ -116,7 +116,7 @@ func TestArticleDetailContractAndNotFound(t *testing.T) {
 		SanitizedHTML: &htmlValue,
 	}}
 	service := articleApp.NewService(repository, noOpSanitizer{}, testClock{})
-	h := NewServer("127.0.0.1:0", time.Second, logger, healthService, service)
+	h := NewServer(Options{Address: "127.0.0.1:0", ShutdownTimeout: time.Second, Logger: logger, Health: healthService, Articles: service})
 	response := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles/7", nil)
 	var detail struct {
 		ContentHTML string `json:"content_html"`
@@ -129,7 +129,7 @@ func TestArticleDetailContractAndNotFound(t *testing.T) {
 		t.Fatalf("status=%d body=%s", missing.Code, missing.Body.String())
 	}
 	badID := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles/abc", nil)
-	if badID.Code != consts.StatusBadRequest || !strings.Contains(badID.Body.String(), `"code":"INVALID_ARGUMENT"`) {
+	if badID.Code != consts.StatusBadRequest || !strings.Contains(badID.Body.String(), `"code":"VALIDATION_FAILED"`) {
 		t.Fatalf("status=%d body=%s", badID.Code, badID.Body.String())
 	}
 }
@@ -137,5 +137,5 @@ func TestArticleDetailContractAndNotFound(t *testing.T) {
 func newTestServer(checkErr error) *server.Hertz {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	service := health.NewService(readyChecker{err: checkErr})
-	return NewServer("127.0.0.1:0", time.Second, logger, service)
+	return NewServer(Options{Address: "127.0.0.1:0", ShutdownTimeout: time.Second, Logger: logger, Health: service})
 }

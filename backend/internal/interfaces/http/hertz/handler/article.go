@@ -25,7 +25,7 @@ func (h *Article) List(ctx context.Context, c *app.RequestContext) {
 	if raw := c.Query("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil {
-			presenter.WriteError(c, consts.StatusBadRequest, "INVALID_ARGUMENT", "limit 必须是整数", middleware.RequestIDFrom(c))
+			presenter.WriteError(c, consts.StatusBadRequest, presenter.CodeValidationFailed, "limit 必须是整数", middleware.RequestIDFrom(c))
 			return
 		}
 		limit = parsed
@@ -34,11 +34,11 @@ func (h *Article) List(ctx context.Context, c *app.RequestContext) {
 	if err != nil {
 		switch {
 		case errors.Is(err, articleDomain.ErrInvalidCursor):
-			presenter.WriteError(c, consts.StatusBadRequest, "INVALID_CURSOR", "游标无效或版本不受支持", middleware.RequestIDFrom(c))
+			presenter.WriteError(c, consts.StatusBadRequest, presenter.CodeInvalidCursor, "游标无效或版本不受支持", middleware.RequestIDFrom(c))
 		case errors.Is(err, articleDomain.ErrInvalidArgument):
-			presenter.WriteError(c, consts.StatusBadRequest, "INVALID_ARGUMENT", "limit 必须介于 1 和 50", middleware.RequestIDFrom(c))
+			presenter.WriteError(c, consts.StatusBadRequest, presenter.CodeValidationFailed, "limit 必须介于 1 和 50", middleware.RequestIDFrom(c))
 		default:
-			presenter.WriteError(c, consts.StatusInternalServerError, "INTERNAL_ERROR", "文章列表暂不可用", middleware.RequestIDFrom(c))
+			presenter.WriteError(c, consts.StatusInternalServerError, presenter.CodeInternalError, "文章列表暂不可用", middleware.RequestIDFrom(c))
 		}
 		return
 	}
@@ -52,18 +52,18 @@ func (h *Article) List(ctx context.Context, c *app.RequestContext) {
 func (h *Article) Get(ctx context.Context, c *app.RequestContext) {
 	articleID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || articleID <= 0 {
-		presenter.WriteError(c, consts.StatusBadRequest, "INVALID_ARGUMENT", "文章 ID 无效", middleware.RequestIDFrom(c))
+		presenter.WriteError(c, consts.StatusBadRequest, presenter.CodeValidationFailed, "文章 ID 无效", middleware.RequestIDFrom(c))
 		return
 	}
 	detail, err := h.service.Get(ctx, articleID)
 	if err != nil {
 		switch {
 		case errors.Is(err, articleDomain.ErrNotFound):
-			presenter.WriteError(c, consts.StatusNotFound, "ARTICLE_NOT_FOUND", "文章不存在或不可见", middleware.RequestIDFrom(c))
+			presenter.WriteError(c, consts.StatusNotFound, presenter.CodeArticleNotFound, "文章不存在或不可见", middleware.RequestIDFrom(c))
 		case errors.Is(err, articleDomain.ErrInvalidArgument):
-			presenter.WriteError(c, consts.StatusBadRequest, "INVALID_ARGUMENT", "文章 ID 无效", middleware.RequestIDFrom(c))
+			presenter.WriteError(c, consts.StatusBadRequest, presenter.CodeValidationFailed, "文章 ID 无效", middleware.RequestIDFrom(c))
 		default:
-			presenter.WriteError(c, consts.StatusInternalServerError, "INTERNAL_ERROR", "文章详情暂不可用", middleware.RequestIDFrom(c))
+			presenter.WriteError(c, consts.StatusInternalServerError, presenter.CodeInternalError, "文章详情暂不可用", middleware.RequestIDFrom(c))
 		}
 		return
 	}

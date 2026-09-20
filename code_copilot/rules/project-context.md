@@ -8,21 +8,21 @@
 - 当前实际技术：Go/Hertz、pgx/PostgreSQL、golang-migrate、Vue/TypeScript；版本见 `backend/go.mod` 与 `web/package.json`。
 - 已确认目标技术与边界只在 Roadmap §2 维护。当前 Compose 的 pgvector 镜像/vector 初始扩展是尚未清理的遗留，不能作为继续实现 pgvector 的决策依据。
 - 根包：`github.com/ghost-blade-pc/Velis_Feed/backend`。
-- 最近现状核对：2026-09-11 静态检查；本次未重新运行业务测试。
+- 最近现状核对：2026-09-19 `changes/account-access-foundation` 第 5 轮 Test（真实进程/真实 PostgreSQL/真实 nginx/真实 Chrome，24 个用例分组通过）；文档收敛部分仍以 2026-09-11 的静态核对为准。
 
 ## 模块、职责与证据
 
 | 入口 | 当前用途与边界 |
 | --- | --- |
 | `backend/cmd/velis-api`、`velis-worker`、`velis-migrate`、`velis-admin` | 四个进程入口；Worker 已调度 RSS，Admin 已管理 Source |
-| `backend/internal/domain/source`、`domain/article` | 来源身份/租约、外部文章身份/内容与读取模型；账户等其他业务多为占位 |
-| `backend/internal/application/source/service.go`、`article/service.go` | 抓取编排、事务入库、列表和详情；health 为健康用例 |
-| `backend/internal/infrastructure/persistence/postgres/` | pgx 仓储与事务；Source/Article/Content 已有实现 |
+| `backend/internal/domain/source`、`domain/article`、`domain/account` | 来源身份/租约、外部文章身份/内容与读取模型、账户/会话/令牌/限流的纯规则（无 SQL 与框架类型） |
+| `backend/internal/application/source/service.go`、`article/service.go`、`account/` | 抓取编排、事务入库、列表和详情、账户用例（注册/登录/刷新/退出/本人资料/管理/清理）；health 为健康用例 |
+| `backend/internal/infrastructure/persistence/postgres/` | pgx 仓储与事务；Source/Article/Content 与账户/会话/刷新令牌/限流/审计/清理均已实现 |
 | `backend/internal/infrastructure/fetcher/httpfeed/` | RSS/Atom/JSON Feed 抓取解析清洗；环境代理与直连安全边界不同 |
 | `backend/internal/interfaces/`、`bootstrap/` | Hertz、CLI、Scheduler 适配与依赖装配 |
-| `backend/internal/interfaces/http/hertz/router.go` | /livez、/readyz、/api/v1/ping、文章列表与详情；无账户或 HTTP Source 写入口 |
-| `backend/migrations/` | 000001 初始化 schema/扩展，000002 创建 Source/Article/Content |
-| `web/src/router/index.ts`、`features/article/`、`views/ArticleView.vue` | 最新列表、站内阅读与原文外链 |
+| `backend/internal/interfaces/http/hertz/router.go` | /livez、/readyz、/api/v1/ping、文章列表与详情；认证开启时另注册 4 条 `/auth/*` 与 2 条 `/account/me`；仍无管理员 HTTP 端点与 HTTP Source 写入口 |
+| `backend/migrations/` | 000001 初始化 schema/扩展，000002 创建 Source/Article/Content，000003 创建账户与访问相关的六张表（不改写历史迁移） |
+| `web/src/router/index.ts`、`features/article/`、`views/ArticleView.vue`、`features/auth/`、`views/{Register,Login,Account}View.vue` | 最新列表、站内阅读与原文外链；以及注册/登录/账户/退出与 Web Locks 多标签会话协调 |
 | `backend/api/openapi/velis.yaml` | 当前接口事实契约，规划端点不等于已落地 |
 | `compose.yaml`、`.github/workflows/ci.yml` | 环境与自动化入口；部署配置不等于业务接入或运行验证 |
 

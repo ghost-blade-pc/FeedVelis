@@ -5,7 +5,8 @@
 - [README](README.md)：当前功能、开发现状、启动与验证方式。
 - [Velis Roadmap](<Velis Roadmap.md>)：唯一项目目标、技术决策、实施顺序与完成标准；实现前读取对应阶段，未决细节在 change 中定稿。
 - `backend/api/openapi/velis.yaml`、`backend/migrations/`：当前 API 与数据库契约，随实现更新。
-- `code_copilot/`：执行协议与历史证据；不另立产品路线，不把旧 change 的范围当成当前全项目目标。
+- `openspec/`：当前 Spec 与 change 工作区；后续提案、实施、同步与归档均使用 OpenSpec。
+- `code_copilot/`：只读历史证据；不再创建或推进 change，不把旧 change 的范围当成当前全项目目标。
 
 ## 开发约束
 
@@ -21,14 +22,14 @@
 - 不自动 commit、push、merge、发布、部署、采购或操作生产。用户已有明确授权的同一动作不重复请求许可。
 - 仓库暂无开源许可证，默认保留全部权利。
 
-<!-- spec-copilot:start schema=3 -->
-## Spec Coding 协作入口
+<!-- openspec:start -->
+## OpenSpec 协作入口
 
-本仓库采用 `code_copilot/` Spec Coding 工作流。开始处理项目任务前，先读取 `code_copilot/manifest.json`、`code_copilot/README.md` 和 `code_copilot/rules/project-context.md`；当前项目事实、规则和 change 状态以该工作区为准，不在本区块重复维护。
+本仓库后续使用 `openspec/` 作为唯一 Spec 工作区，按已安装的 OpenSpec 标准 skill 执行 explore、propose、apply、sync 和 archive。
 
-- 创建、升级、修复或校准工作区时，使用可用的 `spec-copilot-bootstrap` Skill。
-- 执行或恢复具体 change 时，使用可用的 `spec-copilot-runner` Skill，并遵守工作区中的状态、验证和审查协议。
-- 若工作区缺失、协议无效或所需 Skill 不可用，停止推测性写入并向用户报告所缺入口。
+- 使用 `openspec/config.yaml` 中配置的标准 schema；change 的提案、设计、任务与状态以 `openspec/changes/` 为准，已同步的长期行为规范以 `openspec/specs/` 为准。
+- `code_copilot/` 仅保留为迁移前的历史证据；不再于其中创建、继续、修复、Review 或归档 change。
+- README 记录当前可用功能，Roadmap 维护项目目标与实施顺序；不用规划中的目标能力冒充已实现事实。
 
-此受管区块必须与仓库根目录 `CLAUDE.md` 和 `AGENTS.md` 中的对应区块逐字一致；区块外内容分别由项目和客户端维护。
-<!-- spec-copilot:end -->
+此区块必须与仓库根目录 `CLAUDE.md` 和 `AGENTS.md` 中的对应区块逐字一致；区块外内容分别由项目和客户端维护。
+<!-- openspec:end -->

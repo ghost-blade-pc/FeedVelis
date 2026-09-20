@@ -23,7 +23,7 @@ func Recovery(logger *slog.Logger) app.HandlerFunc {
 				)
 				ctx.Response.Reset()
 				ctx.Abort()
-				presenter.WriteError(ctx, consts.StatusInternalServerError, "INTERNAL_ERROR", "服务器内部错误", requestID)
+				presenter.WriteError(ctx, consts.StatusInternalServerError, presenter.CodeInternalError, "服务器内部错误", requestID)
 			}
 		}()
 		ctx.Next(c)

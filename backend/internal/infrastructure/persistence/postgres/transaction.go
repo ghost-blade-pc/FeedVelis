@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,4 +32,18 @@ type txContextKey struct{}
 func transactionFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txContextKey{}).(pgx.Tx)
 	return tx, ok
+}
+
+// querier 优先使用事务内的连接，保证同一用例的写入与读取看到一致结果。
+func querier(ctx context.Context, pool *pgxpool.Pool) querierConn {
+	if tx, ok := transactionFromContext(ctx); ok {
+		return tx
+	}
+	return pool
+}
+
+type querierConn interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }

@@ -25,5 +25,5 @@ func WriteError(c *app.RequestContext, status int, code, message, requestID stri
 }
 
 func WriteNotFound(c *app.RequestContext, requestID string) {
-	WriteError(c, consts.StatusNotFound, "NOT_FOUND", "请求的资源不存在", requestID)
+	WriteError(c, consts.StatusNotFound, CodeNotFound, "请求的资源不存在", requestID)
 }

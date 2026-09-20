@@ -74,6 +74,138 @@ paths:
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
+  /auth/register:
+    post:
+      operationId: registerAccount
+      summary: 注册普通用户
+      description: 注册入口开启时创建普通用户；成功 201 且不建立会话。需要精确 Origin 与 application/json，正文上限 4 KiB。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: 已创建账户
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /auth/login:
+    post:
+      operationId: login
+      summary: 用户名密码登录
+      description: 校验限流与密码后建立独立会话；需要精确 Origin。响应通过 Set-Cookie 写入刷新令牌（HttpOnly）与 CSRF 值，正文只返回访问令牌。登录非幂等，客户端不得自动重试。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: 刷新访问令牌
+      description: 使用刷新 Cookie 单次轮换令牌；需要精确 Origin 与 X-CSRF-Token 等于 CSRF Cookie。旧令牌重放会撤销该会话，客户端在结果不明的网络失败后不得自动重放。
+      security:
+        - refreshCookie: []
+      responses:
+        "200":
+          description: 新访问令牌与轮换后的 Cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: 退出当前会话
+      description: 撤销当前会话并清除 Cookie；已撤销或已过期同样返回 204。需要精确 Origin 与 X-CSRF-Token。
+      security:
+        - refreshCookie: []
+      responses:
+        "204":
+          description: 已退出
+        "403":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /account/me:
+    get:
+      operationId: getCurrentAccount
+      summary: 读取本人账户
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 当前账户
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "401":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateCurrentAccount
+      summary: 修改本人昵称
+      description: 只允许 nickname 字段；需要 application/json，正文上限 1 KiB。不要求来源校验。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNicknameRequest"
+      responses:
+        "200":
+          description: 更新后的账户
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
   /livez:
     get:
       servers:
@@ -95,6 +227,17 @@ paths:
         "503":
           $ref: "#/components/responses/Error"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 访问令牌只驻留内存，有效期 15 分钟且不超过会话剩余期限。
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-velis_refresh
+      description: 生产使用 __Host-velis_refresh（HttpOnly; Secure; SameSite=Strict; Path=/）；本地开发为 velis_refresh 且 Secure=false。
   responses:
     HealthOK:
       description: 健康
@@ -201,7 +344,72 @@ components:
           properties:
             code:
               type: string
+              description: >-
+                统一错误码。认证相关：AUTH_INVALID_CREDENTIALS、AUTH_SESSION_INVALID、
+                AUTH_REGISTRATION_DISABLED、AUTH_USERNAME_CONFLICT、AUTH_RATE_LIMITED、
+                AUTH_HASH_BUSY、CSRF_REJECTED；通用：VALIDATION_FAILED、NOT_FOUND、
+                NOT_READY、INTERNAL_ERROR、DEPENDENCY_UNAVAILABLE。
             message:
               type: string
             request_id:
               type: string
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: 3～32 位半角字符，首位英文字母，后续字母、数字或下划线；按 ASCII 小写规范化。
+        password:
+          type: string
+          description: 8～20 位半角可打印字符（0x21～0x7E），四类字符至少三类，且不在常见密码表中。
+        nickname:
+          type: [string, "null"]
+          description: 省略时使用规范化用户名；显式空值校验失败。
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    UpdateNicknameRequest:
+      type: object
+      required: [nickname]
+      properties:
+        nickname:
+          type: string
+          description: 1～32 个 Unicode 码点，去除首尾空白后非空，禁止换行与控制字符。
+    Account:
+      type: object
+      required: [id, username, nickname, role, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        nickname:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+        status:
+          type: string
+          enum: [active, disabled]
+        created_at:
+          type: string
+          format: date-time
+    SessionResponse:
+      type: object
+      required: [access_token, expires_at, account]
+      properties:
+        access_token:
+          type: string
+          description: 只驻留内存的访问令牌；刷新令牌仅通过 HttpOnly Cookie 传递。
+        expires_at:
+          type: string
+          format: date-time
+        account:
+          $ref: "#/components/schemas/Account"

@@ -16,3 +16,51 @@ database:
 
 worker:
   heartbeat_interval: 30s
+
+# 认证配置。默认关闭，关闭时不注册认证路由，保持原有匿名行为。
+# 示例是本地开发取值（development + localhost），不能直接当作生产模板：
+# 生产必须使用 __Host- Cookie（cookie_secure: true）与精确的 https 来源。
+auth:
+  enabled: false
+  registration_enabled: false
+  access_ttl: 15m
+  session_ttl: 168h
+  jwt_issuer: velis-api
+  jwt_audience: velis-web
+  # 真实密钥只通过 VELIS_AUTH_JWT_ACTIVE_KEY 注入：Base64、解码后至少 32 字节，不要提交到仓库。
+  jwt_active_kid: ""
+  jwt_active_key: ""
+  # 轮换期间成对提供上一把密钥，确认所有实例切换后再移除。
+  jwt_previous_kid: ""
+  jwt_previous_key: ""
+  # 精确同源来源：本地开发为 http://localhost:5173，生产为 https 来源。
+  allowed_origin: ""
+  cookie_secure: true
+  # 限流查找键同样只通过 VELIS_AUTH_THROTTLE_KEY 注入。
+  throttle_key: ""
+  # 部署在反向代理之后时必须填写反代自身的地址：本仓库 Compose 把 velis-web 固定为
+  # 172.30.0.10，因此本地取其 /32（见 compose.yaml 的 velis-web.networks），生产填反代地址。
+  # 只填反代自己的地址、不要填整个子网：子网还包含网桥网关，客户端流量从发布端口进来时的源地址
+  # 正是网关，把网关列为可信会让客户端伪造的转发头被采纳，IP 维度限流可被绕过。
+  # 留空会把所有用户合并成同一个 IP 维度，30 次失败即可全局锁死登录。
+  trusted_proxy_cidrs: []
+  # 保留期清理由 velis-worker 执行，仅在 enabled 为 true 时启动：
+  # 每 interval 一轮，每批最多 batch 条；保留期按规范固定（失败事件 30 分钟、
+  # 过期限制 24 小时、会话与刷新令牌 7 天），用户与管理审计不参与清理。
+  cleanup_interval: 1h
+  cleanup_batch: 500
+  throttle:
+    account_window: 15m
+    account_limit: 5
+    ip_window: 15m
+    ip_limit: 30
+    block_duration: 15m
+  argon2:
+    memory_kib: 19456
+    iterations: 2
+    parallelism: 1
+    salt_bytes: 16
+    key_bytes: 32
+    # 每个 API 进程同时执行的散列数，超出的请求立即返回 503，不排队。
+    concurrency: 1
+

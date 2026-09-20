@@ -5,6 +5,13 @@ x-backend-environment: &backend-environment
   VELIS_LOG_LEVEL: info
   VELIS_DATABASE_URL: postgres://${POSTGRES_USER:-velis}:${POSTGRES_PASSWORD:-velis}@postgres:5432/${POSTGRES_DB:-velis}?sslmode=disable
   VELIS_DATABASE_CONNECT_TIMEOUT: 10s
+  VELIS_AUTH_ENABLED: ${VELIS_AUTH_ENABLED:-false}
+  VELIS_AUTH_REGISTRATION_ENABLED: ${VELIS_AUTH_REGISTRATION_ENABLED:-false}
+  VELIS_AUTH_JWT_ACTIVE_KID: ${VELIS_AUTH_JWT_ACTIVE_KID:-}
+  VELIS_AUTH_JWT_ACTIVE_KEY: ${VELIS_AUTH_JWT_ACTIVE_KEY:-}
+  VELIS_AUTH_ALLOWED_ORIGIN: ${VELIS_AUTH_ALLOWED_ORIGIN:-}
+  VELIS_AUTH_COOKIE_SECURE: ${VELIS_AUTH_COOKIE_SECURE:-true}
+  VELIS_AUTH_THROTTLE_KEY: ${VELIS_AUTH_THROTTLE_KEY:-}
 
 services:
   postgres:
@@ -77,6 +84,11 @@ services:
     environment:
       <<: *backend-environment
       VELIS_HTTP_ADDRESS: 0.0.0.0:8080
+      # velis-web 的 nginx 反代 /api：只有把反代自身的地址列为可信代理，IP 维度限流才按真实客户端隔离。
+      # 留空会让所有用户共用一个 IP 来源，30 次失败即可全局锁死登录。
+      # 这里用反代容器的固定地址而不是整个子网：子网还包含网桥网关，而客户端流量从发布端口进来时
+      # 的源地址正是网关；把网关也列为可信会让客户端自带的前缀成为「最右不可信跳点」，可伪造来源 IP。
+      VELIS_AUTH_TRUSTED_PROXY_CIDRS: ${VELIS_AUTH_TRUSTED_PROXY_CIDRS:-172.30.0.10/32}
     ports:
       - "8080:8080"
     depends_on:
@@ -103,6 +115,11 @@ services:
   velis-web:
     build:
       context: ./web
+    networks:
+      default:
+        # 固定地址：velis-api 的 VELIS_AUTH_TRUSTED_PROXY_CIDRS 默认值指向这个 /32，
+        # 只有反代自己可信，网关与其它容器都不在可信范围内。
+        ipv4_address: 172.30.0.10
     ports:
       - "5173:8080"
     depends_on:
@@ -125,6 +142,17 @@ services:
       - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
+
+networks:
+  # 固定子网：velis-api 的 VELIS_AUTH_TRUSTED_PROXY_CIDRS 默认值必须指向确定的反代地址。
+  # 不固定时子网由 Docker 动态分配，默认值会悄悄指向另一个网段，IP 维度限流退化为全局共享
+  # （所有用户共用一份额度，30 次失败即可锁死登录）。
+  # 若本机 172.30.0.0/24 已被占用，compose 会直接报错而不是静默跑起来：
+  # 改这里的 subnet，并同步改 velis-web 的固定地址与 velis-api 的可信代理默认值。
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   postgres-data:

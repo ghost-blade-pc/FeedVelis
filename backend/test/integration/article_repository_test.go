@@ -3,14 +3,10 @@ package integration
 import (
 	"context"
 	"errors"
-	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	articleDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/article"
 	sourceDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/source"
@@ -18,23 +14,10 @@ import (
 )
 
 func TestSourceAndArticleRepositories(t *testing.T) {
-	databaseURL := os.Getenv("VELIS_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("未设置 VELIS_TEST_DATABASE_URL")
-	}
-	parsed, err := url.Parse(databaseURL)
-	if err != nil || !strings.HasSuffix(parsed.Path, "_test") {
-		t.Fatal("集成测试只允许使用名称以 _test 结尾的数据库")
-	}
+	env := newTestEnv(t)
+	env.resetArticles(t)
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	if _, err := pool.Exec(ctx, `TRUNCATE velis.article_contents, velis.articles, velis.sources RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatal(err)
-	}
+	pool := env.pool
 
 	sources := postgres.NewSourceRepository(pool)
 	now := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/clock"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/config"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/persistence/postgres"
 	hertzhttp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz"
@@ -21,7 +22,31 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	healthService := health.NewService(pool)
 	feed := buildFeedServices(pool)
-	h := hertzhttp.NewServer(cfg.HTTP.Address, cfg.HTTP.ShutdownTimeout, logger, healthService, feed.articles)
+	options := hertzhttp.Options{
+		Address:         cfg.HTTP.Address,
+		ShutdownTimeout: cfg.HTTP.ShutdownTimeout,
+		Logger:          logger,
+		Health:          healthService,
+		Articles:        feed.articles,
+	}
+	if cfg.Auth.Enabled {
+		accountService, err := buildAuthService(cfg, pool, logger)
+		if err != nil {
+			return err
+		}
+		proxies, err := parseTrustedProxies(cfg.Auth.TrustedProxyCIDRs)
+		if err != nil {
+			return err
+		}
+		options.Auth = &hertzhttp.AuthOptions{
+			Service:        accountService,
+			AllowedOrigin:  cfg.Auth.AllowedOrigin,
+			TrustedProxies: proxies,
+			CookieSecure:   cfg.Auth.CookieSecure,
+			Clock:          clock.System{},
+		}
+	}
+	h := hertzhttp.NewServer(options)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- h.Run()
@@ -31,6 +56,11 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		"address", cfg.HTTP.Address,
 		"environment", cfg.App.Environment,
 		"database_max_connections", cfg.Database.MaxConnections,
+		"auth_enabled", cfg.Auth.Enabled,
+		"registration_enabled", cfg.Auth.RegistrationEnabled,
+		// 记录实际生效的网段而不是数量：配错可信代理会让 IP 维度限流退化为全局共享，
+		// 只有把取值本身打出来，运维才能从启动日志发现「配了但配错」。
+		"trusted_proxy_cidrs", cfg.Auth.TrustedProxyCIDRs,
 	)
 
 	select {

@@ -20,6 +20,7 @@ type Config struct {
 	HTTP     HTTPConfig     `yaml:"http"`
 	Database DatabaseConfig `yaml:"database"`
 	Worker   WorkerConfig   `yaml:"worker"`
+	Auth     AuthConfig     `yaml:"auth"`
 }
 
 type AppConfig struct {
@@ -66,6 +67,32 @@ func Default() Config {
 			MinConnections: 2,
 		},
 		Worker: WorkerConfig{HeartbeatRaw: "30s"},
+		Auth: AuthConfig{
+			Enabled:             false,
+			RegistrationEnabled: false,
+			AccessRaw:           "15m",
+			SessionRaw:          "168h",
+			JWTIssuer:           "velis-api",
+			JWTAudience:         "velis-web",
+			CookieSecure:        true,
+			CleanupRaw:          "1h",
+			CleanupBatch:        500,
+			Throttle: ThrottleConfig{
+				AccountWindowRaw: "15m",
+				AccountLimit:     5,
+				IPWindowRaw:      "15m",
+				IPLimit:          30,
+				BlockRaw:         "15m",
+			},
+			Argon2: Argon2Config{
+				MemoryKiB:   19456,
+				Iterations:  2,
+				Parallelism: 1,
+				SaltBytes:   16,
+				KeyBytes:    32,
+				Concurrency: 1,
+			},
+		},
 	}
 }
 
@@ -104,13 +131,136 @@ func applyEnvironment(cfg *Config) error {
 	if err := setInt32(&cfg.Database.MaxConnections, "VELIS_DATABASE_MAX_CONNECTIONS"); err != nil {
 		return err
 	}
-	return setInt32(&cfg.Database.MinConnections, "VELIS_DATABASE_MIN_CONNECTIONS")
+	if err := setInt32(&cfg.Database.MinConnections, "VELIS_DATABASE_MIN_CONNECTIONS"); err != nil {
+		return err
+	}
+	return applyAuthEnvironment(cfg)
+}
+
+func applyAuthEnvironment(cfg *Config) error {
+	if err := setBool(&cfg.Auth.Enabled, "VELIS_AUTH_ENABLED"); err != nil {
+		return err
+	}
+	if err := setBool(&cfg.Auth.RegistrationEnabled, "VELIS_AUTH_REGISTRATION_ENABLED"); err != nil {
+		return err
+	}
+	setString(&cfg.Auth.AccessRaw, "VELIS_AUTH_ACCESS_TTL")
+	setString(&cfg.Auth.SessionRaw, "VELIS_AUTH_SESSION_TTL")
+	setString(&cfg.Auth.JWTIssuer, "VELIS_AUTH_JWT_ISSUER")
+	setString(&cfg.Auth.JWTAudience, "VELIS_AUTH_JWT_AUDIENCE")
+	setString(&cfg.Auth.JWTActiveKID, "VELIS_AUTH_JWT_ACTIVE_KID")
+	setString(&cfg.Auth.JWTActiveKey, "VELIS_AUTH_JWT_ACTIVE_KEY")
+	setString(&cfg.Auth.JWTPreviousKID, "VELIS_AUTH_JWT_PREVIOUS_KID")
+	setString(&cfg.Auth.JWTPreviousKey, "VELIS_AUTH_JWT_PREVIOUS_KEY")
+	setString(&cfg.Auth.AllowedOrigin, "VELIS_AUTH_ALLOWED_ORIGIN")
+	setString(&cfg.Auth.ThrottleKey, "VELIS_AUTH_THROTTLE_KEY")
+	setString(&cfg.Auth.CleanupRaw, "VELIS_AUTH_CLEANUP_INTERVAL")
+	setString(&cfg.Auth.Throttle.AccountWindowRaw, "VELIS_AUTH_THROTTLE_ACCOUNT_WINDOW")
+	setString(&cfg.Auth.Throttle.IPWindowRaw, "VELIS_AUTH_THROTTLE_IP_WINDOW")
+	setString(&cfg.Auth.Throttle.BlockRaw, "VELIS_AUTH_THROTTLE_BLOCK_DURATION")
+
+	if err := setBool(&cfg.Auth.CookieSecure, "VELIS_AUTH_COOKIE_SECURE"); err != nil {
+		return err
+	}
+	if err := setInt(&cfg.Auth.CleanupBatch, "VELIS_AUTH_CLEANUP_BATCH"); err != nil {
+		return err
+	}
+	if err := setInt(&cfg.Auth.Throttle.AccountLimit, "VELIS_AUTH_THROTTLE_ACCOUNT_LIMIT"); err != nil {
+		return err
+	}
+	if err := setInt(&cfg.Auth.Throttle.IPLimit, "VELIS_AUTH_THROTTLE_IP_LIMIT"); err != nil {
+		return err
+	}
+	if err := setUint32(&cfg.Auth.Argon2.MemoryKiB, "VELIS_AUTH_ARGON2_MEMORY_KIB"); err != nil {
+		return err
+	}
+	if err := setUint32(&cfg.Auth.Argon2.Iterations, "VELIS_AUTH_ARGON2_ITERATIONS"); err != nil {
+		return err
+	}
+	if err := setInt(&cfg.Auth.Argon2.SaltBytes, "VELIS_AUTH_ARGON2_SALT_BYTES"); err != nil {
+		return err
+	}
+	if err := setInt(&cfg.Auth.Argon2.KeyBytes, "VELIS_AUTH_ARGON2_KEY_BYTES"); err != nil {
+		return err
+	}
+	if err := setInt(&cfg.Auth.Argon2.Concurrency, "VELIS_AUTH_ARGON2_CONCURRENCY"); err != nil {
+		return err
+	}
+	if err := setUint8(&cfg.Auth.Argon2.Parallelism, "VELIS_AUTH_ARGON2_PARALLELISM"); err != nil {
+		return err
+	}
+	if value, ok := os.LookupEnv("VELIS_AUTH_TRUSTED_PROXY_CIDRS"); ok {
+		cfg.Auth.TrustedProxyCIDRs = splitList(value)
+	}
+	return nil
+}
+
+func splitList(value string) []string {
+	items := make([]string, 0)
+	for _, item := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	return items
 }
 
 func setString(target *string, key string) {
 	if value, ok := os.LookupEnv(key); ok {
 		*target = value
 	}
+}
+
+func setBool(target *bool, key string) error {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fmt.Errorf("环境变量 %s 必须是布尔值: %w", key, err)
+	}
+	*target = parsed
+	return nil
+}
+
+func setInt(target *int, key string) error {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("环境变量 %s 必须是整数: %w", key, err)
+	}
+	*target = parsed
+	return nil
+}
+
+func setUint32(target *uint32, key string) error {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 32)
+	if err != nil {
+		return fmt.Errorf("环境变量 %s 必须是非负整数: %w", key, err)
+	}
+	*target = uint32(parsed)
+	return nil
+}
+
+func setUint8(target *uint8, key string) error {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 8)
+	if err != nil {
+		return fmt.Errorf("环境变量 %s 必须是非负整数: %w", key, err)
+	}
+	*target = uint8(parsed)
+	return nil
 }
 
 func setInt32(target *int32, key string) error {
@@ -153,7 +303,7 @@ func (cfg *Config) Validate() error {
 	if cfg.Database.MinConnections < 0 || cfg.Database.MinConnections > cfg.Database.MaxConnections {
 		return errors.New("database.min_connections 必须介于 0 和 max_connections 之间")
 	}
-	return nil
+	return validateAuth(&cfg.Auth, cfg.App.Environment)
 }
 
 func positiveDuration(name, raw string) (time.Duration, error) {

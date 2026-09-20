@@ -29,7 +29,7 @@ func (h *Health) Ready(ctx context.Context, c *app.RequestContext) {
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := h.service.Ready(checkCtx); err != nil {
-		presenter.WriteError(c, consts.StatusServiceUnavailable, "NOT_READY", "服务尚未就绪", middleware.RequestIDFrom(c))
+		presenter.WriteError(c, consts.StatusServiceUnavailable, presenter.CodeNotReady, "服务尚未就绪", middleware.RequestIDFrom(c))
 		return
 	}
 	c.JSON(consts.StatusOK, map[string]string{"status": "ok"})
