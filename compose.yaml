@@ -12,6 +12,13 @@ x-backend-environment: &backend-environment
   VELIS_AUTH_ALLOWED_ORIGIN: ${VELIS_AUTH_ALLOWED_ORIGIN:-}
   VELIS_AUTH_COOKIE_SECURE: ${VELIS_AUTH_COOKIE_SECURE:-true}
   VELIS_AUTH_THROTTLE_KEY: ${VELIS_AUTH_THROTTLE_KEY:-}
+  VELIS_ASSET_ENDPOINT: minio:9000
+  VELIS_ASSET_BUCKET: ${MINIO_ASSET_BUCKET:-velis-article-assets}
+  VELIS_ASSET_ACCESS_KEY: ${MINIO_ROOT_USER:-velis}
+  VELIS_ASSET_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-velis-development-only}
+  VELIS_ASSET_USE_TLS: "false"
+  VELIS_ASSET_WEB_ORIGIN: ${VELIS_ASSET_WEB_ORIGIN:-http://localhost:5173}
+  VELIS_FEED_PROXY_URL: ${VELIS_FEED_PROXY_URL:-}
 
 services:
   postgres:
@@ -58,11 +65,34 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-velis}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-velis-development-only}
+      # 社区版 MinIO 不实现 BucketCORS API，只支持服务级 CORS；这里限制为单一精确 Web Origin。
+      MINIO_API_CORS_ALLOW_ORIGIN: ${VELIS_ASSET_WEB_ORIGIN:-http://localhost:5173}
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    # 复用 MinIO 服务镜像内置的 mc，避免额外维护客户端镜像版本。
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-velis}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-velis-development-only}
+      MINIO_ASSET_BUCKET: ${MINIO_ASSET_BUCKET:-velis-article-assets}
+      MINIO_WEB_ORIGIN: ${VELIS_ASSET_WEB_ORIGIN:-http://localhost:5173}
+    volumes:
+      - ./deploy/minio/init.sh:/usr/local/bin/velis-minio-init:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/velis-minio-init"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
 
   velis-migrate:
     build:
@@ -94,6 +124,8 @@ services:
     depends_on:
       velis-migrate:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/readyz"]
       interval: 5s
@@ -109,6 +141,8 @@ services:
     environment: *backend-environment
     depends_on:
       velis-migrate:
+        condition: service_completed_successfully
+      minio-init:
         condition: service_completed_successfully
     stop_grace_period: 15s
 

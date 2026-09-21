@@ -34,6 +34,11 @@ func (r *CleanupRepository) DeleteExpiredBlocks(ctx context.Context, before time
 SELECT ctid FROM velis.login_blocks WHERE blocked_until < $1 LIMIT $2)`, before, limit)
 }
 
+func (r *CleanupRepository) DeleteExpiredIdempotency(ctx context.Context, before time.Time, limit int) (int64, error) {
+	return r.deleteBatch(ctx, `DELETE FROM velis.idempotency_operations WHERE ctid IN (
+SELECT ctid FROM velis.idempotency_operations WHERE expires_at <= $1 ORDER BY expires_at LIMIT $2)`, before, limit)
+}
+
 func (r *CleanupRepository) deleteBatch(ctx context.Context, statement string, before time.Time, limit int) (int64, error) {
 	tag, err := querier(ctx, r.pool).Exec(ctx, statement, before, limit)
 	if err != nil {

@@ -119,6 +119,15 @@ button {
   font-weight: 400;
   background: #fbfdfb;
 }
+.field textarea {
+  width: 100%;
+  padding: 0.8rem;
+  border: 1px solid #cdd9d1;
+  border-radius: 0.75rem;
+  background: #fbfdfb;
+  font: 400 0.95rem/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}
 .field input:focus-visible { outline: 2px solid #176b43; outline-offset: 1px; }
 .field-hint { margin: 0; color: #627067; font-size: 0.85rem; }
 .field-hint .link { color: #176b43; font-weight: 700; text-decoration: underline; }
@@ -129,8 +138,32 @@ button {
 .account-facts dd { margin: 0; }
 button.secondary { background: #edf3ee; color: #1d3a2b; }
 button:disabled { opacity: 0.65; cursor: progress; }
+.heading-actions, .editor-actions, .upload-row, .conflict-actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;
+}
+.button-link { display: inline-block; border-radius: 999px; padding: 0.7rem 1.1rem; background: #176b43; color: #fff; font-weight: 700; }
+.secondary-link { background: #edf3ee; color: #1d3a2b; cursor: pointer; }
+.editor-page { display: grid; gap: 1.5rem; }
+.editor-card { display: grid; gap: 1rem; padding: clamp(1.25rem, 4vw, 2rem); border: 1px solid #dce6dd; border-radius: 1rem; background: #fff; }
+.editor-actions { justify-content: flex-start; }
+.warning { margin: 0; padding: 0.75rem 1rem; border-radius: 0.75rem; background: #fff4d8; color: #6e5010; }
+.preview-card { padding-top: 1rem; border-top: 1px solid #dce6dd; }
+.preview-card h2 { font-size: 1.2rem; }
+button.danger { background: #a54135; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+.source-page, .source-list { display: grid; gap: 1rem; }
+.source-create { display: grid; grid-template-columns: minmax(0, 2fr) minmax(10rem, 1fr) auto; align-items: end; gap: 0.75rem; padding: 1.25rem; border: 1px solid #dce6dd; border-radius: 1rem; background: #fff; }
+.source-card { display: grid; gap: 0.75rem; padding: 1.25rem; border: 1px solid #dce6dd; border-radius: 1rem; background: #fff; }
+.source-card h2 { margin: 0.25rem 0; font-size: 1.25rem; }
+.source-url { margin: 0; overflow-wrap: anywhere; color: #536158; }
+.source-facts { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; margin: 0; }
+.source-facts dt { color: #627067; }.source-facts dd { margin: 0; }
+.source-actions { display: flex; gap: 0.75rem; align-items: end; flex-wrap: wrap; }
+.compact-field { max-width: 10rem; }
+.run-list { margin: 0; padding: 1rem 1rem 1rem 2rem; border-radius: 0.75rem; background: #f4f7f3; }
 
 @media (max-width: 600px) {
   .app-header { align-items: flex-start; flex-direction: column; }
   main { margin-top: 2rem; }
+  .source-create { grid-template-columns: 1fr; }
 }

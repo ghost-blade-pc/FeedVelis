@@ -74,6 +74,610 @@ paths:
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
+  /me/articles:
+    get:
+      operationId: listMyArticles
+      summary: 分页读取本人文章
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/ArticlePageLimit"
+      responses:
+        "200":
+          description: 本人文章分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyArticlePage"
+        "401":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createMyArticle
+      summary: 创建本人草稿或直接发布
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateArticleRequest"
+      responses:
+        "201":
+          description: 已创建文章
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyArticleDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /me/articles/preview:
+    post:
+      operationId: previewMyArticle
+      summary: 无状态预览本人 Markdown
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewArticleRequest"
+      responses:
+        "200":
+          description: 服务端渲染结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArticlePreview"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /me/articles/{article_id}:
+    parameters:
+      - $ref: "#/components/parameters/ArticleID"
+    get:
+      operationId: getMyArticle
+      summary: 读取本人文章私有详情
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 本人文章详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyArticleDetail"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateMyArticle
+      summary: 编辑本人文章当前修订
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateArticleRequest"
+      responses:
+        "200":
+          description: 更新后的文章
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyArticleDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteMyArticle
+      summary: 软删除本人文章
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 已软删除
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /me/articles/{article_id}/publish:
+    post:
+      operationId: publishMyArticle
+      summary: 首次发布或重新发布本人文章
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: 已发布
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyArticleDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /me/articles/{article_id}/offline:
+    post:
+      operationId: offlineMyArticle
+      summary: 作者下架本人文章
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: 已下架
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyArticleDetail"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /me/assets:
+    post:
+      operationId: createArticleAsset
+      summary: 创建图片资产上传身份与预签名信息
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssetRequest"
+      responses:
+        "201":
+          description: 待上传资产
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetUpload"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /me/assets/{asset_id}/confirm:
+    post:
+      operationId: confirmArticleAsset
+      summary: 验证对象并确认图片资产
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AssetID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: 已确认资产
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArticleAsset"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /assets/{asset_id}/content:
+    parameters:
+      - $ref: "#/components/parameters/AssetID"
+    get:
+      operationId: getArticleAssetContent
+      summary: 经实时授权流式读取私有图片资产
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 图片字节流
+          headers:
+            ETag:
+              $ref: "#/components/headers/ObjectETag"
+            X-Content-Type-Options:
+              schema:
+                type: string
+                const: nosniff
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+    head:
+      operationId: headArticleAssetContent
+      summary: 经实时授权读取图片资产元数据
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 图片元数据
+          headers:
+            ETag:
+              $ref: "#/components/headers/ObjectETag"
+            Content-Length:
+              schema:
+                type: integer
+                format: int64
+            X-Content-Type-Options:
+              schema:
+                type: string
+                const: nosniff
+        "404":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /admin/articles/{article_id}/offline:
+    post:
+      operationId: adminOfflineArticle
+      summary: 管理员下架公开文章
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: 已由管理员下架
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminArticleResult"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /admin/articles/{article_id}/restore:
+    post:
+      operationId: adminRestoreArticle
+      summary: 恢复管理员下架的文章
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: 已恢复文章
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminArticleResult"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /admin/sources:
+    get:
+      operationId: listAdminSources
+      summary: 管理员分页读取 Source
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/SourcePageLimit"
+      responses:
+        "200":
+          description: Source 分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourcePage"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createAdminSource
+      summary: 管理员新增系统级 Source
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSourceRequest"
+      responses:
+        "201":
+          description: 已创建 Source
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /admin/sources/{source_id}:
+    parameters:
+      - $ref: "#/components/parameters/SourceID"
+    get:
+      operationId: getAdminSource
+      summary: 管理员读取 Source 详情
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Source 详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSource"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateAdminSource
+      summary: 管理员修改 Source 抓取周期
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSourceRequest"
+      responses:
+        "200":
+          description: 已更新 Source
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /admin/sources/{source_id}/pause:
+    post:
+      operationId: pauseAdminSource
+      summary: 管理员暂停 Source
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SourceID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: 已暂停
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /admin/sources/{source_id}/resume:
+    post:
+      operationId: resumeAdminSource
+      summary: 管理员恢复 Source
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SourceID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: 已恢复
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSource"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /admin/sources/{source_id}/fetches:
+    get:
+      operationId: listAdminSourceFetches
+      summary: 管理员读取 Source 抓取历史
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SourceID"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/FetchRunPageLimit"
+      responses:
+        "200":
+          description: 抓取历史分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceFetchRunPage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: fetchAdminSource
+      summary: 管理员同步触发 Source 抓取
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SourceID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: 抓取运行结果；重试运行中的同一操作时可返回 running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceFetchRun"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /auth/register:
     post:
       operationId: registerAccount
@@ -238,6 +842,88 @@ components:
       in: cookie
       name: __Host-velis_refresh
       description: 生产使用 __Host-velis_refresh（HttpOnly; Secure; SameSite=Strict; Path=/）；本地开发为 velis_refresh 且 Secure=false。
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+      description: 服务端生成的不透明分页游标
+    ArticlePageLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+    SourcePageLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    FetchRunPageLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    ArticleID:
+      name: article_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    AssetID:
+      name: asset_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SourceID:
+      name: source_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 同一调用者和操作内唯一的 UUID；成功结果默认可重放 24 小时。
+      schema:
+        type: string
+        format: uuid
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: 当前聚合强 ETag，格式为双引号包裹的十进制 lock_version。
+      schema:
+        type: string
+        pattern: '^"[1-9][0-9]*"$'
+  headers:
+    ETag:
+      description: 聚合当前 lock_version 的强 ETag。
+      required: true
+      schema:
+        type: string
+        pattern: '^"[1-9][0-9]*"$'
+    ObjectETag:
+      description: 对象存储返回的内容 ETag。
+      required: true
+      schema:
+        type: string
   responses:
     HealthOK:
       description: 健康
@@ -271,29 +957,20 @@ components:
           type: boolean
     ArticleItem:
       type: object
-      required: [id, title, canonical_url, source, author_name, excerpt, source_published_at, discovered_at]
+      required: [id, title, excerpt, published_at, origin]
       properties:
         id:
           type: integer
           format: int64
         title:
           type: string
-        canonical_url:
-          type: string
-          format: uri
-          pattern: "^https?://"
-        source:
-          $ref: "#/components/schemas/ArticleSource"
-        author_name:
-          type: [string, "null"]
         excerpt:
           type: string
-        source_published_at:
-          type: [string, "null"]
-          format: date-time
-        discovered_at:
+        published_at:
           type: string
           format: date-time
+        origin:
+          $ref: "#/components/schemas/ArticleOrigin"
     ArticleSource:
       type: object
       required: [id, title, site_url]
@@ -306,34 +983,402 @@ components:
         site_url:
           type: [string, "null"]
           format: uri
-    ArticleDetail:
+    ArticleOrigin:
+      oneOf:
+        - $ref: "#/components/schemas/RSSArticleOrigin"
+        - $ref: "#/components/schemas/UserArticleOrigin"
+      discriminator:
+        propertyName: type
+        mapping:
+          rss: "#/components/schemas/RSSArticleOrigin"
+          user: "#/components/schemas/UserArticleOrigin"
+    RSSArticleOrigin:
       type: object
-      required: [id, title, canonical_url, source, author_name, excerpt, source_published_at, discovered_at, content_html]
+      required: [type, source, canonical_url, source_published_at]
+      properties:
+        type:
+          type: string
+          const: rss
+        source:
+          $ref: "#/components/schemas/ArticleSource"
+        canonical_url:
+          type: string
+          format: uri
+          pattern: "^https?://"
+        source_published_at:
+          type: [string, "null"]
+          format: date-time
+    UserArticleOrigin:
+      type: object
+      required: [type, author]
+      properties:
+        type:
+          type: string
+          const: user
+        author:
+          $ref: "#/components/schemas/ArticleAuthor"
+    ArticleAuthor:
+      type: object
+      required: [id, nickname]
+      properties:
+        id:
+          type: string
+          format: uuid
+        nickname:
+          type: string
+    ArticleDetail:
+      allOf:
+        - $ref: "#/components/schemas/ArticleItem"
+        - type: object
+          required: [content_html]
+          properties:
+            content_html:
+              type: string
+              description: 经来源对应策略清洗的当前公开修订正文 HTML
+    ArticleStatus:
+      type: string
+      enum: [draft, published, offline, deleted]
+    OfflineReason:
+      type: [string, "null"]
+      enum: [author, admin, null]
+    MyArticlePage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MyArticleSummary"
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
+    MyArticleSummary:
+      type: object
+      required: [id, title, status, offline_reason, revision_no, lock_version, published_at, updated_at]
       properties:
         id:
           type: integer
           format: int64
         title:
           type: string
-        canonical_url:
+        status:
+          $ref: "#/components/schemas/ArticleStatus"
+        offline_reason:
+          $ref: "#/components/schemas/OfflineReason"
+        revision_no:
+          type: integer
+          minimum: 1
+        lock_version:
+          type: integer
+          format: int64
+          minimum: 1
+        published_at:
+          type: [string, "null"]
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MyArticleDetail:
+      allOf:
+        - $ref: "#/components/schemas/MyArticleSummary"
+        - type: object
+          required: [markdown, content_html, excerpt, asset_ids]
+          properties:
+            markdown:
+              type: string
+              maxLength: 262144
+            content_html:
+              type: string
+            excerpt:
+              type: string
+            asset_ids:
+              type: array
+              maxItems: 20
+              items:
+                type: string
+                format: uuid
+    CreateArticleRequest:
+      type: object
+      additionalProperties: false
+      required: [title, markdown, initial_status]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        markdown:
+          type: string
+          maxLength: 262144
+        initial_status:
+          type: string
+          enum: [draft, published]
+    UpdateArticleRequest:
+      type: object
+      additionalProperties: false
+      required: [title, markdown]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        markdown:
+          type: string
+          maxLength: 262144
+    PreviewArticleRequest:
+      type: object
+      additionalProperties: false
+      required: [title, markdown]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        markdown:
+          type: string
+          maxLength: 262144
+    ArticlePreview:
+      type: object
+      required: [content_html, plain_text, excerpt, asset_ids]
+      properties:
+        content_html:
+          type: string
+        plain_text:
+          type: string
+        excerpt:
+          type: string
+        asset_ids:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            format: uuid
+    AdminArticleResult:
+      type: object
+      required: [id, status, offline_reason, lock_version, published_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/ArticleStatus"
+        offline_reason:
+          $ref: "#/components/schemas/OfflineReason"
+        lock_version:
+          type: integer
+          format: int64
+          minimum: 1
+        published_at:
+          type: string
+          format: date-time
+    CreateAssetRequest:
+      type: object
+      additionalProperties: false
+      required: [content_type, size_bytes]
+      properties:
+        content_type:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 10485760
+    AssetUpload:
+      type: object
+      required: [asset, upload_url, upload_method, upload_headers, expires_at]
+      properties:
+        asset:
+          $ref: "#/components/schemas/ArticleAsset"
+        upload_url:
+          type: string
+          format: uri
+          description: 15 分钟有效的对象存储预签名地址；不属于匿名读取契约。
+        upload_method:
+          type: string
+          const: PUT
+        upload_headers:
+          type: object
+          additionalProperties:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+    ArticleAsset:
+      type: object
+      required: [id, status, content_type, size_bytes, width, height, checksum, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, ready, delete_pending, deleted]
+        content_type:
+          type: [string, "null"]
+          enum: [image/jpeg, image/png, image/webp, null]
+        size_bytes:
+          type: [integer, "null"]
+          format: int64
+        width:
+          type: [integer, "null"]
+          maximum: 8192
+        height:
+          type: [integer, "null"]
+          maximum: 8192
+        checksum:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        confirmed_at:
+          type: [string, "null"]
+          format: date-time
+    SourcePage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminSource"
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
+    AdminSource:
+      type: object
+      required:
+        - id
+        - feed_url
+        - title
+        - status
+        - fetch_interval_seconds
+        - lock_version
+        - next_fetch_at
+        - consecutive_failures
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        feed_url:
           type: string
           format: uri
           pattern: "^https?://"
-        source:
-          $ref: "#/components/schemas/ArticleSource"
-        author_name:
-          type: [string, "null"]
-        excerpt:
+          description: 创建后不可修改，且不得含凭据。
+        title:
           type: string
-        source_published_at:
+        status:
+          type: string
+          enum: [active, paused, degraded]
+        fetch_interval_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          default: 1800
+        lock_version:
+          type: integer
+          format: int64
+          minimum: 1
+        next_fetch_at:
           type: [string, "null"]
           format: date-time
-        discovered_at:
+        last_success_at:
+          type: [string, "null"]
+          format: date-time
+        consecutive_failures:
+          type: integer
+          minimum: 0
+        last_error_code:
+          type: [string, "null"]
+        created_at:
           type: string
           format: date-time
-        content_html:
+        updated_at:
+          type: string
+          format: date-time
+    CreateSourceRequest:
+      type: object
+      additionalProperties: false
+      required: [feed_url]
+      properties:
+        feed_url:
+          type: string
+          format: uri
+          pattern: "^https?://"
+        fetch_interval_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          default: 1800
+    UpdateSourceRequest:
+      type: object
+      additionalProperties: false
+      required: [fetch_interval_seconds]
+      properties:
+        fetch_interval_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+    SourceFetchRunPage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceFetchRun"
+        next_cursor:
           type: [string, "null"]
-          description: 经白名单清洗的正文 HTML，可能为空（如源仅提供纯文本）
+        has_more:
+          type: boolean
+    SourceFetchRun:
+      type: object
+      required:
+        - id
+        - source_id
+        - trigger
+        - status
+        - not_modified
+        - inserted_count
+        - updated_count
+        - unchanged_count
+        - skipped_count
+        - started_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_id:
+          type: integer
+          format: int64
+        trigger:
+          type: string
+          enum: [scheduled, manual]
+        status:
+          type: string
+          enum: [running, succeeded, failed, aborted]
+        not_modified:
+          type: boolean
+        inserted_count:
+          type: integer
+          minimum: 0
+        updated_count:
+          type: integer
+          minimum: 0
+        unchanged_count:
+          type: integer
+          minimum: 0
+        skipped_count:
+          type: integer
+          minimum: 0
+        error_code:
+          type: [string, "null"]
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
     ErrorResponse:
       type: object
       required: [error]
@@ -347,8 +1392,16 @@ components:
               description: >-
                 统一错误码。认证相关：AUTH_INVALID_CREDENTIALS、AUTH_SESSION_INVALID、
                 AUTH_REGISTRATION_DISABLED、AUTH_USERNAME_CONFLICT、AUTH_RATE_LIMITED、
-                AUTH_HASH_BUSY、CSRF_REJECTED；通用：VALIDATION_FAILED、NOT_FOUND、
-                NOT_READY、INTERNAL_ERROR、DEPENDENCY_UNAVAILABLE。
+                AUTH_HASH_BUSY、CSRF_REJECTED、FORBIDDEN；内容与并发：
+                IDEMPOTENCY_KEY_REQUIRED、IDEMPOTENCY_KEY_INVALID、
+                IDEMPOTENCY_KEY_REUSED、IDEMPOTENCY_IN_PROGRESS、
+                IF_MATCH_REQUIRED、IF_MATCH_INVALID、
+                ARTICLE_VERSION_CONFLICT、ARTICLE_ADMIN_OFFLINE、ARTICLE_INVALID_STATE、
+                ARTICLE_CONTENT_INVALID、ARTICLE_ASSET_INVALID、ASSET_QUOTA_EXCEEDED、
+                ASSET_PENDING_LIMIT_EXCEEDED、ASSET_UNAVAILABLE、SOURCE_VERSION_CONFLICT、
+                SOURCE_ALREADY_EXISTS、SOURCE_FETCH_IN_PROGRESS、SOURCE_FETCH_FAILED；
+                通用：VALIDATION_FAILED、NOT_FOUND、NOT_READY、INTERNAL_ERROR、
+                DEPENDENCY_UNAVAILABLE。
             message:
               type: string
             request_id:

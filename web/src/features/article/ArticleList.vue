@@ -4,7 +4,7 @@ import { RouterLink } from 'vue-router'
 
 import { listArticles } from '../../api/client'
 import type { ArticleItem } from '../../types/article'
-import { articleTime, formatTime, safeArticleURL } from './model'
+import { articleOriginLabel, articleOriginURL, articleTime, formatTime } from './model'
 
 const items = ref<ArticleItem[]>([])
 const cursor = ref<string | null>(null)
@@ -38,7 +38,7 @@ onBeforeUnmount(() => request?.abort())
 <template>
   <section class="article-page" aria-labelledby="latest-title">
     <header class="page-heading">
-      <p class="eyebrow">来自你登记的 Feed</p>
+      <p class="eyebrow">RSS 与站内作者的统一内容池</p>
       <h1 id="latest-title">最新文章</h1>
     </header>
 
@@ -47,13 +47,12 @@ onBeforeUnmount(() => request?.abort())
       <p>暂时无法加载文章。</p>
       <button type="button" @click="load(true)">重试</button>
     </div>
-    <p v-else-if="items.length === 0" class="state-card">还没有文章。请先使用 velis-admin 添加并抓取一个 Feed。</p>
+    <p v-else-if="items.length === 0" class="state-card">还没有公开文章。</p>
 
     <div v-else class="article-list">
       <article v-for="item in items" :key="item.id" class="article-card">
         <p class="article-meta">
-          <span>{{ item.source.title }}</span>
-          <span v-if="item.author_name"> · {{ item.author_name }}</span>
+          <span>{{ item.origin.type === 'rss' ? 'RSS' : '站内作者' }} · {{ articleOriginLabel(item) }}</span>
         </p>
         <h2>
           <RouterLink :to="`/articles/${item.id}`">{{ item.title }}</RouterLink>
@@ -62,9 +61,9 @@ onBeforeUnmount(() => request?.abort())
         <p class="article-time">
           <span>{{ articleTime(item).label }} {{ formatTime(articleTime(item).value) }}</span>
           <a
-            v-if="safeArticleURL(item.canonical_url)"
+            v-if="articleOriginURL(item)"
             class="origin-link"
-            :href="safeArticleURL(item.canonical_url)"
+            :href="articleOriginURL(item)"
             target="_blank"
             rel="noopener noreferrer"
           >原文 ↗</a>

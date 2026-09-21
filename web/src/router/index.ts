@@ -21,6 +21,30 @@ const router = createRouter({
       component: () => import('../views/AccountView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/me/articles',
+      name: 'my-articles',
+      component: () => import('../views/MyArticlesView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/me/articles/new',
+      name: 'new-article',
+      component: () => import('../views/ArticleEditorView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/me/articles/:id/edit',
+      name: 'edit-article',
+      component: () => import('../views/ArticleEditorView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/admin/sources',
+      name: 'admin-sources',
+      component: () => import('../views/AdminSourcesView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
   ],
 })
 
@@ -30,9 +54,10 @@ router.beforeEach(async (to) => {
     return true
   }
   const snapshot = await appSession.restore()
-  if (snapshot.accessToken) {
+  if (snapshot.accessToken && (!to.meta.requiresAdmin || snapshot.account?.role === 'admin')) {
     return true
   }
+  if (snapshot.accessToken && to.meta.requiresAdmin) return { name: 'latest' }
   return { name: 'login', query: { redirect: to.fullPath } }
 })
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	accountApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/account"
 	sourceApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/source"
@@ -22,11 +23,24 @@ const usage = `用法: velis-admin <source|account> <命令> [参数]
   account set-status -username <name> -status active|disabled`
 
 type SourceService interface {
-	Add(context.Context, string) (sourceDomain.Source, bool, error)
+	AddWithInterval(context.Context, string, time.Duration) (sourceDomain.Source, bool, error)
 	List(context.Context) ([]sourceDomain.Source, error)
-	Pause(context.Context, int64) error
-	Resume(context.Context, int64) error
-	FetchByID(context.Context, int64, bool) (sourceApp.FetchOutcome, error)
+	Get(context.Context, int64) (sourceDomain.Source, error)
+	Pause(context.Context, int64, int64) (sourceDomain.Source, error)
+	Resume(context.Context, int64, int64) (sourceDomain.Source, error)
+	FetchManual(context.Context, sourceApp.ManualFetch) (sourceApp.FetchOutcome, sourceDomain.FetchRun, error)
+	History(context.Context, sourceApp.HistoryCommand) (sourceApp.HistoryPage, error)
+}
+
+// SourceServices 组合本地写用例与只读历史用例。
+// CLI 没有登录身份，因此写操作走仓储级用例；抓取历史复用管理员用例的只读查询。
+type SourceServices struct {
+	*sourceApp.Service
+	Admin *sourceApp.AdminService
+}
+
+func (s SourceServices) History(ctx context.Context, command sourceApp.HistoryCommand) (sourceApp.HistoryPage, error) {
+	return s.Admin.History(ctx, command)
 }
 
 // AccountAdminService 是本地账户维护用例；不依赖认证运行时配置。

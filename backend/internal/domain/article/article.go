@@ -36,10 +36,8 @@ var (
 
 type Status string
 
-const (
-	StatusPublished Status = "published"
-	StatusHidden    Status = "hidden"
-)
+// RSS 入库只产生 published 文章；下架与删除属于统一聚合的生命周期，由 aggregate.go 定义。
+const StatusPublished Status = "published"
 
 type Article struct {
 	ID                int64
@@ -93,8 +91,14 @@ type SourceSummary struct {
 	SiteURL *string
 }
 
+type AuthorSummary struct {
+	ID       string
+	Nickname string
+}
+
 type ListItem struct {
 	ID                int64
+	Origin            OriginType
 	Title             string
 	CanonicalURL      string
 	Source            SourceSummary
@@ -103,6 +107,7 @@ type ListItem struct {
 	SourcePublishedAt *time.Time
 	DiscoveredAt      time.Time
 	SortAt            time.Time
+	Author            *AuthorSummary
 }
 
 type Cursor struct {

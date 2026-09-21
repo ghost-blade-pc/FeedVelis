@@ -8,8 +8,10 @@ import (
 	"sync"
 
 	accountApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/account"
+	assetApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asset"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/clock"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/config"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/fetcher/httpfeed"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/persistence/postgres"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/scheduler"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,14 +25,20 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	}
 	defer pool.Close()
 
-	feed := buildFeedServices(pool)
+	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
 	owner := workerOwner()
 	cleanup, err := buildCleanupScheduler(cfg, pool, logger)
 	if err != nil {
 		return err
 	}
+	feedMode, feedProxyHost := httpfeed.NetworkMode(cfg.Feed.ProxyURL)
 	logger.Info("velis-worker 已启动", "environment", cfg.App.Environment, "worker_id", owner,
-		"cleanup_enabled", cleanup != nil)
+		"cleanup_enabled", cleanup != nil, "feed_network_mode", feedMode, "feed_proxy_host", feedProxyHost)
+	if feedMode == "trusted_proxy" {
+		// 明确声明信任边界：代理模式下最终地址安全由出口代理负责，应用不做最终 IP 校验。
+		logger.Warn("Feed 抓取使用可信出口代理，最终目标地址安全由该代理负责",
+			"feed_proxy_host", feedProxyHost)
+	}
 
 	var (
 		wait    sync.WaitGroup
@@ -67,7 +75,28 @@ func buildCleanupScheduler(cfg config.Config, pool *pgxpool.Pool, logger *slog.L
 	if err != nil {
 		return nil, err
 	}
-	return scheduler.NewCleanup(service, logger, cfg.Auth.CleanupInterval), nil
+	cleanup := scheduler.NewCleanup(service, logger, cfg.Auth.CleanupInterval)
+	// 资产对象清理复用同一周期；未配置对象存储时该阶段整体跳过。
+	store, err := buildAssetStore(cfg)
+	if err != nil {
+		logger.Warn("资产存储不可用，本轮不执行对象清理", "error", err)
+		return cleanup, nil
+	}
+	if store == nil {
+		return cleanup, nil
+	}
+	assets, err := assetApp.NewCleanupService(assetApp.CleanupDeps{
+		Repository: postgres.NewArticleAssetRepository(pool),
+		Storage:    store,
+		Clock:      clock.System{},
+		Batch:      cfg.Auth.CleanupBatch,
+		PendingTTL: cfg.Assets.PendingTTL,
+		UnboundTTL: cfg.Assets.UnboundTTL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cleanup.WithAssets(assets), nil
 }
 
 func workerOwner() string {

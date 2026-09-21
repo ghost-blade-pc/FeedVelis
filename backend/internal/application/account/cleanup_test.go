@@ -49,6 +49,10 @@ func (f *fakeCleanup) DeleteExpiredBlocks(_ context.Context, cutoff time.Time, l
 	return f.remove("blocks", cutoff, limit)
 }
 
+func (f *fakeCleanup) DeleteExpiredIdempotency(_ context.Context, cutoff time.Time, limit int) (int64, error) {
+	return f.remove("idempotency", cutoff, limit)
+}
+
 func newCleanupService(t *testing.T, repository *fakeCleanup, batch int) (*CleanupService, time.Time) {
 	t.Helper()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
@@ -71,10 +75,11 @@ func TestCleanupAppliesRetentionCutoffs(t *testing.T) {
 		t.Fatalf("空库不应删除任何行，实际 %d", result.Total())
 	}
 	cases := map[string]time.Duration{
-		"sessions": SessionRetention,
-		"tokens":   SessionRetention,
-		"failures": FailureRetention,
-		"blocks":   BlockRetention,
+		"sessions":    SessionRetention,
+		"tokens":      SessionRetention,
+		"failures":    FailureRetention,
+		"blocks":      BlockRetention,
+		"idempotency": 0,
 	}
 	for kind, retention := range cases {
 		want := now.Add(-retention)
@@ -140,6 +145,32 @@ func TestCleanupReportsPartialResultOnFailure(t *testing.T) {
 	}
 	if result.Failures != 0 {
 		t.Fatalf("失败分类不应计为已删除，实际 %d", result.Failures)
+	}
+}
+
+func TestCleanupIdempotencyBatchCapAndRetry(t *testing.T) {
+	series := make([]int64, maxCleanupBatchesPerRun+2)
+	for index := range series {
+		series[index] = 5
+	}
+	repository := newFakeCleanup(map[string][]int64{"idempotency": series})
+	service, _ := newCleanupService(t, repository, 5)
+	result, err := service.Run(context.Background())
+	if err != nil || result.Idempotency != int64(maxCleanupBatchesPerRun*5) || repository.calls["idempotency"] != maxCleanupBatchesPerRun {
+		t.Fatalf("幂等清理批量上限 result=%+v calls=%d err=%v", result, repository.calls["idempotency"], err)
+	}
+
+	repository = newFakeCleanup(map[string][]int64{"idempotency": {3}})
+	repository.failOn = "idempotency"
+	service, _ = newCleanupService(t, repository, 5)
+	if _, err := service.Run(context.Background()); err == nil {
+		t.Fatal("幂等清理失败应保留错误供下一轮重试")
+	}
+	repository.failOn = ""
+	result, err = service.Run(context.Background())
+	if err != nil || result.Idempotency != 0 {
+		// fake 的首次失败已经消耗一次调用序号；重试证明调度用例没有永久停用该分类。
+		t.Fatalf("失败后重试 result=%+v err=%v", result, err)
 	}
 }
 

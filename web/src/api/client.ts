@@ -17,11 +17,16 @@ export class ApiError extends Error {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH'
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'HEAD'
   body?: unknown
   signal?: AbortSignal
   accessToken?: string | null
   headers?: Record<string, string>
+}
+
+export interface ApiResponse<T> {
+  body: T
+  etag: string | null
 }
 
 interface ErrorEnvelope {
@@ -30,6 +35,11 @@ interface ErrorEnvelope {
 
 /** 统一请求入口：同源凭证、Bearer 令牌与错误信封解析都只在这里处理。 */
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  return (await requestWithMeta<T>(path, options)).body
+}
+
+/** 需要乐观锁的资源同时返回响应 ETag；普通调用继续使用 request。 */
+export async function requestWithMeta<T>(path: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
   const headers: Record<string, string> = { Accept: 'application/json', ...options.headers }
   if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json'
@@ -48,9 +58,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     throw await toApiError(response)
   }
   if (response.status === 204) {
-    return undefined as T
+    return { body: undefined as T, etag: response.headers.get('ETag') }
   }
-  return (await response.json()) as T
+  return { body: (await response.json()) as T, etag: response.headers.get('ETag') }
 }
 
 async function toApiError(response: Response): Promise<ApiError> {

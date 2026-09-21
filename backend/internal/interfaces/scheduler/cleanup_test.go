@@ -43,7 +43,7 @@ func (r *recordingRunner) callCount() int {
 func TestCleanupSchedulerLogsCounts(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buffer, nil))
-	runner := &recordingRunner{result: accountApp.CleanupResult{Sessions: 2, Tokens: 3, Failures: 4, Blocks: 5}}
+	runner := &recordingRunner{result: accountApp.CleanupResult{Sessions: 2, Tokens: 3, Failures: 4, Blocks: 5, Idempotency: 6}}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -56,7 +56,7 @@ func TestCleanupSchedulerLogsCounts(t *testing.T) {
 
 	logged := buffer.String()
 	for _, want := range []string{"认证数据清理完成", "operation=cleanup", "result=success",
-		"deleted_sessions=2", "deleted_refresh_tokens=3", "deleted_failures=4", "deleted_blocks=5", "duration_ms="} {
+		"deleted_sessions=2", "deleted_refresh_tokens=3", "deleted_failures=4", "deleted_blocks=5", "deleted_idempotency=6", "duration_ms="} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("日志缺少 %q：%s", want, logged)
 		}

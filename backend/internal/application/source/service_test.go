@@ -16,7 +16,7 @@ type sourceRepositoryFake struct {
 	notModified bool
 }
 
-func (r *sourceRepositoryFake) Add(context.Context, string, string, string, time.Time) (sourceDomain.Source, bool, error) {
+func (r *sourceRepositoryFake) Add(context.Context, string, string, string, time.Duration, time.Time) (sourceDomain.Source, bool, error) {
 	return r.source, true, nil
 }
 func (r *sourceRepositoryFake) List(context.Context) ([]sourceDomain.Source, error) {
@@ -33,8 +33,16 @@ func (r *sourceRepositoryFake) ClaimByID(_ context.Context, _ int64, owner strin
 	r.source.LeaseExpiresAt = &leaseUntil
 	return r.source, nil
 }
-func (*sourceRepositoryFake) Pause(context.Context, int64, time.Time) error  { return nil }
-func (*sourceRepositoryFake) Resume(context.Context, int64, time.Time) error { return nil }
+func (*sourceRepositoryFake) Pause(context.Context, int64, int64, time.Time) (sourceDomain.Source, error) {
+	return sourceDomain.Source{}, nil
+}
+func (*sourceRepositoryFake) SetFetchInterval(context.Context, int64, int64, time.Duration, time.Time) (sourceDomain.Source, error) {
+	return sourceDomain.Source{}, nil
+}
+
+func (*sourceRepositoryFake) Resume(context.Context, int64, int64, time.Time) (sourceDomain.Source, error) {
+	return sourceDomain.Source{}, nil
+}
 func (*sourceRepositoryFake) ClaimDue(context.Context, string, time.Time, time.Time, int) ([]sourceDomain.Source, error) {
 	return nil, nil
 }
@@ -47,6 +55,44 @@ func (*sourceRepositoryFake) MarkSuccess(context.Context, int64, sourceDomain.Le
 }
 func (*sourceRepositoryFake) MarkFailure(context.Context, int64, sourceDomain.Lease, sourceDomain.FailureUpdate) error {
 	return nil
+}
+
+// fetchRunRepositoryFake 记录运行的生命周期调用。
+type fetchRunRepositoryFake struct {
+	started     []sourceDomain.FetchRun
+	completed   []sourceDomain.FetchRun
+	abortStale  int64
+	aborted     int64
+	startErr    error
+	completeErr error
+}
+
+func (f *fetchRunRepositoryFake) Start(_ context.Context, run sourceDomain.FetchRun) error {
+	if f.startErr != nil {
+		return f.startErr
+	}
+	f.started = append(f.started, run)
+	return nil
+}
+
+func (f *fetchRunRepositoryFake) Complete(_ context.Context, run sourceDomain.FetchRun) error {
+	if f.completeErr != nil {
+		return f.completeErr
+	}
+	f.completed = append(f.completed, run)
+	return nil
+}
+
+func (f *fetchRunRepositoryFake) AbortStale(context.Context, int64, int64, time.Time) (int64, error) {
+	return f.aborted, nil
+}
+
+func (f *fetchRunRepositoryFake) ListBySource(context.Context, int64, *sourceDomain.FetchRunCursor, int) ([]sourceDomain.FetchRun, error) {
+	return nil, nil
+}
+
+func (f *fetchRunRepositoryFake) CurrentRunning(context.Context, int64) (sourceDomain.FetchRun, error) {
+	return sourceDomain.FetchRun{}, sourceDomain.ErrNotFound
 }
 
 type fetcherFake struct{ response ports.FetchResponse }
@@ -89,6 +135,15 @@ type sanitizerFake struct{}
 
 func (sanitizerFake) Sanitize(string) ports.SanitizedContent { return ports.SanitizedContent{} }
 
+// activeSource 构造一个已认领的来源：运行记录要求租约与正的 generation。
+func activeSource(t *testing.T, id int64, feedURL string) sourceDomain.Source {
+	t.Helper()
+	leaseUntil := time.Date(2026, 9, 8, 0, 2, 0, 0, time.UTC)
+	owner := "worker-1"
+	return sourceDomain.Source{ID: id, FeedURL: feedURL, Status: sourceDomain.StatusActive,
+		LeaseOwner: &owner, LeaseExpiresAt: &leaseUntil, LeaseGeneration: 1}
+}
+
 type clockFake struct{ now time.Time }
 
 func (c clockFake) Now() time.Time { return c.now }
@@ -100,12 +155,12 @@ func (transactionManagerFake) WithinTransaction(ctx context.Context, fn func(con
 }
 
 func TestNotModifiedDoesNotParseOrIngest(t *testing.T) {
-	repository := &sourceRepositoryFake{source: sourceDomain.Source{ID: 1, FeedURL: "https://example.com/feed", Status: sourceDomain.StatusActive}}
+	repository := &sourceRepositoryFake{source: activeSource(t, 1, "https://example.com/feed")}
 	parser := &parserFake{}
 	clock := clockFake{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
 	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
-	service := NewService(repository, fetcherFake{response: ports.FetchResponse{NotModified: true}}, parser, articles, clock, transactionManagerFake{}, nil)
-	outcome, err := service.FetchByID(context.Background(), 1, false)
+	service := NewService(repository, &fetchRunRepositoryFake{}, fetcherFake{response: ports.FetchResponse{NotModified: true}}, parser, articles, clock, transactionManagerFake{}, nil)
+	outcome, err := service.FetchByID(context.Background(), 1, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +173,8 @@ func TestPausedSourceCannotBeFetched(t *testing.T) {
 	repository := &sourceRepositoryFake{source: sourceDomain.Source{ID: 1, Status: sourceDomain.StatusPaused}}
 	clock := clockFake{now: time.Now()}
 	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
-	service := NewService(repository, fetcherFake{}, &parserFake{}, articles, clock, transactionManagerFake{}, nil)
-	if _, err := service.FetchByID(context.Background(), 1, false); err != sourceDomain.ErrInvalidStatus {
+	service := NewService(repository, &fetchRunRepositoryFake{}, fetcherFake{}, &parserFake{}, articles, clock, transactionManagerFake{}, nil)
+	if _, err := service.FetchByID(context.Background(), 1, false, nil); err != sourceDomain.ErrInvalidStatus {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -127,20 +182,20 @@ func TestPausedSourceCannotBeFetched(t *testing.T) {
 func TestForceFetchSkipsConditionalHeaders(t *testing.T) {
 	etag := `"etag-1"`
 	lastModified := "Mon, 07 Sep 2026 00:00:00 GMT"
-	repository := &sourceRepositoryFake{source: sourceDomain.Source{
-		ID: 1, FeedURL: "https://example.com/feed", Status: sourceDomain.StatusActive, ETag: &etag, LastModified: &lastModified,
-	}}
+	claimed := activeSource(t, 1, "https://example.com/feed")
+	claimed.ETag, claimed.LastModified = &etag, &lastModified
+	repository := &sourceRepositoryFake{source: claimed}
 	clock := clockFake{now: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)}
 	articles := articleApp.NewService(articleRepositoryFake{}, sanitizerFake{}, clock)
 	fetcher := &requestCapturingFetcher{response: ports.FetchResponse{}}
-	service := NewService(repository, fetcher, &parserFake{}, articles, clock, transactionManagerFake{}, nil)
-	if _, err := service.FetchByID(context.Background(), 1, true); err != nil {
+	service := NewService(repository, &fetchRunRepositoryFake{}, fetcher, &parserFake{}, articles, clock, transactionManagerFake{}, nil)
+	if _, err := service.FetchByID(context.Background(), 1, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if fetcher.captured.ETag != nil || fetcher.captured.LastModified != nil {
 		t.Fatalf("强制抓取不应携带条件请求头: %+v", fetcher.captured)
 	}
-	if _, err := service.FetchByID(context.Background(), 1, false); err != nil {
+	if _, err := service.FetchByID(context.Background(), 1, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if fetcher.captured.ETag == nil || fetcher.captured.LastModified == nil {

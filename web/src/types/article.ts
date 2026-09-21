@@ -4,15 +4,31 @@ export interface ArticleSource {
   site_url: string | null
 }
 
+export interface ArticleAuthor {
+  id: string
+  nickname: string
+}
+
+export interface RSSArticleOrigin {
+  type: 'rss'
+  source: ArticleSource
+  canonical_url: string
+  source_published_at: string | null
+}
+
+export interface UserArticleOrigin {
+  type: 'user'
+  author: ArticleAuthor
+}
+
+export type ArticleOrigin = RSSArticleOrigin | UserArticleOrigin
+
 export interface ArticleItem {
   id: number
   title: string
-  canonical_url: string
-  source: ArticleSource
-  author_name: string | null
   excerpt: string
-  source_published_at: string | null
-  discovered_at: string
+  published_at: string
+  origin: ArticleOrigin
 }
 
 export interface ArticlePage {
@@ -22,5 +38,5 @@ export interface ArticlePage {
 }
 
 export interface ArticleDetail extends ArticleItem {
-  content_html: string | null
+  content_html: string
 }

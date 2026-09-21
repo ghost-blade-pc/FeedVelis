@@ -86,16 +86,49 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	healthService := health.NewService(readyChecker{})
 	published := time.Date(2026, 9, 1, 8, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
-	repository := &listRepository{items: []articleDomain.ListItem{{
-		ID: 1, Title: "文章", CanonicalURL: "https://example.com/a", Source: articleDomain.SourceSummary{ID: 2, Title: "来源"},
-		Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
-	}}}
+	repository := &listRepository{items: []articleDomain.ListItem{
+		{
+			ID: 1, Origin: articleDomain.OriginRSS, Title: "文章", CanonicalURL: "https://example.com/a",
+			Source:  articleDomain.SourceSummary{ID: 2, Title: "来源"},
+			Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
+		},
+		{
+			ID: 2, Origin: articleDomain.OriginUser, Title: "投稿", Excerpt: "投稿摘要",
+			Author: &articleDomain.AuthorSummary{ID: "51000000-0000-0000-0000-000000000001", Nickname: "作者"},
+			SortAt: published, DiscoveredAt: published,
+		},
+	}}
 	service := articleApp.NewService(repository, noOpSanitizer{}, testClock{})
 	h := NewServer(Options{Address: "127.0.0.1:0", ShutdownTimeout: time.Second, Logger: logger, Health: healthService, Articles: service})
 	response := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles?limit=20", nil)
-	if response.Code != consts.StatusOK || !strings.Contains(response.Body.String(), `"canonical_url":"https://example.com/a"`) ||
-		!strings.Contains(response.Body.String(), `"discovered_at":"2026-09-01T00:00:00Z"`) || strings.Contains(response.Body.String(), "content_hash") {
+	if response.Code != consts.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var page struct {
+		Items []struct {
+			ID          int64           `json:"id"`
+			PublishedAt time.Time       `json:"published_at"`
+			Origin      json.RawMessage `json:"origin"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 2 {
+		t.Fatalf("解析失败: %v body=%s", err, response.Body.String())
+	}
+	// RSS 条目走 rss 分支：携带 Source 摘要与原文 URL，不暴露站内作者。
+	if !strings.Contains(string(page.Items[0].Origin), `"type":"rss"`) ||
+		!strings.Contains(string(page.Items[0].Origin), `"canonical_url":"https://example.com/a"`) ||
+		strings.Contains(string(page.Items[0].Origin), `"author"`) ||
+		!page.Items[0].PublishedAt.Equal(published.UTC()) {
+		t.Fatalf("RSS origin = %s", page.Items[0].Origin)
+	}
+	// 用户条目走 user 分支：只公开作者 ID 与昵称，不携带 Source 或原文 URL。
+	if !strings.Contains(string(page.Items[1].Origin), `"type":"user"`) ||
+		!strings.Contains(string(page.Items[1].Origin), `"nickname":"作者"`) ||
+		strings.Contains(string(page.Items[1].Origin), "canonical_url") {
+		t.Fatalf("用户 origin = %s", page.Items[1].Origin)
+	}
+	if body := response.Body.String(); strings.Contains(body, "content_hash") || strings.Contains(body, "discovered_at") {
+		t.Fatalf("不得暴露内部字段: %s", body)
 	}
 	invalid := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles?cursor=bad", nil)
 	if invalid.Code != consts.StatusBadRequest || !strings.Contains(invalid.Body.String(), `"code":"INVALID_CURSOR"`) {
@@ -110,7 +143,8 @@ func TestArticleDetailContractAndNotFound(t *testing.T) {
 	htmlValue := `<p>正文</p><img src="https://example.com/a.png" alt="图" loading="lazy"/>`
 	repository := &listRepository{detail: articleDomain.Detail{
 		Item: articleDomain.ListItem{
-			ID: 7, Title: "文章", CanonicalURL: "https://example.com/a", Source: articleDomain.SourceSummary{ID: 2, Title: "来源"},
+			ID: 7, Origin: articleDomain.OriginRSS, Title: "文章", CanonicalURL: "https://example.com/a",
+			Source:  articleDomain.SourceSummary{ID: 2, Title: "来源"},
 			Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
 		},
 		SanitizedHTML: &htmlValue,
@@ -119,10 +153,22 @@ func TestArticleDetailContractAndNotFound(t *testing.T) {
 	h := NewServer(Options{Address: "127.0.0.1:0", ShutdownTimeout: time.Second, Logger: logger, Health: healthService, Articles: service})
 	response := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles/7", nil)
 	var detail struct {
-		ContentHTML string `json:"content_html"`
+		ContentHTML string    `json:"content_html"`
+		PublishedAt time.Time `json:"published_at"`
+		Origin      struct {
+			Type         string `json:"type"`
+			CanonicalURL string `json:"canonical_url"`
+			Source       struct {
+				Title string `json:"title"`
+			} `json:"source"`
+		} `json:"origin"`
 	}
 	if response.Code != consts.StatusOK || json.Unmarshal(response.Body.Bytes(), &detail) != nil || detail.ContentHTML != htmlValue {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if detail.Origin.Type != "rss" || detail.Origin.CanonicalURL != "https://example.com/a" ||
+		detail.Origin.Source.Title != "来源" || !detail.PublishedAt.Equal(published.UTC()) {
+		t.Fatalf("origin = %+v published_at = %s", detail.Origin, detail.PublishedAt)
 	}
 	missing := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles/999", nil)
 	if missing.Code != consts.StatusNotFound || !strings.Contains(missing.Body.String(), `"code":"ARTICLE_NOT_FOUND"`) {

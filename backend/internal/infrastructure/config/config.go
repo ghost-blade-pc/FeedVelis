@@ -16,11 +16,14 @@ import (
 
 // Config 是 API、Worker 和迁移命令共享的配置结构。
 type Config struct {
-	App      AppConfig      `yaml:"app"`
-	HTTP     HTTPConfig     `yaml:"http"`
-	Database DatabaseConfig `yaml:"database"`
-	Worker   WorkerConfig   `yaml:"worker"`
-	Auth     AuthConfig     `yaml:"auth"`
+	App         AppConfig         `yaml:"app"`
+	HTTP        HTTPConfig        `yaml:"http"`
+	Database    DatabaseConfig    `yaml:"database"`
+	Worker      WorkerConfig      `yaml:"worker"`
+	Auth        AuthConfig        `yaml:"auth"`
+	Assets      AssetConfig       `yaml:"assets"`
+	Idempotency IdempotencyConfig `yaml:"idempotency"`
+	Feed        FeedConfig        `yaml:"feed"`
 }
 
 type AppConfig struct {
@@ -67,6 +70,21 @@ func Default() Config {
 			MinConnections: 2,
 		},
 		Worker: WorkerConfig{HeartbeatRaw: "30s"},
+		Assets: AssetConfig{
+			Bucket:            "velis-article-assets",
+			UploadRaw:         "15m",
+			PendingRaw:        "24h",
+			UnboundRaw:        "168h",
+			MaxFileBytes:      10 * 1024 * 1024,
+			MaxWidth:          8192,
+			MaxHeight:         8192,
+			MaxPixels:         40_000_000,
+			UserQuotaBytes:    1024 * 1024 * 1024,
+			PendingLimit:      20,
+			ArticleImageLimit: 20,
+			ArticleBytesLimit: 50 * 1024 * 1024,
+		},
+		Idempotency: IdempotencyConfig{RetentionRaw: "24h"},
 		Auth: AuthConfig{
 			Enabled:             false,
 			RegistrationEnabled: false,
@@ -127,12 +145,45 @@ func applyEnvironment(cfg *Config) error {
 	setString(&cfg.Database.URL, "VELIS_DATABASE_URL")
 	setString(&cfg.Database.ConnectRaw, "VELIS_DATABASE_CONNECT_TIMEOUT")
 	setString(&cfg.Worker.HeartbeatRaw, "VELIS_WORKER_HEARTBEAT_INTERVAL")
+	setString(&cfg.Assets.Endpoint, "VELIS_ASSET_ENDPOINT")
+	setString(&cfg.Assets.Bucket, "VELIS_ASSET_BUCKET")
+	setString(&cfg.Assets.AccessKey, "VELIS_ASSET_ACCESS_KEY")
+	setString(&cfg.Assets.SecretKey, "VELIS_ASSET_SECRET_KEY")
+	setString(&cfg.Assets.WebOrigin, "VELIS_ASSET_WEB_ORIGIN")
+	setString(&cfg.Assets.UploadRaw, "VELIS_ASSET_UPLOAD_TTL")
+	setString(&cfg.Assets.PendingRaw, "VELIS_ASSET_PENDING_TTL")
+	setString(&cfg.Assets.UnboundRaw, "VELIS_ASSET_UNBOUND_TTL")
+	setString(&cfg.Idempotency.RetentionRaw, "VELIS_IDEMPOTENCY_RETENTION")
+	setString(&cfg.Feed.ProxyURL, "VELIS_FEED_PROXY_URL")
 
 	if err := setInt32(&cfg.Database.MaxConnections, "VELIS_DATABASE_MAX_CONNECTIONS"); err != nil {
 		return err
 	}
 	if err := setInt32(&cfg.Database.MinConnections, "VELIS_DATABASE_MIN_CONNECTIONS"); err != nil {
 		return err
+	}
+	if err := setBool(&cfg.Assets.UseTLS, "VELIS_ASSET_USE_TLS"); err != nil {
+		return err
+	}
+	for target, key := range map[*int64]string{
+		&cfg.Assets.MaxFileBytes:      "VELIS_ASSET_MAX_FILE_BYTES",
+		&cfg.Assets.MaxPixels:         "VELIS_ASSET_MAX_PIXELS",
+		&cfg.Assets.UserQuotaBytes:    "VELIS_ASSET_USER_QUOTA_BYTES",
+		&cfg.Assets.ArticleBytesLimit: "VELIS_ASSET_ARTICLE_BYTES_LIMIT",
+	} {
+		if err := setInt64(target, key); err != nil {
+			return err
+		}
+	}
+	for target, key := range map[*int]string{
+		&cfg.Assets.MaxWidth:          "VELIS_ASSET_MAX_WIDTH",
+		&cfg.Assets.MaxHeight:         "VELIS_ASSET_MAX_HEIGHT",
+		&cfg.Assets.PendingLimit:      "VELIS_ASSET_PENDING_LIMIT",
+		&cfg.Assets.ArticleImageLimit: "VELIS_ASSET_ARTICLE_IMAGE_LIMIT",
+	} {
+		if err := setInt(target, key); err != nil {
+			return err
+		}
 	}
 	return applyAuthEnvironment(cfg)
 }
@@ -276,6 +327,19 @@ func setInt32(target *int32, key string) error {
 	return nil
 }
 
+func setInt64(target *int64, key string) error {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fmt.Errorf("环境变量 %s 必须是整数: %w", key, err)
+	}
+	*target = parsed
+	return nil
+}
+
 func (cfg *Config) Validate() error {
 	if strings.TrimSpace(cfg.App.Name) == "" {
 		return errors.New("app.name 不能为空")
@@ -302,6 +366,9 @@ func (cfg *Config) Validate() error {
 	}
 	if cfg.Database.MinConnections < 0 || cfg.Database.MinConnections > cfg.Database.MaxConnections {
 		return errors.New("database.min_connections 必须介于 0 和 max_connections 之间")
+	}
+	if err := validateContentConfig(cfg); err != nil {
+		return err
 	}
 	return validateAuth(&cfg.Auth, cfg.App.Environment)
 }

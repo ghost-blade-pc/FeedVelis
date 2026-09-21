@@ -17,6 +17,36 @@ database:
 worker:
   heartbeat_interval: 30s
 
+# 私有文章图片存储。endpoint 留空时资产能力局部降级；RSS、latest、Source 管理和纯文本投稿仍可用。
+assets:
+  endpoint: ""
+  bucket: velis-article-assets
+  # 真实对象存储凭据只通过 VELIS_ASSET_ACCESS_KEY / VELIS_ASSET_SECRET_KEY 注入。
+  access_key: ""
+  secret_key: ""
+  use_tls: false
+  # MinIO Bucket CORS 只允许这个精确 Web Origin；启用 endpoint 时必填。
+  web_origin: ""
+  upload_ttl: 15m
+  pending_ttl: 24h
+  unbound_ttl: 168h
+  max_file_bytes: 10485760
+  max_width: 8192
+  max_height: 8192
+  max_pixels: 40000000
+  user_quota_bytes: 1073741824
+  pending_limit: 20
+  article_image_limit: 20
+  article_bytes_limit: 52428800
+
+idempotency:
+  retention: 24h
+
+feed:
+  # 默认忽略 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 并受限直连。只有此专用配置会启用可信代理；
+  # 可含凭据，但不要提交真实值，优先通过 VELIS_FEED_PROXY_URL 注入。
+  proxy_url: ""
+
 # 认证配置。默认关闭，关闭时不注册认证路由，保持原有匿名行为。
 # 示例是本地开发取值（development + localhost），不能直接当作生产模板：
 # 生产必须使用 __Host- Cookie（cookie_secure: true）与精确的 https 来源。

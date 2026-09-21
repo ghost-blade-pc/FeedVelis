@@ -66,4 +66,5 @@ type CleanupRepository interface {
 	DeleteExpiredRefreshTokens(context.Context, time.Time, int) (int64, error)
 	DeleteStaleFailures(context.Context, time.Time, int) (int64, error)
 	DeleteExpiredBlocks(context.Context, time.Time, int) (int64, error)
+	DeleteExpiredIdempotency(context.Context, time.Time, int) (int64, error)
 }

@@ -21,7 +21,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 
 	sources := postgres.NewSourceRepository(pool)
 	now := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
-	created, inserted, err := sources.Add(ctx, "https://example.com/feed", "https://example.com/feed", "Example", now)
+	created, inserted, err := sources.Add(ctx, "https://example.com/feed", "https://example.com/feed", "Example", sourceDomain.DefaultFetchInterval, now)
 	if err != nil || !inserted {
 		t.Fatalf("add source: inserted=%t err=%v", inserted, err)
 	}
@@ -32,7 +32,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			src, _, err := sources.Add(ctx, "https://example.com/feed", "https://example.com/feed", "Example", now)
+			src, _, err := sources.Add(ctx, "https://example.com/feed", "https://example.com/feed", "Example", sourceDomain.DefaultFetchInterval, now)
 			if err != nil {
 				t.Errorf("duplicate add: %v", err)
 				return
@@ -79,18 +79,23 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if err != nil || result != articleDomain.UpsertUpdated || sameID != articleID {
 		t.Fatalf("update article: result=%s id=%d err=%v", result, sameID, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE velis.articles SET status='hidden' WHERE id=$1`, articleID); err != nil {
+	// I2 之后不再有 hidden 状态：管理员下架由 offline + offline_reason='admin' 表达。
+	// 下架期间的内容更新仍应更新正文，但不得改变可见性——这正是迁移前 hidden 的语义。
+	if _, err := pool.Exec(ctx, `UPDATE velis.articles SET status='offline',offline_reason='admin',
+published_at=COALESCE(published_at,discovered_at),offline_at=now(),updated_at=now() WHERE id=$1`, articleID); err != nil {
 		t.Fatal(err)
 	}
-	candidate.Article.Title = "隐藏文章的新内容"
+	candidate.Article.Title = "下架文章的新内容"
 	candidate.Article.ContentHash = strings.Repeat("e", 64)
 	result, sameID, err = articles.Upsert(ctx, candidate, now.Add(3*time.Minute))
 	if err != nil || result != articleDomain.UpsertUpdated || sameID != articleID {
-		t.Fatalf("update hidden article: result=%s id=%d err=%v", result, sameID, err)
+		t.Fatalf("update offline article: result=%s id=%d err=%v", result, sameID, err)
 	}
-	var hiddenStatus articleDomain.Status
-	if err := pool.QueryRow(ctx, `SELECT status FROM velis.articles WHERE id=$1`, articleID).Scan(&hiddenStatus); err != nil || hiddenStatus != articleDomain.StatusHidden {
-		t.Fatalf("hidden status=%s err=%v", hiddenStatus, err)
+	var offlineStatus articleDomain.Status
+	var offlineReason *string
+	if err := pool.QueryRow(ctx, `SELECT status,offline_reason FROM velis.articles WHERE id=$1`, articleID).Scan(&offlineStatus, &offlineReason); err != nil ||
+		offlineStatus != articleDomain.StatusOffline || offlineReason == nil || *offlineReason != string(articleDomain.OfflineByAdmin) {
+		t.Fatalf("offline status=%s reason=%v err=%v", offlineStatus, offlineReason, err)
 	}
 	for index := 2; index <= 4; index++ {
 		candidate.Article.DedupeKey = strings.Repeat(string(rune('a'+index)), 64)
@@ -109,7 +114,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 		t.Fatalf("second page: items=%+v err=%v", secondPage, err)
 	}
 
-	_, _, err = sources.Add(ctx, "https://example.org/feed", "https://example.org/feed", "Example 2", now)
+	_, _, err = sources.Add(ctx, "https://example.org/feed", "https://example.org/feed", "Example 2", sourceDomain.DefaultFetchInterval, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +145,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if len(seen) != 2 {
 		t.Fatalf("claimed=%v", seen)
 	}
-	manual, _, err := sources.Add(ctx, "https://example.net/feed", "https://example.net/feed", "Example 3", now)
+	manual, _, err := sources.Add(ctx, "https://example.net/feed", "https://example.net/feed", "Example 3", sourceDomain.DefaultFetchInterval, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +174,12 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sources.Pause(ctx, manual.ID, now.Add(time.Minute)); err != nil {
+	paused, err := sources.Pause(ctx, manual.ID, manual.LockVersion, now.Add(time.Minute))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if paused.Status != sourceDomain.StatusPaused || paused.LockVersion != manual.LockVersion+1 {
+		t.Fatalf("pause: status=%s version=%d", paused.Status, paused.LockVersion)
 	}
 	metadata := sourceDomain.Metadata{Title: "Example 3"}
 	if err := sources.MarkSuccess(ctx, manual.ID, newLease, metadata, now.Add(time.Minute), now.Add(31*time.Minute)); !errors.Is(err, sourceDomain.ErrLeaseLost) {
@@ -180,7 +189,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT status FROM velis.sources WHERE id=$1`, manual.ID).Scan(&pausedStatus); err != nil || pausedStatus != sourceDomain.StatusPaused {
 		t.Fatalf("paused status=%s err=%v", pausedStatus, err)
 	}
-	if err := sources.Resume(ctx, manual.ID, now.Add(2*time.Minute)); err != nil {
+	if _, err := sources.Resume(ctx, manual.ID, paused.LockVersion, now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	finalClaim, err := sources.ClaimByID(ctx, manual.ID, "manual-3", now.Add(2*time.Minute), now.Add(4*time.Minute))
@@ -194,7 +203,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if err := sources.MarkSuccess(ctx, manual.ID, finalLease, metadata, now.Add(3*time.Minute), now.Add(33*time.Minute)); err != nil {
 		t.Fatalf("current lease success: %v", err)
 	}
-	expiredSource, _, err := sources.Add(ctx, "https://expired.example/feed", "https://expired.example/feed", "Expired", now)
+	expiredSource, _, err := sources.Add(ctx, "https://expired.example/feed", "https://expired.example/feed", "Expired", sourceDomain.DefaultFetchInterval, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +219,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 		t.Fatalf("expired lease completion err=%v", err)
 	}
 
-	fencedSource, _, err := sources.Add(ctx, "https://fenced.example/feed", "https://fenced.example/feed", "Fenced", now)
+	fencedSource, _, err := sources.Add(ctx, "https://fenced.example/feed", "https://fenced.example/feed", "Fenced", sourceDomain.DefaultFetchInterval, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +231,7 @@ func TestSourceAndArticleRepositories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sources.Pause(ctx, fencedSource.ID, now.Add(time.Minute)); err != nil {
+	if _, err := sources.Pause(ctx, fencedSource.ID, fencedClaim.LockVersion, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	atomicCandidate := candidate

@@ -105,7 +105,9 @@ velis.refresh_tokens, velis.auth_sessions, velis.users RESTART IDENTITY CASCADE`
 
 func (e *testEnv) resetArticles(t *testing.T) {
 	t.Helper()
-	e.truncate(t, `TRUNCATE velis.article_contents, velis.articles, velis.sources RESTART IDENTITY CASCADE`)
+	e.truncate(t, `TRUNCATE velis.article_asset_references, velis.idempotency_operations,
+velis.source_fetch_runs, velis.article_assets, velis.article_versions,
+velis.articles, velis.sources RESTART IDENTITY CASCADE`)
 }
 
 func (e *testEnv) truncate(t *testing.T, statement string) {

@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { getArticle } from '../api/client'
-import { articleTime, formatTime, safeArticleURL } from '../features/article/model'
+import { articleOriginLabel, articleOriginURL, articleTime, formatTime } from '../features/article/model'
 import type { ArticleDetail } from '../types/article'
 
 const route = useRoute()
@@ -40,16 +40,15 @@ onBeforeUnmount(() => request?.abort())
     </div>
     <article v-else-if="detail" class="article-card detail-card">
       <p class="article-meta">
-        <span>{{ detail.source.title }}</span>
-        <span v-if="detail.author_name"> · {{ detail.author_name }}</span>
+        <span>{{ detail.origin.type === 'rss' ? 'RSS' : '站内作者' }} · {{ articleOriginLabel(detail) }}</span>
       </p>
       <h1 id="detail-title">{{ detail.title }}</h1>
       <p class="article-time">
         <span>{{ articleTime(detail).label }} {{ formatTime(articleTime(detail).value) }}</span>
         <a
-          v-if="safeArticleURL(detail.canonical_url)"
+          v-if="articleOriginURL(detail)"
           class="origin-link"
-          :href="safeArticleURL(detail.canonical_url)"
+          :href="articleOriginURL(detail)"
           target="_blank"
           rel="noopener noreferrer"
         >查看原文 ↗</a>

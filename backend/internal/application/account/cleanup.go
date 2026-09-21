@@ -42,14 +42,15 @@ func NewCleanupService(deps CleanupDeps) (*CleanupService, error) {
 
 // CleanupResult 汇总一轮清理各分类实际删除的行数，供调用方记录结构化日志字段。
 type CleanupResult struct {
-	Sessions int64
-	Tokens   int64
-	Failures int64
-	Blocks   int64
+	Sessions    int64
+	Tokens      int64
+	Failures    int64
+	Blocks      int64
+	Idempotency int64
 }
 
 func (r CleanupResult) Total() int64 {
-	return r.Sessions + r.Tokens + r.Failures + r.Blocks
+	return r.Sessions + r.Tokens + r.Failures + r.Blocks + r.Idempotency
 }
 
 // Run 依次清理四类数据；任一类失败立即停止并返回已完成的部分结果，便于调用方留证。
@@ -65,6 +66,7 @@ func (s *CleanupService) Run(ctx context.Context) (CleanupResult, error) {
 		{now.Add(-SessionRetention), s.deps.Repository.DeleteExpiredRefreshTokens, &result.Tokens},
 		{now.Add(-FailureRetention), s.deps.Repository.DeleteStaleFailures, &result.Failures},
 		{now.Add(-BlockRetention), s.deps.Repository.DeleteExpiredBlocks, &result.Blocks},
+		{now, s.deps.Repository.DeleteExpiredIdempotency, &result.Idempotency},
 	}
 	for _, target := range targets {
 		removed, err := s.drain(ctx, target.cutoff, target.remove)

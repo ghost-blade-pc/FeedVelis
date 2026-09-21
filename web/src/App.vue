@@ -14,6 +14,8 @@ const { session } = useSession()
       <RouterLink to="/latest">最新</RouterLink>
       <RouterLink to="/following">关注</RouterLink>
       <RouterLink to="/hot">热门</RouterLink>
+      <RouterLink v-if="session.account" to="/me/articles">创作</RouterLink>
+      <RouterLink v-if="session.account?.role === 'admin'" to="/admin/sources">Source 管理</RouterLink>
       <RouterLink v-if="session.account" to="/account">{{ session.account.nickname }}</RouterLink>
       <template v-else>
         <RouterLink to="/login">登录</RouterLink>

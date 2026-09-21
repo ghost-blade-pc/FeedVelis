@@ -1,4 +1,4 @@
-import { login, logoutSession, refreshSession } from '../../api/auth'
+import { logoutSession, refreshSession } from '../../api/auth'
 import { createSession, type RefreshLock, type SessionChannel, type SessionManager } from './session'
 
 /** 刷新锁名；多标签用它串行化刷新。 */

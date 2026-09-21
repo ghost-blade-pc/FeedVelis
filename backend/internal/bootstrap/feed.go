@@ -17,14 +17,16 @@ type feedServices struct {
 	sources  *sourceApp.Service
 }
 
-func buildFeedServices(pool *pgxpool.Pool) feedServices {
+func buildFeedServices(pool *pgxpool.Pool, proxyURL string) feedServices {
 	articleRepository := postgres.NewArticleRepository(pool)
 	sourceRepository := postgres.NewSourceRepository(pool)
 	sanitizer := httpfeed.NewSanitizer()
 	clockValue := clock.System{}
 	txManager := postgres.NewTxManager(pool)
 	articleService := articleApp.NewService(articleRepository, sanitizer, clockValue, txManager)
-	sourceService := sourceApp.NewService(sourceRepository, httpfeed.NewFetcher(), httpfeed.NewParser(), articleService, clockValue, txManager, randomJitter)
+	sourceService := sourceApp.NewService(sourceRepository, postgres.NewFetchRunRepository(pool),
+		httpfeed.NewFetcher(httpfeed.Options{ProxyURL: proxyURL}), httpfeed.NewParser(),
+		articleService, clockValue, txManager, randomJitter)
 	return feedServices{articles: articleService, sources: sourceService}
 }
 

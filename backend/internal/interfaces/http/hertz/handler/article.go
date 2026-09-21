@@ -67,15 +67,34 @@ func (h *Article) Get(ctx context.Context, c *app.RequestContext) {
 		}
 		return
 	}
-	c.JSON(consts.StatusOK, dto.ArticleDetailResponse{ArticleItem: toArticleItem(detail.Item), ContentHTML: detail.SanitizedHTML})
+	// 契约要求 content_html 始终是字符串：无正文的 RSS 条目返回空串而不是 null。
+	contentHTML := ""
+	if detail.SanitizedHTML != nil {
+		contentHTML = *detail.SanitizedHTML
+	}
+	c.JSON(consts.StatusOK, dto.ArticleDetailResponse{ArticleItem: toArticleItem(detail.Item), ContentHTML: contentHTML})
 }
 
 func toArticleItem(item articleDomain.ListItem) dto.ArticleItem {
 	return dto.ArticleItem{
-		ID: item.ID, Title: item.Title, CanonicalURL: item.CanonicalURL,
-		Source:     dto.ArticleSource{ID: item.Source.ID, Title: item.Source.Title, SiteURL: item.Source.SiteURL},
-		AuthorName: item.AuthorName, Excerpt: item.Excerpt,
-		SourcePublishedAt: utcTime(item.SourcePublishedAt), DiscoveredAt: item.DiscoveredAt.UTC(),
+		ID: item.ID, Title: item.Title, Excerpt: item.Excerpt,
+		PublishedAt: item.SortAt.UTC(), Origin: toArticleOrigin(item),
+	}
+}
+
+// toArticleOrigin 由来源类型选择判别联合分支；用户来源不携带 Source 或原文 URL。
+func toArticleOrigin(item articleDomain.ListItem) any {
+	if item.Origin == articleDomain.OriginUser && item.Author != nil {
+		return dto.UserArticleOrigin{
+			Type:   string(articleDomain.OriginUser),
+			Author: dto.ArticleAuthor{ID: item.Author.ID, Nickname: item.Author.Nickname},
+		}
+	}
+	return dto.RSSArticleOrigin{
+		Type:              string(articleDomain.OriginRSS),
+		Source:            dto.ArticleSource{ID: item.Source.ID, Title: item.Source.Title, SiteURL: item.Source.SiteURL},
+		CanonicalURL:      item.CanonicalURL,
+		SourcePublishedAt: utcTime(item.SourcePublishedAt),
 	}
 }
 

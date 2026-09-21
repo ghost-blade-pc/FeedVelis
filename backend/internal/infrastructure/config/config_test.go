@@ -1,8 +1,11 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,5 +41,93 @@ func TestValidateRejectsInvalidConnectionLimits(t *testing.T) {
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() expected error")
+	}
+}
+
+func TestContentConfigPriorityAndEnvironmentOverrides(t *testing.T) {
+	t.Setenv("VELIS_ASSET_ENDPOINT", "minio.internal:9443")
+	t.Setenv("VELIS_ASSET_BUCKET", "env-assets")
+	t.Setenv("VELIS_ASSET_ACCESS_KEY", "env-access")
+	t.Setenv("VELIS_ASSET_SECRET_KEY", "env-secret")
+	t.Setenv("VELIS_ASSET_USE_TLS", "true")
+	t.Setenv("VELIS_ASSET_WEB_ORIGIN", "https://velis.example.com")
+	t.Setenv("VELIS_ASSET_USER_QUOTA_BYTES", "536870912")
+	t.Setenv("VELIS_IDEMPOTENCY_RETENTION", "48h")
+	t.Setenv("VELIS_FEED_PROXY_URL", "http://proxy-user:proxy-pass@proxy.internal:3128")
+	t.Setenv("VELIS_APP_ENVIRONMENT", "production")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("assets:\n  endpoint: yaml-minio:9000\n  bucket: yaml-assets\n  access_key: yaml-access\n  secret_key: yaml-secret\n  web_origin: https://yaml.example.com\n  user_quota_bytes: 268435456\nidempotency:\n  retention: 12h\nfeed:\n  proxy_url: http://yaml-proxy:3128\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Assets.Endpoint != "minio.internal:9443" || cfg.Assets.Bucket != "env-assets" || !cfg.Assets.UseTLS {
+		t.Fatalf("资产环境覆盖失败: %+v", cfg.Assets)
+	}
+	if cfg.Assets.UserQuotaBytes != 512*1024*1024 || cfg.Idempotency.Retention != 48*time.Hour {
+		t.Fatalf("额度/幂等保留期 = %d/%v", cfg.Assets.UserQuotaBytes, cfg.Idempotency.Retention)
+	}
+	if cfg.Feed.ProxyURL != "http://proxy-user:proxy-pass@proxy.internal:3128" {
+		t.Fatalf("Feed 代理环境覆盖失败: %q", cfg.Feed.ProxyURL)
+	}
+}
+
+func TestContentConfigRejectsInvalidBoundaries(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"单文件超过 10 MiB", func(cfg *Config) { cfg.Assets.MaxFileBytes = 10*1024*1024 + 1 }, "max_file_bytes"},
+		{"宽度超过限制", func(cfg *Config) { cfg.Assets.MaxWidth = 8193 }, "max_width"},
+		{"像素超过限制", func(cfg *Config) { cfg.Assets.MaxPixels = 40_000_001 }, "max_pixels"},
+		{"pending 超过限制", func(cfg *Config) { cfg.Assets.PendingLimit = 21 }, "pending_limit"},
+		{"幂等期限过短", func(cfg *Config) { cfg.Idempotency.RetentionRaw = "59m" }, "idempotency.retention"},
+		{"上传期限过长", func(cfg *Config) { cfg.Assets.UploadRaw = "61m" }, "assets.upload_ttl"},
+		{"代理协议非法", func(cfg *Config) { cfg.Feed.ProxyURL = "socks5://proxy.internal:1080" }, "feed.proxy_url"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Default()
+			test.mutate(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v，期望包含 %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestConfigLogValueRedactsSensitiveValues(t *testing.T) {
+	cfg := Default()
+	cfg.Database.URL = "postgres://secret-user:secret-db-password@localhost:5432/velis?sslmode=disable"
+	cfg.Assets.Endpoint = "minio.internal:9000"
+	cfg.Assets.Bucket = "private-assets"
+	cfg.Assets.AccessKey = "secret-access"
+	cfg.Assets.SecretKey = "secret-object-password"
+	cfg.Assets.WebOrigin = "http://localhost:5173"
+	cfg.Feed.ProxyURL = "http://proxy-user:secret-proxy-password@proxy.internal:3128"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("测试配置无效: %v", err)
+	}
+
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	logger.Info("配置已加载", "config", cfg)
+	logged := output.String()
+	for _, secret := range []string{"secret-user", "secret-db-password", "secret-access", "secret-object-password", "proxy-user", "secret-proxy-password"} {
+		if strings.Contains(logged, secret) {
+			t.Errorf("日志泄露敏感值 %q: %s", secret, logged)
+		}
+	}
+	for _, safe := range []string{"private-assets", "trusted_proxy", "assets_enabled"} {
+		if !strings.Contains(logged, safe) {
+			t.Errorf("日志缺少安全摘要 %q: %s", safe, logged)
+		}
 	}
 }

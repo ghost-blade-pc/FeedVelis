@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -33,24 +32,41 @@ func (e *Error) Code() string  { return e.code }
 
 type Fetcher struct {
 	client                    *http.Client
-	resolver                  *net.Resolver
+	resolver                  Resolver
 	allowRestrictedForTesting bool
+	// proxy 是显式配置的可信出口代理；非空时其地址本身允许拨号。
+	proxy *url.URL
 }
 
-func NewFetcher() *Fetcher {
+// Resolver 把域名解析为候选地址；接口化以便用固定结果验证受限地址防护。
+type Resolver interface {
+	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
+}
+
+// Options 是 Feed 抓取的网络出口配置。
+type Options struct {
+	// ProxyURL 是部署者显式声明的可信出口代理。为空时一律直连，
+	// 通用环境代理（HTTP_PROXY 等）在任何情况下都不参与选择。
+	ProxyURL string
+}
+
+func NewFetcher(options Options) *Fetcher {
 	resolver := net.DefaultResolver
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	fetcher := &Fetcher{resolver: resolver}
 	transport := &http.Transport{
-		// 尊重环境代理（HTTP_PROXY/HTTPS_PROXY/NO_PROXY）：直连被阻断的源可走本地代理。
-		// 走代理时由代理解析目标地址，受限地址校验仅作用于直连路径。
-		Proxy:                  http.ProxyFromEnvironment,
+		// 默认不使用任何代理：环境变量不是安全授权，只有专用配置才能启用出口代理。
+		Proxy:                  nil,
 		DialContext:            fetcher.safeDialContext(dialer),
 		ForceAttemptHTTP2:      true,
 		TLSHandshakeTimeout:    5 * time.Second,
 		ResponseHeaderTimeout:  10 * time.Second,
 		IdleConnTimeout:        90 * time.Second,
 		MaxResponseHeaderBytes: 64 * 1024,
+	}
+	if proxy := parseProxyURL(options.ProxyURL); proxy != nil {
+		fetcher.proxy = proxy
+		transport.Proxy = http.ProxyURL(proxy)
 	}
 	fetcher.client = &http.Client{
 		Transport: transport,
@@ -129,8 +145,9 @@ func (f *Fetcher) safeDialContext(dialer *net.Dialer) func(context.Context, stri
 		if err != nil {
 			return nil, &Error{code: "SSRF_BLOCKED", err: errors.New("目标地址无效")}
 		}
-		// 环境显式配置的代理地址放行拨号；其余直连目标执行受限地址校验
-		if !f.allowRestrictedForTesting && isConfiguredProxy(host, port) {
+		// 显式配置的可信代理地址放行拨号：它可能位于私网，是部署者声明的安全边界；
+		// 其余目标一律执行受限地址校验。
+		if !f.allowRestrictedForTesting && f.isTrustedProxy(host, port) {
 			conn, err := dialer.DialContext(ctx, network, address)
 			if err != nil {
 				return nil, &Error{code: "CONNECT_FAILED", err: err}
@@ -160,23 +177,40 @@ func (f *Fetcher) safeDialContext(dialer *net.Dialer) func(context.Context, stri
 	}
 }
 
-// isConfiguredProxy 判断拨号目标是否为环境变量配置的代理地址。
-func isConfiguredProxy(host, port string) bool {
-	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
-		raw := os.Getenv(key)
-		u, err := url.Parse(raw)
-		if err != nil || u.Hostname() == "" {
-			continue
-		}
-		proxyPort := u.Port()
-		if proxyPort == "" {
-			proxyPort = "80"
-		}
-		if strings.EqualFold(u.Hostname(), host) && proxyPort == port {
-			return true
+// parseProxyURL 解析专用代理配置；未配置或不可用时返回 nil，调用方保持直连。
+func parseProxyURL(raw string) *url.URL {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil
+	}
+	return parsed
+}
+
+// isTrustedProxy 判断拨号目标是否为显式配置的可信代理。
+func (f *Fetcher) isTrustedProxy(host, port string) bool {
+	if f.proxy == nil {
+		return false
+	}
+	proxyPort := f.proxy.Port()
+	if proxyPort == "" {
+		proxyPort = "80"
+		if f.proxy.Scheme == "https" {
+			proxyPort = "443"
 		}
 	}
-	return false
+	return strings.EqualFold(f.proxy.Hostname(), host) && proxyPort == port
+}
+
+// NetworkMode 返回可安全记录的网络出口模式描述：不包含用户名、密码或完整 URL。
+func NetworkMode(proxyURL string) (mode string, host string) {
+	parsed := parseProxyURL(proxyURL)
+	if parsed == nil {
+		return "direct", ""
+	}
+	return "trusted_proxy", parsed.Hostname()
 }
 
 func (f *Fetcher) resolveAllowed(ctx context.Context, host string) ([]netip.Addr, error) {

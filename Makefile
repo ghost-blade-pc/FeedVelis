@@ -1,4 +1,4 @@
-.PHONY: help backend-fmt backend-test backend-race backend-build web-install web-test web-build check compose-up compose-down migrate-up migrate-down
+.PHONY: help backend-fmt backend-test backend-race backend-build web-install web-lint web-test web-build check compose-up compose-down migrate-up migrate-down
 
 GOCACHE_DIR ?= /tmp/feedvelis-go-cache
 
@@ -26,10 +26,13 @@ web-install:
 web-test:
 	cd web && npm test
 
+web-lint:
+	cd web && npm run lint
+
 web-build:
 	cd web && npm run build
 
-check: backend-fmt backend-test backend-race backend-build web-test web-build
+check: backend-fmt backend-test backend-race backend-build web-lint web-test web-build
 
 compose-up:
 	docker compose up --build -d
