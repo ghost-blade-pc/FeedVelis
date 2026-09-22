@@ -238,6 +238,7 @@ cd backend && GOCACHE=/tmp/feedvelis-go-cache go vet ./...
 - PostgreSQL 集成测试通过 `VELIS_TEST_DATABASE_URL` 启用，要求已迁移的专用 `_test` 数据库（测试基座会自动应用迁移）；测试会清空 Source/Article 与账户相关表。未设置该变量时跳过，普通 CI 通过不能代替数据库集成验证。
 - 真实 MinIO 测试通过 `VELIS_TEST_MINIO_ENDPOINT`、`VELIS_TEST_MINIO_UPLOAD_ENDPOINT`、`VELIS_TEST_MINIO_ACCESS_KEY`、`VELIS_TEST_MINIO_SECRET_KEY`、`VELIS_TEST_MINIO_BUCKET` 启用；Compose CORS 测试还要求 `VELIS_TEST_MINIO_WEB_ORIGIN`。内部与公共测试端点应使用不同 authority（例如 `127.0.0.1:9000` 与 `http://localhost:9000`）；未设置内部端点时测试会明确报告跳过，不能计作通过。
 - [I2 可复现闭环脚本](web/e2e/README.md) 会在本地/`.test` API 创建临时用户、文章和 Source，验证用户直发、RSS 抓取、联合 latest、编辑冲突和作者/管理员下架；它不是生产脚本。
+- 2026-09-22 使用专用 `_test` 数据库和真实 MinIO 完成 I2 全依赖回归：PostgreSQL 集成套件、MinIO 私有 Bucket/三种图片格式/流式读取与删除测试，以及上述 8 步 HTTP 闭环均通过；临时 API、数据库和测试对象已在验证后清理。
 - 认证相关计数与耗时以结构化日志字段落地：认证请求为 `operation`/`result`/`request_id`（确认身份后附 `user_id`/`session_id`），密码散列为 `operation=password_hash|password_verify` + `duration_ms`，限流为 `code=AUTH_RATE_LIMITED` + `dimension=account|ip`，刷新重放为 `event=refresh_replay`，清理为 `operation=cleanup` + `deleted_*`/`duration_ms`。**当前没有 `/metrics` 端点**，Prometheus 接入在后续阶段。
 - 浏览器 Playwright E2E、压测、完整监控告警和故障演练尚未完成；当前 I2 闭环以确定性前端单测、HTTP/集成测试和可复现脚本覆盖，不把它描述为完整浏览器兼容性验证。
 - Prometheus/Grafana 仅有 Compose/配置入口；可通过 `docker compose --profile observability up -d` 启动，不代表业务指标与仪表盘已经交付。

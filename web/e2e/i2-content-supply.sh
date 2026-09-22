@@ -22,7 +22,7 @@ new_key() { tr 'A-F' 'a-f' </proc/sys/kernel/random/uuid; }
 json_header=(-H 'Content-Type: application/json' -H "Origin: $origin")
 stamp="$(date +%s)"
 username="i2_e2e_${stamp}"
-password="Velis-${stamp}-Aa1!"
+password="V-${stamp}-Aa1!"
 asset_file="$(mktemp)"
 asset_read_file="${asset_file}.read"
 conflict_file="$(mktemp)"
