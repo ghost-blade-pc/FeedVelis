@@ -10,6 +10,8 @@
 GOCACHE=/tmp/feedvelis-go-cache go test -count=1 ./test/integration
 ```
 
+资产 API E2E 还要求真实 MinIO：设置 `VELIS_TEST_MINIO_ENDPOINT`（内部 `host:port`）、`VELIS_TEST_MINIO_UPLOAD_ENDPOINT`（测试进程可达且 authority 不同的完整 URL）、access key、secret key 和 bucket。未设置内部端点时测试会明确跳过。
+
 需要临时实例时可用容器，用完即删：
 
 ```bash

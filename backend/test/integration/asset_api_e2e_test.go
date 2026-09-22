@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,10 @@ func TestAssetAPIWithPostgresAndMinIOEndToEnd(t *testing.T) {
 		t.Skip("未设置 VELIS_TEST_MINIO_ENDPOINT，跳过 PostgreSQL + MinIO API E2E")
 	}
 	accessKey, secretKey, bucket := os.Getenv("VELIS_TEST_MINIO_ACCESS_KEY"), os.Getenv("VELIS_TEST_MINIO_SECRET_KEY"), os.Getenv("VELIS_TEST_MINIO_BUCKET")
+	uploadEndpoint := os.Getenv("VELIS_TEST_MINIO_UPLOAD_ENDPOINT")
+	if uploadEndpoint == "" {
+		uploadEndpoint = "http://" + endpoint
+	}
 	if accessKey == "" || secretKey == "" || bucket == "" {
 		t.Fatal("API E2E 必须同时设置 MinIO access key、secret key 和 bucket")
 	}
@@ -89,7 +94,7 @@ VALUES ($1,'asset_e2e_user','资产 E2E 用户','hash','user','active',$2,$2)`, 
 		t.Fatal(err)
 	}
 	store, err := miniostore.NewStore(miniostore.StoreConfig{
-		Endpoint: endpoint, AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket,
+		Endpoint: endpoint, UploadEndpoint: uploadEndpoint, AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +133,9 @@ VALUES ($1,'asset_e2e_user','资产 E2E 用户','hash','user','active',$2,$2)`, 
 	var upload dto.AssetUpload
 	if err := json.Unmarshal(create.Body.Bytes(), &upload); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(upload.UploadURL, endpoint) && !strings.Contains(uploadEndpoint, endpoint) {
+		t.Fatalf("upload_url 泄露内部端点: %s", upload.UploadURL)
 	}
 	var objectKey string
 	if err := env.pool.QueryRow(ctx, `SELECT object_key FROM velis.article_assets WHERE id=$1`, upload.Asset.ID).Scan(&objectKey); err != nil {

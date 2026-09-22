@@ -13,6 +13,7 @@ import (
 // AssetConfig 描述私有文章图片存储、额度和生命周期限制。
 type AssetConfig struct {
 	Endpoint          string `yaml:"endpoint"`
+	UploadEndpoint    string `yaml:"upload_endpoint"`
 	Bucket            string `yaml:"bucket"`
 	AccessKey         string `yaml:"access_key"`
 	SecretKey         string `yaml:"secret_key"`
@@ -97,11 +98,37 @@ func validateContentConfig(cfg *Config) error {
 	if _, _, err := net.SplitHostPort(assets.Endpoint); err != nil {
 		return fmt.Errorf("assets.endpoint 必须是 host:port: %w", err)
 	}
+	if err := validateUploadEndpoint(assets.UploadEndpoint); err != nil {
+		return fmt.Errorf("assets.upload_endpoint 无效: %w", err)
+	}
 	if strings.TrimSpace(assets.Bucket) == "" || strings.TrimSpace(assets.AccessKey) == "" || strings.TrimSpace(assets.SecretKey) == "" {
 		return errors.New("配置 assets.endpoint 时 bucket、access_key 与 secret_key 不能为空")
 	}
 	if err := validateAllowedOrigin(assets.WebOrigin, cfg.App.Environment); err != nil {
 		return fmt.Errorf("assets.web_origin 无效: %w", err)
+	}
+	return nil
+}
+
+func validateUploadEndpoint(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return errors.New("启用对象存储时不能为空")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Opaque != "" {
+		return errors.New("必须是完整的 http 或 https URL")
+	}
+	if parsed.User != nil {
+		return errors.New("不得包含用户信息")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return errors.New("不得包含查询或片段")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return errors.New("不得包含路径前缀")
 	}
 	return nil
 }

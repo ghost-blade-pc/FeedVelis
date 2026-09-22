@@ -19,7 +19,10 @@ worker:
 
 # 私有文章图片存储。endpoint 留空时资产能力局部降级；RSS、latest、Source 管理和纯文本投稿仍可用。
 assets:
+  # 服务端内部连接使用 host:port；启用时公共上传端点也必须配置。
   endpoint: ""
+  # 浏览器可达的完整 HTTP(S) origin，不得带凭据、查询、片段或路径前缀。
+  upload_endpoint: ""
   bucket: velis-article-assets
   # 真实对象存储凭据只通过 VELIS_ASSET_ACCESS_KEY / VELIS_ASSET_SECRET_KEY 注入。
   access_key: ""

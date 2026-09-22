@@ -78,7 +78,8 @@ func buildAssetStore(cfg config.Config) (*minio.Store, error) {
 		return nil, nil
 	}
 	return minio.NewStore(minio.StoreConfig{
-		Endpoint: cfg.Assets.Endpoint, AccessKey: cfg.Assets.AccessKey, SecretKey: cfg.Assets.SecretKey,
+		Endpoint: cfg.Assets.Endpoint, UploadEndpoint: cfg.Assets.UploadEndpoint,
+		AccessKey: cfg.Assets.AccessKey, SecretKey: cfg.Assets.SecretKey,
 		UseTLS: cfg.Assets.UseTLS, Bucket: cfg.Assets.Bucket,
 	})
 }

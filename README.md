@@ -163,7 +163,9 @@ I2 内容、资产和 Source 写接口要求 `Idempotency-Key`，修改既有资
 | 认证开启、MinIO 正常 | 可用 | 可用 | 按身份/RBAC 可用 | 可用 | 可用 |
 | 认证开启、MinIO 未配置或故障 | 可用 | 无图片引用时可用 | Source 与文章文本操作可用 | `503 ASSET_UNAVAILABLE` | 不仅因 MinIO 故障失败 |
 
-MinIO Bucket 必须私有；匿名图片只能经 API 实时核对“当前公开修订引用”后流式读取。预签名 URL 仅用于 15 分钟直传，不能作为公开读取契约。Bucket CORS 只允许 `assets.web_origin`/`VELIS_ASSET_WEB_ORIGIN` 的精确来源。
+MinIO Bucket 必须私有；匿名图片只能经 API 实时核对“当前公开修订引用”后流式读取。预签名 URL 仅用于 15 分钟直传，不能作为公开读取契约。对象存储的三个地址概念不可混用：`assets.endpoint`/`VELIS_ASSET_ENDPOINT` 是 API 与 Worker 使用的内部 `host:port`，`assets.upload_endpoint`/`VELIS_ASSET_UPLOAD_ENDPOINT` 是浏览器可达的完整 HTTP(S) origin，`assets.web_origin`/`VELIS_ASSET_WEB_ORIGIN` 是 Bucket CORS 允许发起上传的精确前端来源。本地 Compose 分别使用 `minio:9000`、`http://localhost:9000` 和 `http://localhost:5173`。
+
+启用对象存储后公共上传端点为必填项，这是一次有意的配置兼容性变更：已有部署升级前必须补充该字段，系统不会回退到内部 DNS 名称，也不会从请求 Host/Origin 推导。生产应使用客户端可解析、可路由且证书有效的 HTTPS 资产入口；反向代理必须原样保留签名时使用的 Host，否则 AWS Signature V4 校验会失败。公共端点不得包含用户信息、查询、片段或路径前缀。
 
 ## 账户与认证
 
@@ -213,7 +215,7 @@ go run ./cmd/velis-admin account set-status -username alice -status disabled
 
 示例仅供本地开发；真实数据库地址、密码、Token 和模型密钥通过环境变量注入，不提交到仓库。宿主机连接配置应与 Compose 中 PostgreSQL 的实际账户和数据库匹配。
 
-I2 常用环境变量包括 `VELIS_ASSET_ENDPOINT`、`VELIS_ASSET_BUCKET`、`VELIS_ASSET_ACCESS_KEY`、`VELIS_ASSET_SECRET_KEY`、`VELIS_ASSET_USE_TLS`、`VELIS_ASSET_WEB_ORIGIN`、`VELIS_IDEMPOTENCY_RETENTION` 和 `VELIS_FEED_PROXY_URL`。完整上限及默认值见示例 YAML；对象存储凭据和含凭据的代理 URL 不得提交或写入日志。
+I2 常用环境变量包括 `VELIS_ASSET_ENDPOINT`、`VELIS_ASSET_UPLOAD_ENDPOINT`、`VELIS_ASSET_BUCKET`、`VELIS_ASSET_ACCESS_KEY`、`VELIS_ASSET_SECRET_KEY`、`VELIS_ASSET_USE_TLS`、`VELIS_ASSET_WEB_ORIGIN`、`VELIS_IDEMPOTENCY_RETENTION` 和 `VELIS_FEED_PROXY_URL`。完整上限及默认值见示例 YAML；对象存储凭据和含凭据的代理 URL 不得提交或写入日志。
 
 ## 数据迁移与回滚
 
@@ -234,7 +236,7 @@ cd backend && GOCACHE=/tmp/feedvelis-go-cache go vet ./...
 
 - 已有 Domain/Application、抓取解析清洗、Hertz、CLI、配置、架构依赖与前端测试；账户领域、认证用例、HTTP 中间件、安全适配器与前端会话模块都有单测。
 - PostgreSQL 集成测试通过 `VELIS_TEST_DATABASE_URL` 启用，要求已迁移的专用 `_test` 数据库（测试基座会自动应用迁移）；测试会清空 Source/Article 与账户相关表。未设置该变量时跳过，普通 CI 通过不能代替数据库集成验证。
-- 真实 MinIO 测试通过 `VELIS_TEST_MINIO_ENDPOINT`、`VELIS_TEST_MINIO_ACCESS_KEY`、`VELIS_TEST_MINIO_SECRET_KEY`、`VELIS_TEST_MINIO_BUCKET` 启用；Compose CORS 测试还要求 `VELIS_TEST_MINIO_WEB_ORIGIN`。未设置端点时测试会明确报告跳过，不能计作通过。
+- 真实 MinIO 测试通过 `VELIS_TEST_MINIO_ENDPOINT`、`VELIS_TEST_MINIO_UPLOAD_ENDPOINT`、`VELIS_TEST_MINIO_ACCESS_KEY`、`VELIS_TEST_MINIO_SECRET_KEY`、`VELIS_TEST_MINIO_BUCKET` 启用；Compose CORS 测试还要求 `VELIS_TEST_MINIO_WEB_ORIGIN`。内部与公共测试端点应使用不同 authority（例如 `127.0.0.1:9000` 与 `http://localhost:9000`）；未设置内部端点时测试会明确报告跳过，不能计作通过。
 - [I2 可复现闭环脚本](web/e2e/README.md) 会在本地/`.test` API 创建临时用户、文章和 Source，验证用户直发、RSS 抓取、联合 latest、编辑冲突和作者/管理员下架；它不是生产脚本。
 - 认证相关计数与耗时以结构化日志字段落地：认证请求为 `operation`/`result`/`request_id`（确认身份后附 `user_id`/`session_id`），密码散列为 `operation=password_hash|password_verify` + `duration_ms`，限流为 `code=AUTH_RATE_LIMITED` + `dimension=account|ip`，刷新重放为 `event=refresh_replay`，清理为 `operation=cleanup` + `deleted_*`/`duration_ms`。**当前没有 `/metrics` 端点**，Prometheus 接入在后续阶段。
 - 浏览器 Playwright E2E、压测、完整监控告警和故障演练尚未完成；当前 I2 闭环以确定性前端单测、HTTP/集成测试和可复现脚本覆盖，不把它描述为完整浏览器兼容性验证。

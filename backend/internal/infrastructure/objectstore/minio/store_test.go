@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +24,10 @@ import (
 
 // webpFixture 是 1×1 的合法 WebP：golang.org/x/image/webp 只提供解码器，没有编码器。
 const webpFixture = "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA="
+
+// pngFixture 是 1×1 的合法 PNG。测试不导入 image/png，确保格式注册来自生产代码，
+// 避免测试依赖意外掩盖生产二进制漏注册解码器的问题。
+const pngFixture = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 
 func TestObjectFailureClassification(t *testing.T) {
 	cases := map[string]struct {
@@ -51,6 +57,62 @@ func TestObjectFailureClassification(t *testing.T) {
 	}
 }
 
+func TestStorePresignsWithPublicEndpointAndCachesInternalRegion(t *testing.T) {
+	var locationRequests atomic.Int32
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.Path != "/private-assets/" || request.URL.Query().Has("location") == false {
+			t.Fatalf("内部 region 请求 = %s %s", request.Method, request.URL.String())
+		}
+		locationRequests.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/xml"}},
+			Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0" encoding="UTF-8"?><LocationConstraint>us-east-1</LocationConstraint>`)),
+			Request:    request,
+		}, nil
+	})
+
+	store, err := NewStore(StoreConfig{
+		Endpoint: "minio.internal:9000", UploadEndpoint: "https://uploads.example.test",
+		AccessKey: "access", SecretKey: "secret", Bucket: "private-assets", transport: transport,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, objectKey := range []string{"objects/first", "objects/second"} {
+		presigned, err := store.PresignUpload(context.Background(), objectKey, 15*time.Minute)
+		if err != nil {
+			t.Fatalf("PresignUpload(%q): %v", objectKey, err)
+		}
+		parsed, err := url.Parse(presigned.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Scheme != "https" || parsed.Host != "uploads.example.test" || !strings.Contains(parsed.Path, objectKey) {
+			t.Fatalf("公共预签名 URL = %q", presigned.URL)
+		}
+		if parsed.Query().Get("X-Amz-Signature") == "" {
+			t.Fatalf("URL 缺少签名: %q", presigned.URL)
+		}
+	}
+	if got := locationRequests.Load(); got != 1 {
+		t.Fatalf("region 请求次数 = %d，期望缓存后为 1", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func TestStorageFailureDoesNotExposePresignedURL(t *testing.T) {
+	secretURL := "https://uploads.example.test/private?X-Amz-Signature=top-secret"
+	if message := storageFailure(errors.New(secretURL)).Error(); strings.Contains(message, "Signature") || strings.Contains(message, "uploads.example.test") {
+		t.Fatalf("稳定错误泄露预签名 URL: %q", message)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	endpoint := os.Getenv("VELIS_TEST_MINIO_ENDPOINT")
@@ -60,10 +122,14 @@ func newTestStore(t *testing.T) *Store {
 	accessKey := os.Getenv("VELIS_TEST_MINIO_ACCESS_KEY")
 	secretKey := os.Getenv("VELIS_TEST_MINIO_SECRET_KEY")
 	bucket := os.Getenv("VELIS_TEST_MINIO_BUCKET")
+	uploadEndpoint := os.Getenv("VELIS_TEST_MINIO_UPLOAD_ENDPOINT")
+	if uploadEndpoint == "" {
+		uploadEndpoint = "http://" + endpoint
+	}
 	if accessKey == "" || secretKey == "" || bucket == "" {
 		t.Fatal("真实 MinIO 验证必须同时设置 access key、secret key 和 bucket")
 	}
-	store, err := NewStore(StoreConfig{Endpoint: endpoint, AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket})
+	store, err := NewStore(StoreConfig{Endpoint: endpoint, UploadEndpoint: uploadEndpoint, AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket})
 	if err != nil {
 		t.Fatalf("创建对象存储适配器: %v", err)
 	}
@@ -104,13 +170,13 @@ func upload(t *testing.T, store *Store, objectKey string, body []byte) {
 	})
 }
 
-func encodePNG(t *testing.T, width, height int) []byte {
+func pngFixtureBytes(t *testing.T) []byte {
 	t.Helper()
-	var buffer bytes.Buffer
-	if err := png.Encode(&buffer, image.NewRGBA(image.Rect(0, 0, width, height))); err != nil {
+	value, err := base64.StdEncoding.DecodeString(pngFixture)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return buffer.Bytes()
+	return value
 }
 
 func encodeJPEG(t *testing.T, width, height int) []byte {
@@ -132,7 +198,8 @@ func TestStorePrivateBucketAndFaultMapping(t *testing.T) {
 	}
 
 	missing, err := NewStore(StoreConfig{Endpoint: os.Getenv("VELIS_TEST_MINIO_ENDPOINT"),
-		AccessKey: os.Getenv("VELIS_TEST_MINIO_ACCESS_KEY"), SecretKey: os.Getenv("VELIS_TEST_MINIO_SECRET_KEY"),
+		UploadEndpoint: "http://" + os.Getenv("VELIS_TEST_MINIO_ENDPOINT"),
+		AccessKey:      os.Getenv("VELIS_TEST_MINIO_ACCESS_KEY"), SecretKey: os.Getenv("VELIS_TEST_MINIO_SECRET_KEY"),
 		Bucket: "velis-absent-bucket"})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +214,7 @@ func TestStorePrivateBucketAndFaultMapping(t *testing.T) {
 	}
 
 	// 不可达端点必须被收敛为稳定的降级错误。
-	unreachable, err := NewStore(StoreConfig{Endpoint: "127.0.0.1:1", AccessKey: "key", SecretKey: "secret", Bucket: "velis-article-assets"})
+	unreachable, err := NewStore(StoreConfig{Endpoint: "127.0.0.1:1", UploadEndpoint: "https://public-assets.example.com", AccessKey: "key", SecretKey: "secret", Bucket: "velis-article-assets"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +245,7 @@ func TestStoreProbesAllSupportedImageFormats(t *testing.T) {
 		width       int
 		height      int
 	}{
-		{"png", encodePNG(t, 640, 480), "image/png", 640, 480},
+		{"png", pngFixtureBytes(t), "image/png", 1, 1},
 		{"jpeg", encodeJPEG(t, 320, 240), "image/jpeg", 320, 240},
 		{"webp", webpBytes, "image/webp", 1, 1},
 	}
@@ -237,7 +304,7 @@ func TestStoreStreamsObjectAndDeletesIdempotently(t *testing.T) {
 	defer cancel()
 
 	objectKey := testObjectKey("stream")
-	body := encodePNG(t, 96, 64)
+	body := pngFixtureBytes(t)
 	upload(t, store, objectKey, body)
 
 	stream, err := store.OpenObject(ctx, objectKey)

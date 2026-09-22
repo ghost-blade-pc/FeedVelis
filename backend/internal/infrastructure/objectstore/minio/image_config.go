@@ -2,6 +2,8 @@ package minio
 
 import (
 	"image"
+	_ "image/jpeg" // 注册标准库 JPEG 配置解码器。
+	_ "image/png"  // 注册标准库 PNG 配置解码器。
 	"io"
 
 	_ "golang.org/x/image/webp" // 注册 WebP 配置解码器。

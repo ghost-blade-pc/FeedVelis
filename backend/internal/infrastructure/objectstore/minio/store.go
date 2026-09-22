@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	miniogo "github.com/minio/minio-go/v7"
@@ -20,17 +22,24 @@ const probeHeaderBytes = 32
 
 // StoreConfig 是对象存储适配器所需的连接与 Bucket 配置。
 type StoreConfig struct {
-	Endpoint  string
-	AccessKey string
-	SecretKey string
-	UseTLS    bool
-	Bucket    string
+	Endpoint       string
+	UploadEndpoint string
+	AccessKey      string
+	SecretKey      string
+	UseTLS         bool
+	Bucket         string
+	transport      http.RoundTripper
 }
 
 // Store 是 S3 兼容私有对象存储适配器；Bucket 必须由部署初始化并保持私有。
 type Store struct {
-	client *miniogo.Client
-	bucket string
+	client         *miniogo.Client
+	bucket         string
+	uploadEndpoint *url.URL
+	accessKey      string
+	secretKey      string
+	signerMu       sync.Mutex
+	signingClient  *miniogo.Client
 }
 
 var _ ports.AssetStorage = (*Store)(nil)
@@ -41,12 +50,31 @@ func NewStore(config StoreConfig) (*Store, error) {
 	}
 	client, err := NewClient(ClientConfig{
 		Endpoint: config.Endpoint, AccessKey: config.AccessKey,
-		SecretKey: config.SecretKey, UseTLS: config.UseTLS,
+		SecretKey: config.SecretKey, UseTLS: config.UseTLS, transport: config.transport,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Store{client: client, bucket: config.Bucket}, nil
+	uploadEndpoint, err := parseUploadEndpoint(config.UploadEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{
+		client: client, bucket: config.Bucket, uploadEndpoint: uploadEndpoint,
+		accessKey: config.AccessKey, secretKey: config.SecretKey,
+	}, nil
+}
+
+func parseUploadEndpoint(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("解析公共上传端点: %w", err)
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return nil, errors.New("公共上传端点必须是不含用户信息、查询、片段或路径前缀的完整 HTTP(S) URL")
+	}
+	return parsed, nil
 }
 
 // EnsurePrivateBucket 只做校验，不隐式创建 Bucket：
@@ -73,12 +101,39 @@ func (s *Store) PresignUpload(ctx context.Context, objectKey string, ttl time.Du
 	if strings.TrimSpace(objectKey) == "" || ttl <= 0 {
 		return ports.PresignedUpload{}, errors.New("预签名上传需要对象键和正的有效期")
 	}
-	url, err := s.client.PresignedPutObject(ctx, s.bucket, objectKey, ttl)
+	signingClient, err := s.signer(ctx)
+	if err != nil {
+		return ports.PresignedUpload{}, storageFailure(err)
+	}
+	uploadURL, err := signingClient.PresignedPutObject(ctx, s.bucket, objectKey, ttl)
 	if err != nil {
 		// 预签名地址本身等同于凭据，错误信息不得回显。
 		return ports.PresignedUpload{}, storageFailure(err)
 	}
-	return ports.PresignedUpload{URL: url.String(), Method: http.MethodPut, Headers: map[string]string{}}, nil
+	return ports.PresignedUpload{URL: uploadURL.String(), Method: http.MethodPut, Headers: map[string]string{}}, nil
+}
+
+// signer 只通过内部客户端发现 region；显式 region 让公共客户端纯离线签名，
+// 因而 API 所在网络无需能够访问浏览器使用的公共端点。
+func (s *Store) signer(ctx context.Context) (*miniogo.Client, error) {
+	s.signerMu.Lock()
+	defer s.signerMu.Unlock()
+	if s.signingClient != nil {
+		return s.signingClient, nil
+	}
+	region, err := s.client.GetBucketLocation(ctx, s.bucket)
+	if err != nil {
+		return nil, err
+	}
+	client, err := NewClient(ClientConfig{
+		Endpoint: s.uploadEndpoint.Host, AccessKey: s.accessKey, SecretKey: s.secretKey,
+		UseTLS: s.uploadEndpoint.Scheme == "https", Region: region,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.signingClient = client
+	return client, nil
 }
 
 func (s *Store) StatObject(ctx context.Context, objectKey string) (ports.ObjectInfo, error) {

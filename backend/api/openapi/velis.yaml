@@ -1191,7 +1191,7 @@ components:
         upload_url:
           type: string
           format: uri
-          description: 15 分钟有效的对象存储预签名地址；不属于匿名读取契约。
+          description: 15 分钟有效、使用部署配置的公共上传端点签发且可由 Web 客户端访问的对象存储预签名地址；不属于匿名读取契约。
         upload_method:
           type: string
           const: PUT

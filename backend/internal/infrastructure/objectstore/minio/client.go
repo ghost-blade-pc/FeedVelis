@@ -3,6 +3,7 @@ package minio
 
 import (
 	"fmt"
+	"net/http"
 
 	miniogo "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -14,6 +15,8 @@ type ClientConfig struct {
 	AccessKey string
 	SecretKey string
 	UseTLS    bool
+	Region    string
+	transport http.RoundTripper
 }
 
 // NewClient 创建不依赖环境凭据的 S3 兼容客户端。
@@ -25,7 +28,9 @@ func NewClient(config ClientConfig) (*miniogo.Client, error) {
 		return nil, fmt.Errorf("对象存储访问凭据不能为空")
 	}
 	return miniogo.New(config.Endpoint, &miniogo.Options{
-		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
-		Secure: config.UseTLS,
+		Creds:     credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
+		Secure:    config.UseTLS,
+		Region:    config.Region,
+		Transport: config.transport,
 	})
 }

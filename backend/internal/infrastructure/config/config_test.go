@@ -46,6 +46,7 @@ func TestValidateRejectsInvalidConnectionLimits(t *testing.T) {
 
 func TestContentConfigPriorityAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("VELIS_ASSET_ENDPOINT", "minio.internal:9443")
+	t.Setenv("VELIS_ASSET_UPLOAD_ENDPOINT", "https://assets.example.com")
 	t.Setenv("VELIS_ASSET_BUCKET", "env-assets")
 	t.Setenv("VELIS_ASSET_ACCESS_KEY", "env-access")
 	t.Setenv("VELIS_ASSET_SECRET_KEY", "env-secret")
@@ -58,7 +59,7 @@ func TestContentConfigPriorityAndEnvironmentOverrides(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	data := []byte("assets:\n  endpoint: yaml-minio:9000\n  bucket: yaml-assets\n  access_key: yaml-access\n  secret_key: yaml-secret\n  web_origin: https://yaml.example.com\n  user_quota_bytes: 268435456\nidempotency:\n  retention: 12h\nfeed:\n  proxy_url: http://yaml-proxy:3128\n")
+	data := []byte("assets:\n  endpoint: yaml-minio:9000\n  upload_endpoint: https://yaml-assets.example.com\n  bucket: yaml-assets\n  access_key: yaml-access\n  secret_key: yaml-secret\n  web_origin: https://yaml.example.com\n  user_quota_bytes: 268435456\nidempotency:\n  retention: 12h\nfeed:\n  proxy_url: http://yaml-proxy:3128\n")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -70,12 +71,59 @@ func TestContentConfigPriorityAndEnvironmentOverrides(t *testing.T) {
 	if cfg.Assets.Endpoint != "minio.internal:9443" || cfg.Assets.Bucket != "env-assets" || !cfg.Assets.UseTLS {
 		t.Fatalf("资产环境覆盖失败: %+v", cfg.Assets)
 	}
+	if cfg.Assets.UploadEndpoint != "https://assets.example.com" {
+		t.Fatalf("公共上传端点环境覆盖失败: %q", cfg.Assets.UploadEndpoint)
+	}
 	if cfg.Assets.UserQuotaBytes != 512*1024*1024 || cfg.Idempotency.Retention != 48*time.Hour {
 		t.Fatalf("额度/幂等保留期 = %d/%v", cfg.Assets.UserQuotaBytes, cfg.Idempotency.Retention)
 	}
 	if cfg.Feed.ProxyURL != "http://proxy-user:proxy-pass@proxy.internal:3128" {
 		t.Fatalf("Feed 代理环境覆盖失败: %q", cfg.Feed.ProxyURL)
 	}
+}
+
+func TestAssetUploadEndpointValidation(t *testing.T) {
+	valid := []string{"http://localhost:9000", "https://assets.example.com", "https://assets.example.com/"}
+	for _, endpoint := range valid {
+		t.Run("允许_"+endpoint, func(t *testing.T) {
+			cfg := validAssetConfig()
+			cfg.Assets.UploadEndpoint = endpoint
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+
+	invalid := []string{
+		"", "localhost:9000", "ftp://assets.example.com", "https:///missing-host",
+		"https://user:pass@assets.example.com", "https://assets.example.com/prefix",
+		"https://assets.example.com?token=secret", "https://assets.example.com/#fragment",
+	}
+	for _, endpoint := range invalid {
+		t.Run("拒绝_"+endpoint, func(t *testing.T) {
+			cfg := validAssetConfig()
+			cfg.Assets.UploadEndpoint = endpoint
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "assets.upload_endpoint") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+
+	// 未启用资产时不要求公共上传端点，保持局部降级能力。
+	cfg := Default()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("未启用资产时 Validate() error = %v", err)
+	}
+}
+
+func validAssetConfig() Config {
+	cfg := Default()
+	cfg.Assets.Endpoint = "minio.internal:9000"
+	cfg.Assets.UploadEndpoint = "https://assets.example.com"
+	cfg.Assets.AccessKey = "access"
+	cfg.Assets.SecretKey = "secret"
+	cfg.Assets.WebOrigin = "https://velis.example.com"
+	return cfg
 }
 
 func TestContentConfigRejectsInvalidBoundaries(t *testing.T) {
@@ -107,6 +155,7 @@ func TestConfigLogValueRedactsSensitiveValues(t *testing.T) {
 	cfg := Default()
 	cfg.Database.URL = "postgres://secret-user:secret-db-password@localhost:5432/velis?sslmode=disable"
 	cfg.Assets.Endpoint = "minio.internal:9000"
+	cfg.Assets.UploadEndpoint = "https://assets.example.com"
 	cfg.Assets.Bucket = "private-assets"
 	cfg.Assets.AccessKey = "secret-access"
 	cfg.Assets.SecretKey = "secret-object-password"

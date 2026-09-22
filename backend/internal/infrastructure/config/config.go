@@ -146,6 +146,7 @@ func applyEnvironment(cfg *Config) error {
 	setString(&cfg.Database.ConnectRaw, "VELIS_DATABASE_CONNECT_TIMEOUT")
 	setString(&cfg.Worker.HeartbeatRaw, "VELIS_WORKER_HEARTBEAT_INTERVAL")
 	setString(&cfg.Assets.Endpoint, "VELIS_ASSET_ENDPOINT")
+	setString(&cfg.Assets.UploadEndpoint, "VELIS_ASSET_UPLOAD_ENDPOINT")
 	setString(&cfg.Assets.Bucket, "VELIS_ASSET_BUCKET")
 	setString(&cfg.Assets.AccessKey, "VELIS_ASSET_ACCESS_KEY")
 	setString(&cfg.Assets.SecretKey, "VELIS_ASSET_SECRET_KEY")
