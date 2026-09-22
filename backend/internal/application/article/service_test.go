@@ -2,6 +2,9 @@ package article
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -70,8 +73,28 @@ func TestListCreatesOpaqueCursor(t *testing.T) {
 	if !page.HasMore || page.NextCursor == nil || len(page.Items) != 2 {
 		t.Fatalf("page=%+v", page)
 	}
-	if _, err := decodeCursor(*page.NextCursor); err != nil {
+	decoded, err := decodeCursor(*page.NextCursor)
+	if err != nil || decoded.ArticleID != 2 || !decoded.SortAt.Equal(now) {
 		t.Fatal(err)
+	}
+}
+
+func TestLatestCursorVersionTwoRoundTripAndRejectsVersionOne(t *testing.T) {
+	now := time.Date(2026, 9, 22, 9, 30, 0, 0, time.FixedZone("CST", 8*60*60))
+	want := articleDomain.Cursor{SortAt: now, ArticleID: 42}
+	encoded := encodeCursor(want)
+	decoded, err := decodeCursor(encoded)
+	if err != nil || decoded.ArticleID != want.ArticleID || !decoded.SortAt.Equal(now) {
+		t.Fatalf("v2 游标往返 = %+v err=%v", decoded, err)
+	}
+
+	legacyJSON, err := json.Marshal(cursorPayload{Version: 1, SortAt: now.UTC(), ArticleID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := base64.RawURLEncoding.EncodeToString(legacyJSON)
+	if _, err := decodeCursor(legacy); !errors.Is(err, articleDomain.ErrInvalidCursor) {
+		t.Fatalf("v1 游标应失效，实际错误: %v", err)
 	}
 }
 

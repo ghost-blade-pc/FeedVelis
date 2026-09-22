@@ -23,7 +23,12 @@ velis.login_failure_events, velis.refresh_tokens, velis.auth_sessions, velis.use
 RESTART IDENTITY CASCADE`)
 
 	runner := newMigrationRunner(t, env.databaseURL)
-	if err := runner.Steps(-1); err != nil {
+	defer func() {
+		if err := runner.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			t.Errorf("清理时恢复到最新迁移: %v", err)
+		}
+	}()
+	if err := runner.Steps(-2); err != nil {
 		t.Fatalf("回到 I2 前结构: %v", err)
 	}
 	seedLegacyArticles(t, env)

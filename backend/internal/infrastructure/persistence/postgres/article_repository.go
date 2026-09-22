@@ -298,15 +298,15 @@ WHERE a.id=$1 AND a.status='published'`, articleID)
 
 func (r *ArticleRepository) ListPublished(ctx context.Context, cursor *articleDomain.Cursor, limit int) ([]articleDomain.ListItem, error) {
 	query := `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
-v.excerpt,a.source_published_at,a.discovered_at,a.published_at,u.id::text,u.nickname FROM velis.articles a
+v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
 LEFT JOIN velis.users u ON u.id=a.author_user_id WHERE a.status='published'`
 	args := []any{}
 	if cursor != nil {
-		query += ` AND (a.published_at,a.id)<($1,$2)`
+		query += ` AND (COALESCE(a.source_published_at,a.published_at),a.id)<($1,$2)`
 		args = append(args, cursor.SortAt, cursor.ArticleID)
 	}
-	query += ` ORDER BY a.published_at DESC,a.id DESC LIMIT $` + strconv.Itoa(len(args)+1)
+	query += ` ORDER BY COALESCE(a.source_published_at,a.published_at) DESC,a.id DESC LIMIT $` + strconv.Itoa(len(args)+1)
 	args = append(args, limit)
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {

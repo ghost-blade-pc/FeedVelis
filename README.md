@@ -14,7 +14,7 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 来源管理 | CLI 及管理员 HTTP/Web 新增、列出、改周期、暂停、恢复、同步抓取与抓取历史；5 分钟至 24 小时来源级周期 | 系统级来源；Feed URL 创建后不可修改，无删除、认证 Feed、自定义请求头或用户订阅 |
 | 抓取 | RSS 2.0、Atom、JSON Feed；ETag/Last-Modified、304、租约/fencing、失败退避、运行历史、超时与 5 MiB 限制 | Worker 直接编排，尚未接入 MQ/Outbox；默认忽略通用环境代理 |
 | 文章存储 | RSS/用户互斥来源身份、不可变修订、固定站内发布时间、乐观锁、作者与管理员下架优先级 | 用户发布后直接公开，无审核队列、协作编辑或版本历史 UI |
-| 阅读 | 匿名联合 latest、`(published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | 新文章插入不提供跨请求数据库快照；编辑不会把旧文顶回首页 |
+| 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
 | Web | latest/详情、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无互动、搜索、recommend 或 Agent 界面 |
@@ -144,7 +144,7 @@ go run ./cmd/velis-admin -config configs/config.example.yaml source resume 1
 | `GET /api/v1/account/me` | 读取本人账户 |
 | `PATCH /api/v1/account/me` | 修改本人昵称 |
 
-列表返回 `items`、`next_cursor`、`has_more`；latest 只读取 `published`，按固定站内 `(published_at,id)` 倒序。文章来源由 `origin.type=rss|user` 判别。当前游标有版本与格式校验，尚无 HMAC 签名。响应携带 `X-Request-ID`，错误使用统一 `error` 信封（`code`/`message`/`request_id`，无 `details`）。
+列表返回 `items`、`next_cursor`、`has_more`；latest 只读取 `published`，按 `(effective_published_at,id)` 倒序，其中 RSS 优先使用 `source_published_at`、缺失时回退固定站内 `published_at`，站内投稿使用固定站内 `published_at`。文章来源由 `origin.type=rss|user` 判别。latest 游标为版本 2 且有格式校验，旧排序语义生成的版本 1 游标返回 `INVALID_CURSOR`，调用方应从第一页重新获取；游标尚无 HMAC 签名。响应携带 `X-Request-ID`，错误使用统一 `error` 信封（`code`/`message`/`request_id`，无 `details`）。
 
 I2 内容、资产和 Source 写接口要求 `Idempotency-Key`，修改既有资源还要求强 `If-Match: "<lock_version>"`；成功结果默认保留 24 小时。浏览器在同一用户动作的认证刷新或结果不明重试中复用原键，用户明确再次提交才生成新键。保留期结束后不承诺响应重放，但数据库唯一约束和状态机仍保护数据一致性。版本冲突返回 409，Web 保留本地 Markdown，不自动合并或换键覆盖。
 
@@ -218,6 +218,8 @@ I2 常用环境变量包括 `VELIS_ASSET_ENDPOINT`、`VELIS_ASSET_BUCKET`、`VEL
 ## 数据迁移与回滚
 
 `000004_unify_content_supply` 会保留历史 RSS 文章 ID，把旧正文回填为 revision 1，并以原 `discovered_at` 固定 `published_at`。迁移前应备份并在专用环境核对文章数、ID、状态、修订和 latest 抽样。
+
+`000005_sort_latest_by_source_time` 将公开文章的 latest 索引替换为 `(COALESCE(source_published_at, published_at), id)` 倒序表达式索引；down migration 只恢复旧索引，不修改文章数据。应用回滚时应先回滚 API，再回滚该迁移，避免查询排序与索引语义不一致。
 
 down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、无资产”的旧模型可表达状态时才允许回退。只要存在用户投稿、资产或第二修订，down 会在事务内明确失败。不要使用 force 或删除数据绕过保护；此时应保持数据库前滚并修复/回滚应用。
 

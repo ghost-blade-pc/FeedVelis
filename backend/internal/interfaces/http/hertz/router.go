@@ -150,7 +150,7 @@ func registerAssetContentRoutes(h *server.Hertz, options Options) {
 func registerMyAssetRoutes(h *server.Hertz, options *AuthOptions, logger *slog.Logger) {
 	assets := handler.NewAsset(options.Assets, logger)
 	authenticated := middleware.Authenticate(options.Service)
-	group := h.Group("/api/v1/assets")
+	group := h.Group("/api/v1/me/assets")
 	group.POST("", middleware.RequireJSON(), authenticated, assets.Create)
 	group.POST("/:asset_id/confirm", authenticated, assets.Confirm)
 }

@@ -25,7 +25,7 @@ paths:
   /articles:
     get:
       operationId: listArticles
-      summary: 按发布时间或收录时间倒序读取文章
+      summary: 按有效发布时间倒序读取文章
       parameters:
         - name: cursor
           in: query
@@ -969,6 +969,7 @@ components:
         published_at:
           type: string
           format: date-time
+          description: latest 使用的有效发布时间；RSS 原站时间优先，缺失时回退固定站内发布时间。
         origin:
           $ref: "#/components/schemas/ArticleOrigin"
     ArticleSource:

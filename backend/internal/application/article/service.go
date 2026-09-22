@@ -174,7 +174,7 @@ func (s *Service) List(ctx context.Context, encodedCursor string, limit int) (Pa
 }
 
 func encodeCursor(cursor articleDomain.Cursor) string {
-	data, _ := json.Marshal(cursorPayload{Version: 1, SortAt: cursor.SortAt.UTC(), ArticleID: cursor.ArticleID})
+	data, _ := json.Marshal(cursorPayload{Version: 2, SortAt: cursor.SortAt.UTC(), ArticleID: cursor.ArticleID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -189,7 +189,7 @@ func decodeCursor(value string) (articleDomain.Cursor, error) {
 	var payload cursorPayload
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&payload); err != nil || payload.Version != 1 || payload.ArticleID <= 0 || payload.SortAt.IsZero() {
+	if err := decoder.Decode(&payload); err != nil || payload.Version != 2 || payload.ArticleID <= 0 || payload.SortAt.IsZero() {
 		return articleDomain.Cursor{}, articleDomain.ErrInvalidCursor
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
