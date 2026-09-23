@@ -25,6 +25,13 @@ type AdminService struct {
 	repository  AdminArticleRepository
 	idempotency *idempotencyApp.Service
 	clock       ports.Clock
+	outbox      ports.Outbox
+}
+
+func NewAdminServiceWithOutbox(repository AdminArticleRepository, idempotency *idempotencyApp.Service, clock ports.Clock, outbox ports.Outbox) *AdminService {
+	service := NewAdminService(repository, idempotency, clock)
+	service.outbox = outbox
+	return service
 }
 
 func NewAdminService(repository AdminArticleRepository, idempotency *idempotencyApp.Service, clock ports.Clock) *AdminService {
@@ -83,6 +90,9 @@ func (s *AdminService) changeState(ctx context.Context, operation string, comman
 		stored, setErr := s.repository.SetArticleState(txContext, current.ID, command.ExpectedVersion, status, reason, actor, nil, nil, now)
 		if setErr != nil {
 			return nil, "", "", setErr
+		}
+		if eventErr := appendArticleTransition(txContext, s.outbox, &current, stored, false, now); eventErr != nil {
+			return nil, "", "", eventErr
 		}
 		return UserArticleResult{Article: stored}, "article", jsonNumber(stored.ID), nil
 	})

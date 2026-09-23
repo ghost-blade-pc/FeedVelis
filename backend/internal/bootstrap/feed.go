@@ -23,7 +23,7 @@ func buildFeedServices(pool *pgxpool.Pool, proxyURL string) feedServices {
 	sanitizer := httpfeed.NewSanitizer()
 	clockValue := clock.System{}
 	txManager := postgres.NewTxManager(pool)
-	articleService := articleApp.NewService(articleRepository, sanitizer, clockValue, txManager)
+	articleService := articleApp.NewServiceWithOutbox(articleRepository, sanitizer, clockValue, txManager, postgres.NewOutboxRepository(pool))
 	sourceService := sourceApp.NewService(sourceRepository, postgres.NewFetchRunRepository(pool),
 		httpfeed.NewFetcher(httpfeed.Options{ProxyURL: proxyURL}), httpfeed.NewParser(),
 		articleService, clockValue, txManager, randomJitter)

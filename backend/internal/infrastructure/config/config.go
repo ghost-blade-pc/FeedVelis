@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,10 @@ type Config struct {
 	Assets      AssetConfig       `yaml:"assets"`
 	Idempotency IdempotencyConfig `yaml:"idempotency"`
 	Feed        FeedConfig        `yaml:"feed"`
+	RabbitMQ    RabbitMQConfig    `yaml:"rabbitmq"`
+	Relay       RelayConfig       `yaml:"relay"`
+	Consumer    ConsumerConfig    `yaml:"consumer"`
+	Outbox      OutboxConfig      `yaml:"outbox"`
 }
 
 type AppConfig struct {
@@ -49,6 +54,44 @@ type DatabaseConfig struct {
 type WorkerConfig struct {
 	HeartbeatInterval time.Duration `yaml:"-"`
 	HeartbeatRaw      string        `yaml:"heartbeat_interval"`
+	ShutdownTimeout   time.Duration `yaml:"-"`
+	ShutdownRaw       string        `yaml:"shutdown_timeout"`
+	MetricsAddress    string        `yaml:"metrics_address"`
+}
+
+type RabbitMQConfig struct {
+	URL string `yaml:"url"`
+}
+
+type RelayConfig struct {
+	BatchSize      int           `yaml:"batch_size"`
+	PublishWindow  int           `yaml:"publish_window"`
+	Lease          time.Duration `yaml:"-"`
+	LeaseRaw       string        `yaml:"lease"`
+	ScanInterval   time.Duration `yaml:"-"`
+	ScanRaw        string        `yaml:"scan_interval"`
+	ConfirmTimeout time.Duration `yaml:"-"`
+	ConfirmRaw     string        `yaml:"confirm_timeout"`
+	BackoffMin     time.Duration `yaml:"-"`
+	BackoffMinRaw  string        `yaml:"backoff_min"`
+	BackoffMax     time.Duration `yaml:"-"`
+	BackoffMaxRaw  string        `yaml:"backoff_max"`
+}
+
+type ConsumerConfig struct {
+	Prefetch      int           `yaml:"prefetch"`
+	BackoffMin    time.Duration `yaml:"-"`
+	BackoffMinRaw string        `yaml:"backoff_min"`
+	BackoffMax    time.Duration `yaml:"-"`
+	BackoffMaxRaw string        `yaml:"backoff_max"`
+}
+
+type OutboxConfig struct {
+	Retention       time.Duration `yaml:"-"`
+	RetentionRaw    string        `yaml:"retention"`
+	CleanupInterval time.Duration `yaml:"-"`
+	CleanupRaw      string        `yaml:"cleanup_interval"`
+	CleanupBatch    int           `yaml:"cleanup_batch"`
 }
 
 // Default 返回适合本地开发的非敏感默认配置。
@@ -69,7 +112,10 @@ func Default() Config {
 			MaxConnections: 20,
 			MinConnections: 2,
 		},
-		Worker: WorkerConfig{HeartbeatRaw: "30s"},
+		Worker:   WorkerConfig{HeartbeatRaw: "30s", ShutdownRaw: "30s", MetricsAddress: "127.0.0.1:9091"},
+		Relay:    RelayConfig{BatchSize: 100, PublishWindow: 16, LeaseRaw: "30s", ScanRaw: "1s", ConfirmRaw: "10s", BackoffMinRaw: "1s", BackoffMaxRaw: "60s"},
+		Consumer: ConsumerConfig{Prefetch: 16, BackoffMinRaw: "1s", BackoffMaxRaw: "30s"},
+		Outbox:   OutboxConfig{RetentionRaw: "168h", CleanupRaw: "1h", CleanupBatch: 500},
 		Assets: AssetConfig{
 			Bucket:            "velis-article-assets",
 			UploadRaw:         "15m",
@@ -145,6 +191,18 @@ func applyEnvironment(cfg *Config) error {
 	setString(&cfg.Database.URL, "VELIS_DATABASE_URL")
 	setString(&cfg.Database.ConnectRaw, "VELIS_DATABASE_CONNECT_TIMEOUT")
 	setString(&cfg.Worker.HeartbeatRaw, "VELIS_WORKER_HEARTBEAT_INTERVAL")
+	setString(&cfg.Worker.ShutdownRaw, "VELIS_WORKER_SHUTDOWN_TIMEOUT")
+	setString(&cfg.Worker.MetricsAddress, "VELIS_WORKER_METRICS_ADDRESS")
+	setString(&cfg.RabbitMQ.URL, "VELIS_RABBITMQ_URL")
+	setString(&cfg.Relay.LeaseRaw, "VELIS_RELAY_LEASE")
+	setString(&cfg.Relay.ScanRaw, "VELIS_RELAY_SCAN_INTERVAL")
+	setString(&cfg.Relay.ConfirmRaw, "VELIS_RELAY_CONFIRM_TIMEOUT")
+	setString(&cfg.Relay.BackoffMinRaw, "VELIS_RELAY_BACKOFF_MIN")
+	setString(&cfg.Relay.BackoffMaxRaw, "VELIS_RELAY_BACKOFF_MAX")
+	setString(&cfg.Consumer.BackoffMinRaw, "VELIS_CONSUMER_BACKOFF_MIN")
+	setString(&cfg.Consumer.BackoffMaxRaw, "VELIS_CONSUMER_BACKOFF_MAX")
+	setString(&cfg.Outbox.RetentionRaw, "VELIS_OUTBOX_RETENTION")
+	setString(&cfg.Outbox.CleanupRaw, "VELIS_OUTBOX_CLEANUP_INTERVAL")
 	setString(&cfg.Assets.Endpoint, "VELIS_ASSET_ENDPOINT")
 	setString(&cfg.Assets.UploadEndpoint, "VELIS_ASSET_UPLOAD_ENDPOINT")
 	setString(&cfg.Assets.Bucket, "VELIS_ASSET_BUCKET")
@@ -181,6 +239,10 @@ func applyEnvironment(cfg *Config) error {
 		&cfg.Assets.MaxHeight:         "VELIS_ASSET_MAX_HEIGHT",
 		&cfg.Assets.PendingLimit:      "VELIS_ASSET_PENDING_LIMIT",
 		&cfg.Assets.ArticleImageLimit: "VELIS_ASSET_ARTICLE_IMAGE_LIMIT",
+		&cfg.Relay.BatchSize:          "VELIS_RELAY_BATCH_SIZE",
+		&cfg.Relay.PublishWindow:      "VELIS_RELAY_PUBLISH_WINDOW",
+		&cfg.Consumer.Prefetch:        "VELIS_CONSUMER_PREFETCH",
+		&cfg.Outbox.CleanupBatch:      "VELIS_OUTBOX_CLEANUP_BATCH",
 	} {
 		if err := setInt(target, key); err != nil {
 			return err
@@ -359,6 +421,26 @@ func (cfg *Config) Validate() error {
 	if cfg.Worker.HeartbeatInterval, err = positiveDuration("worker.heartbeat_interval", cfg.Worker.HeartbeatRaw); err != nil {
 		return err
 	}
+	if cfg.Worker.ShutdownTimeout, err = positiveDuration("worker.shutdown_timeout", cfg.Worker.ShutdownRaw); err != nil {
+		return err
+	}
+	if _, _, err := net.SplitHostPort(cfg.Worker.MetricsAddress); err != nil {
+		return fmt.Errorf("worker.metrics_address 必须是 host:port: %w", err)
+	}
+	if cfg.Outbox.Retention, err = positiveDuration("outbox.retention", cfg.Outbox.RetentionRaw); err != nil {
+		return err
+	}
+	if cfg.Outbox.CleanupInterval, err = positiveDuration("outbox.cleanup_interval", cfg.Outbox.CleanupRaw); err != nil {
+		return err
+	}
+	if cfg.Outbox.Retention < 24*time.Hour || cfg.Outbox.CleanupBatch < 1 || cfg.Outbox.CleanupBatch > 10000 {
+		return errors.New("outbox 保留期至少 24h，cleanup_batch 必须介于 1 和 10000")
+	}
+	if strings.TrimSpace(cfg.RabbitMQ.URL) != "" {
+		if err := validateRabbitMQ(cfg); err != nil {
+			return err
+		}
+	}
 	if _, err := pgxpool.ParseConfig(cfg.Database.URL); err != nil {
 		return fmt.Errorf("database.url 无效: %w", err)
 	}
@@ -372,6 +454,50 @@ func (cfg *Config) Validate() error {
 		return err
 	}
 	return validateAuth(&cfg.Auth, cfg.App.Environment)
+}
+
+func validateRabbitMQ(cfg *Config) error {
+	parsed, err := url.Parse(cfg.RabbitMQ.URL)
+	if err != nil || (parsed.Scheme != "amqp" && parsed.Scheme != "amqps") || parsed.Host == "" {
+		return errors.New("rabbitmq.url 必须是完整的 amqp 或 amqps URL")
+	}
+	var parseErr error
+	for name, target := range map[string]struct {
+		raw    string
+		target *time.Duration
+	}{
+		"relay.lease": {cfg.Relay.LeaseRaw, &cfg.Relay.Lease}, "relay.scan_interval": {cfg.Relay.ScanRaw, &cfg.Relay.ScanInterval},
+		"relay.confirm_timeout": {cfg.Relay.ConfirmRaw, &cfg.Relay.ConfirmTimeout}, "relay.backoff_min": {cfg.Relay.BackoffMinRaw, &cfg.Relay.BackoffMin},
+		"relay.backoff_max": {cfg.Relay.BackoffMaxRaw, &cfg.Relay.BackoffMax}, "consumer.backoff_min": {cfg.Consumer.BackoffMinRaw, &cfg.Consumer.BackoffMin},
+		"consumer.backoff_max": {cfg.Consumer.BackoffMaxRaw, &cfg.Consumer.BackoffMax},
+	} {
+		*target.target, parseErr = positiveDuration(name, target.raw)
+		if parseErr != nil {
+			return parseErr
+		}
+	}
+	if cfg.Relay.BatchSize < 1 || cfg.Relay.BatchSize > 1000 || cfg.Relay.PublishWindow < 1 || cfg.Relay.PublishWindow > 256 {
+		return errors.New("relay batch_size 必须介于 1 和 1000，publish_window 必须介于 1 和 256")
+	}
+	if cfg.Relay.Lease <= cfg.Relay.ConfirmTimeout || cfg.Relay.BackoffMin > cfg.Relay.BackoffMax {
+		return errors.New("relay lease 必须大于 confirm_timeout，backoff_min 不得大于 backoff_max")
+	}
+	if cfg.Consumer.Prefetch < 1 || cfg.Consumer.Prefetch > 256 || cfg.Consumer.BackoffMin > cfg.Consumer.BackoffMax {
+		return errors.New("consumer prefetch 必须介于 1 和 256，backoff_min 不得大于 backoff_max")
+	}
+	return nil
+}
+
+// RedactedRabbitMQURL 返回只含协议、主机和 vhost 的连接摘要。
+func RedactedRabbitMQURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return "invalid"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func positiveDuration(name, raw string) (time.Duration, error) {

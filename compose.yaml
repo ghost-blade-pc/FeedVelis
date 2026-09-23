@@ -20,6 +20,7 @@ x-backend-environment: &backend-environment
   VELIS_ASSET_USE_TLS: "false"
   VELIS_ASSET_WEB_ORIGIN: ${VELIS_ASSET_WEB_ORIGIN:-http://localhost:5173}
   VELIS_FEED_PROXY_URL: ${VELIS_FEED_PROXY_URL:-}
+  VELIS_RABBITMQ_URL: ${VELIS_RABBITMQ_URL:-amqp://velis:velis-development-only@rabbitmq:5672/velis}
 
 services:
   postgres:
@@ -50,10 +51,20 @@ services:
       retries: 20
 
   rabbitmq:
-    image: rabbitmq:4-management-alpine
+    image: rabbitmq:4.3.6-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-velis}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-velis-development-only}
+      RABBITMQ_DEFAULT_VHOST: velis
     ports:
       - "5672:5672"
       - "15672:15672"
+      - "15692:15692"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./deploy/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./deploy/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./deploy/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -139,7 +150,9 @@ services:
       context: ./backend
       args:
         APP: velis-worker
-    environment: *backend-environment
+    environment:
+      <<: *backend-environment
+      VELIS_WORKER_METRICS_ADDRESS: 0.0.0.0:9091
     depends_on:
       velis-migrate:
         condition: service_completed_successfully
@@ -192,4 +205,5 @@ networks:
 volumes:
   postgres-data:
   minio-data:
+  rabbitmq-data:
   grafana-data:

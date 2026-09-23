@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.schema.json",
+  "$defs": {
+    "aggregate": {"type":"object","additionalProperties":false,"required":["type","id","version"],"properties":{"type":{"const":"article"},"id":{"type":"string","pattern":"^[1-9][0-9]*$"},"version":{"type":"integer","minimum":1}}},
+    "base": {"type":"object","additionalProperties":false,"required":["event_id","event_type","occurred_at","producer","trace_id","aggregate","payload"],"properties":{"event_id":{"type":"string","format":"uuid"},"event_type":{"type":"string"},"occurred_at":{"type":"string","format":"date-time","pattern":"Z$"},"producer":{"const":"velis.content"},"trace_id":{"type":"string","pattern":"^[0-9a-f]{32}$"},"aggregate":{"$ref":"#/$defs/aggregate"},"payload":{"type":"object"}}},
+    "publicPayload": {"type":"object","additionalProperties":false,"required":["article_id","origin_type","revision_id","revision_no","content_hash","status"],"properties":{"article_id":{"type":"integer","minimum":1},"origin_type":{"enum":["rss","user"]},"revision_id":{"type":"integer","minimum":1},"revision_no":{"type":"integer","minimum":1},"content_hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"status":{"const":"published"}}},
+    "offlinedPayload": {"type":"object","additionalProperties":false,"required":["article_id","revision_id","status","reason"],"properties":{"article_id":{"type":"integer","minimum":1},"revision_id":{"type":"integer","minimum":1},"status":{"const":"offline"},"reason":{"enum":["author","admin"]}}},
+    "deletedPayload": {"type":"object","additionalProperties":false,"required":["article_id","revision_id","status"],"properties":{"article_id":{"type":"integer","minimum":1},"revision_id":{"type":"integer","minimum":1},"status":{"const":"deleted"}}},
+    "publicEvent": {"allOf":[{"$ref":"#/$defs/base"},{"properties":{"event_type":{"enum":["article.published.v1","article.revised.v1"]},"payload":{"$ref":"#/$defs/publicPayload"}}}]},
+    "offlinedEvent": {"allOf":[{"$ref":"#/$defs/base"},{"properties":{"event_type":{"const":"article.offlined.v1"},"payload":{"$ref":"#/$defs/offlinedPayload"}}}]},
+    "deletedEvent": {"allOf":[{"$ref":"#/$defs/base"},{"properties":{"event_type":{"const":"article.deleted.v1"},"payload":{"$ref":"#/$defs/deletedPayload"}}}]}
+  }
+}

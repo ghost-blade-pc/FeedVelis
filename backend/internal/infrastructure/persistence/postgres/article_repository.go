@@ -19,61 +19,66 @@ func NewArticleRepository(pool *pgxpool.Pool) *ArticleRepository {
 }
 
 func (r *ArticleRepository) Upsert(ctx context.Context, candidate articleDomain.Candidate, now time.Time) (articleDomain.UpsertResult, int64, error) {
+	mutation, err := r.UpsertMutation(ctx, candidate, now)
+	return mutation.Result, mutation.ArticleID, err
+}
+
+func (r *ArticleRepository) UpsertMutation(ctx context.Context, candidate articleDomain.Candidate, now time.Time) (articleDomain.MutationResult, error) {
 	if tx, ok := transactionFromContext(ctx); ok {
 		return upsertRSSArticle(ctx, tx, candidate, now)
 	}
-	var result articleDomain.UpsertResult
-	var id int64
+	var result articleDomain.MutationResult
 	err := NewTxManager(r.pool).WithinTransaction(ctx, func(txContext context.Context) error {
 		tx, _ := transactionFromContext(txContext)
 		var err error
-		result, id, err = upsertRSSArticle(txContext, tx, candidate, now)
+		result, err = upsertRSSArticle(txContext, tx, candidate, now)
 		return err
 	})
-	return result, id, err
+	return result, err
 }
 
-func upsertRSSArticle(ctx context.Context, tx pgx.Tx, candidate articleDomain.Candidate, now time.Time) (articleDomain.UpsertResult, int64, error) {
+func upsertRSSArticle(ctx context.Context, tx pgx.Tx, candidate articleDomain.Candidate, now time.Time) (articleDomain.MutationResult, error) {
 	a := candidate.Article
 	var articleID int64
+	var revisionID, lockVersion int64
 	var revisionNo int
 	var currentHash string
-	err := tx.QueryRow(ctx, `SELECT a.id,v.revision_no,v.content_hash FROM velis.articles a
+	err := tx.QueryRow(ctx, `SELECT a.id,v.id,v.revision_no,v.content_hash,a.lock_version FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id
 WHERE a.source_id=$1 AND a.dedupe_key=$2 AND a.origin_type='rss' FOR UPDATE`, a.SourceID, a.DedupeKey).
-		Scan(&articleID, &revisionNo, &currentHash)
+		Scan(&articleID, &revisionID, &revisionNo, &currentHash, &lockVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return insertRSSArticle(ctx, tx, candidate, now)
 	}
 	if err != nil {
-		return "", 0, err
+		return articleDomain.MutationResult{}, err
 	}
 	if currentHash == a.ContentHash {
 		_, err = tx.Exec(ctx, `UPDATE velis.articles SET last_seen_at=$2,source_updated_at=$3 WHERE id=$1`, articleID, now, a.SourceUpdatedAt)
-		return articleDomain.UpsertUnchanged, articleID, err
+		return articleDomain.MutationResult{Result: articleDomain.UpsertUnchanged, ArticleID: articleID, Origin: articleDomain.OriginRSS, RevisionID: revisionID, RevisionNo: revisionNo, ContentHash: currentHash, Status: articleDomain.StatusPublished, LockVersion: lockVersion}, err
 	}
-	revisionID, err := nextIdentity(ctx, tx, "velis.article_versions")
+	revisionID, err = nextIdentity(ctx, tx, "velis.article_versions")
 	if err != nil {
-		return "", 0, err
+		return articleDomain.MutationResult{}, err
 	}
 	if err := insertRSSRevision(ctx, tx, revisionID, articleID, revisionNo+1, candidate, now); err != nil {
-		return "", 0, err
+		return articleDomain.MutationResult{}, err
 	}
 	_, err = tx.Exec(ctx, `UPDATE velis.articles SET current_revision_id=$2,lock_version=lock_version+1,
 source_item_id=$3,canonical_url=$4,author_name=$5,source_published_at=$6,source_updated_at=$7,
 last_seen_at=$8,updated_at=$8 WHERE id=$1`, articleID, revisionID, a.SourceItemID,
 		a.CanonicalURL, a.AuthorName, a.SourcePublishedAt, a.SourceUpdatedAt, now)
-	return articleDomain.UpsertUpdated, articleID, err
+	return articleDomain.MutationResult{Result: articleDomain.UpsertUpdated, ArticleID: articleID, Origin: articleDomain.OriginRSS, RevisionID: revisionID, RevisionNo: revisionNo + 1, ContentHash: a.ContentHash, Status: articleDomain.StatusPublished, LockVersion: lockVersion + 1}, err
 }
 
-func insertRSSArticle(ctx context.Context, tx pgx.Tx, candidate articleDomain.Candidate, now time.Time) (articleDomain.UpsertResult, int64, error) {
+func insertRSSArticle(ctx context.Context, tx pgx.Tx, candidate articleDomain.Candidate, now time.Time) (articleDomain.MutationResult, error) {
 	articleID, err := nextIdentity(ctx, tx, "velis.articles")
 	if err != nil {
-		return "", 0, err
+		return articleDomain.MutationResult{}, err
 	}
 	revisionID, err := nextIdentity(ctx, tx, "velis.article_versions")
 	if err != nil {
-		return "", 0, err
+		return articleDomain.MutationResult{}, err
 	}
 	a := candidate.Article
 	command, err := tx.Exec(ctx, `INSERT INTO velis.articles (id,origin_type,source_id,dedupe_key,
@@ -83,15 +88,15 @@ OVERRIDING SYSTEM VALUE VALUES ($1,'rss',$2,$3,$4,$5,$6,$7,$8,$9,'published',$8,
 ON CONFLICT (source_id,dedupe_key) DO NOTHING`, articleID, a.SourceID, a.DedupeKey, a.SourceItemID,
 		a.CanonicalURL, a.AuthorName, a.SourcePublishedAt, a.DiscoveredAt, a.SourceUpdatedAt, revisionID, now)
 	if err != nil {
-		return "", 0, err
+		return articleDomain.MutationResult{}, err
 	}
 	if command.RowsAffected() == 0 {
-		return "", 0, articleDomain.ErrVersionConflict
+		return articleDomain.MutationResult{}, articleDomain.ErrVersionConflict
 	}
 	if err := insertRSSRevision(ctx, tx, revisionID, articleID, 1, candidate, now); err != nil {
-		return "", 0, err
+		return articleDomain.MutationResult{}, err
 	}
-	return articleDomain.UpsertInserted, articleID, nil
+	return articleDomain.MutationResult{Result: articleDomain.UpsertInserted, ArticleID: articleID, Origin: articleDomain.OriginRSS, RevisionID: revisionID, RevisionNo: 1, ContentHash: a.ContentHash, Status: articleDomain.StatusPublished, LockVersion: 1}, nil
 }
 
 func insertRSSRevision(ctx context.Context, tx pgx.Tx, revisionID, articleID int64, revisionNo int, candidate articleDomain.Candidate, now time.Time) error {

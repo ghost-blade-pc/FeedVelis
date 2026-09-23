@@ -9,18 +9,22 @@ import (
 	"time"
 
 	accountApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/account"
+	asyncApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asynctask"
+	dlqApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/dlq"
 	sourceApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/source"
 	accountDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/account"
 	sourceDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/source"
 )
 
-const usage = `用法: velis-admin <source|account> <命令> [参数]
+const usage = `用法: velis-admin <source|account|async> <命令> [参数]
   source add -url <feed-url>
   source list
   source pause|resume|fetch <id> [--force]
   account init-admin -username <name> [-password-stdin]
   account set-role -username <name> -role user|admin
-  account set-status -username <name> -status active|disabled`
+  account set-status -username <name> -status active|disabled
+  async backfill-articles -limit <1..1000>
+  async replay-dlq -limit <1..1000>`
 
 type SourceService interface {
 	AddWithInterval(context.Context, string, time.Duration) (sourceDomain.Source, bool, error)
@@ -54,9 +58,15 @@ type AccountAdminService interface {
 type Options struct {
 	Sources  SourceService
 	Accounts AccountAdminService
-	Stdin    io.Reader
-	Stdout   io.Writer
-	Stderr   io.Writer
+	Backfill interface {
+		Run(context.Context, int) (asyncApp.BackfillReport, error)
+	}
+	Replay interface {
+		Run(context.Context, int) (dlqApp.Report, error)
+	}
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 	// HiddenInput 从终端隐藏读取一行输入；为 nil 时只能使用 -password-stdin。
 	HiddenInput func(prompt string) (string, error)
 }
@@ -83,6 +93,8 @@ func (r *Runner) Run(ctx context.Context, args []string) error {
 		return r.runSource(ctx, args[1:])
 	case "account":
 		return r.runAccount(ctx, args[1:])
+	case "async":
+		return r.runAsync(ctx, args[1:])
 	default:
 		return fmt.Errorf("不支持的命令组 %q\n%s", args[0], usage)
 	}

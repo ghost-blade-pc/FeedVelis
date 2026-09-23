@@ -44,6 +44,50 @@ func TestValidateRejectsInvalidConnectionLimits(t *testing.T) {
 	}
 }
 
+func TestAsyncConfigEnvironmentAndValidation(t *testing.T) {
+	t.Setenv("VELIS_RABBITMQ_URL", "amqps://secret-user:secret-pass@mq.internal:5671/velis?token=hidden")
+	t.Setenv("VELIS_RELAY_BATCH_SIZE", "25")
+	t.Setenv("VELIS_CONSUMER_PREFETCH", "8")
+	t.Setenv("VELIS_WORKER_METRICS_ADDRESS", "0.0.0.0:9191")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Relay.BatchSize != 25 || cfg.Consumer.Prefetch != 8 || cfg.Worker.MetricsAddress != "0.0.0.0:9191" {
+		t.Fatalf("异步环境覆盖失败: %+v", cfg)
+	}
+	redacted := RedactedRabbitMQURL(cfg.RabbitMQ.URL)
+	if redacted != "amqps://mq.internal:5671/velis" || strings.Contains(redacted, "secret") || strings.Contains(redacted, "hidden") {
+		t.Fatalf("MQ URL 脱敏失败: %q", redacted)
+	}
+}
+
+func TestDisabledRabbitMQIgnoresConnectionSpecificConfig(t *testing.T) {
+	cfg := Default()
+	cfg.RabbitMQ.URL = ""
+	cfg.Relay.LeaseRaw = "not-a-duration"
+	cfg.Consumer.Prefetch = -1
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("MQ 关闭时不应校验连接专用配置: %v", err)
+	}
+}
+
+func TestEnabledRabbitMQRejectsInvalidBounds(t *testing.T) {
+	tests := []func(*Config){
+		func(cfg *Config) { cfg.Relay.BatchSize = 0 },
+		func(cfg *Config) { cfg.Relay.LeaseRaw = "5s" },
+		func(cfg *Config) { cfg.Consumer.Prefetch = 257 },
+	}
+	for index, mutate := range tests {
+		cfg := Default()
+		cfg.RabbitMQ.URL = "amqp://guest:guest@localhost:5672/"
+		mutate(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("case %d 应拒绝", index)
+		}
+	}
+}
+
 func TestContentConfigPriorityAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("VELIS_ASSET_ENDPOINT", "minio.internal:9443")
 	t.Setenv("VELIS_ASSET_UPLOAD_ENDPOINT", "https://assets.example.com")

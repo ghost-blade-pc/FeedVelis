@@ -16,6 +16,31 @@ database:
 
 worker:
   heartbeat_interval: 30s
+  shutdown_timeout: 30s
+  metrics_address: 127.0.0.1:9091
+
+rabbitmq:
+  # 留空时 Relay/Consumer 禁用，文章事务仍写 Outbox。
+  url: ""
+
+relay:
+  batch_size: 100
+  publish_window: 16
+  lease: 30s
+  scan_interval: 1s
+  confirm_timeout: 10s
+  backoff_min: 1s
+  backoff_max: 60s
+
+consumer:
+  prefetch: 16
+  backoff_min: 1s
+  backoff_max: 30s
+
+outbox:
+  retention: 168h
+  cleanup_interval: 1h
+  cleanup_batch: 500
 
 # 私有文章图片存储。endpoint 留空时资产能力局部降级；RSS、latest、Source 管理和纯文本投稿仍可用。
 assets:

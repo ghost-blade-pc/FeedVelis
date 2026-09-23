@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articleevent"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
 	articleDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/article"
 )
@@ -19,6 +20,11 @@ type Service struct {
 	sanitizer  ports.ContentSanitizer
 	clock      ports.Clock
 	txManager  ports.TxManager
+	outbox     ports.Outbox
+}
+
+func NewServiceWithOutbox(repository articleDomain.Repository, sanitizer ports.ContentSanitizer, clock ports.Clock, txManager ports.TxManager, outbox ports.Outbox) *Service {
+	return &Service{repository: repository, sanitizer: sanitizer, clock: clock, txManager: txManager, outbox: outbox}
 }
 
 type IngestReport struct {
@@ -60,20 +66,38 @@ func (s *Service) Ingest(ctx context.Context, sourceID int64, items []ports.Pars
 			report.Skipped[reason]++
 			continue
 		}
-		var result articleDomain.UpsertResult
+		var mutation articleDomain.MutationResult
+		write := func(writeContext context.Context) error {
+			var writeErr error
+			if repository, ok := s.repository.(articleDomain.MutationRepository); ok {
+				mutation, writeErr = repository.UpsertMutation(writeContext, candidate, now)
+			} else {
+				mutation.Result, mutation.ArticleID, writeErr = s.repository.Upsert(writeContext, candidate, now)
+			}
+			if writeErr != nil || s.outbox == nil || mutation.Result == articleDomain.UpsertUnchanged {
+				return writeErr
+			}
+			fact := articleevent.PublicFact{ArticleID: mutation.ArticleID, OriginType: string(mutation.Origin), RevisionID: mutation.RevisionID, RevisionNo: mutation.RevisionNo, ContentHash: mutation.ContentHash, LockVersion: mutation.LockVersion}
+			var event articleevent.Envelope
+			if mutation.Result == articleDomain.UpsertInserted {
+				event, writeErr = articleevent.Published(writeContext, fact, now)
+			} else {
+				event, writeErr = articleevent.Revised(writeContext, fact, now)
+			}
+			if writeErr != nil {
+				return writeErr
+			}
+			return s.outbox.Append(writeContext, event)
+		}
 		if s.txManager == nil {
-			result, _, err = s.repository.Upsert(ctx, candidate, now)
+			err = write(ctx)
 		} else {
-			err = s.txManager.WithinTransaction(ctx, func(txContext context.Context) error {
-				var transactionErr error
-				result, _, transactionErr = s.repository.Upsert(txContext, candidate, now)
-				return transactionErr
-			})
+			err = s.txManager.WithinTransaction(ctx, write)
 		}
 		if err != nil {
 			return report, err
 		}
-		switch result {
+		switch mutation.Result {
 		case articleDomain.UpsertInserted:
 			report.Inserted++
 		case articleDomain.UpsertUpdated:

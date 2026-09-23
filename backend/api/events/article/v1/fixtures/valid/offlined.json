@@ -1,0 +1,1 @@
+{"event_id":"01993a42-8e80-7a13-87dd-1dd92b6fb0c3","event_type":"article.offlined.v1","occurred_at":"2026-09-23T02:17:30Z","producer":"velis.content","trace_id":"2123456789abcdef0123456789abcdef","aggregate":{"type":"article","id":"42","version":9},"payload":{"article_id":42,"revision_id":82,"status":"offline","reason":"author"}}

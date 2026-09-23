@@ -16,11 +16,8 @@ import (
 func TestI2MigrationUpgradeDowngradeAndGuards(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
-	env.truncate(t, `TRUNCATE velis.article_asset_references, velis.article_assets,
-velis.idempotency_operations, velis.source_fetch_runs, velis.article_versions,
-velis.articles, velis.sources, velis.account_audit_logs, velis.login_blocks,
-velis.login_failure_events, velis.refresh_tokens, velis.auth_sessions, velis.users
-RESTART IDENTITY CASCADE`)
+	env.resetArticles(t)
+	env.resetAccounts(t)
 
 	runner := newMigrationRunner(t, env.databaseURL)
 	defer func() {
@@ -28,7 +25,7 @@ RESTART IDENTITY CASCADE`)
 			t.Errorf("清理时恢复到最新迁移: %v", err)
 		}
 	}()
-	if err := runner.Steps(-2); err != nil {
+	if err := runner.Steps(-3); err != nil {
 		t.Fatalf("回到 I2 前结构: %v", err)
 	}
 	seedLegacyArticles(t, env)
@@ -106,7 +103,10 @@ VALUES ('30000000-0000-0000-0000-000000000004', 7, 'scheduled', 'succeeded', 1, 
 		t.Fatalf("准备 I2 清理夹具: %v", err)
 	}
 
-	env.resetArticles(t)
+	// 此处刻意停留在 v4，可靠异步表尚不存在，不能调用面向最新 schema 的 resetArticles。
+	env.truncate(t, `TRUNCATE velis.article_asset_references, velis.idempotency_operations,
+velis.source_fetch_runs, velis.article_assets, velis.article_versions,
+velis.articles, velis.sources RESTART IDENTITY CASCADE`)
 	var remaining int
 	if err := env.pool.QueryRow(ctx, `SELECT
 (SELECT count(*) FROM velis.article_asset_references) +

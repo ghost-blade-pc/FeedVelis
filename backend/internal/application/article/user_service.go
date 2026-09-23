@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articleevent"
 	idempotencyApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/idempotency"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
 	articleDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/article"
@@ -37,6 +38,43 @@ type UserService struct {
 	idempotency *idempotencyApp.Service
 	clock       ports.Clock
 	assetPolicy AssetPolicy
+	outbox      ports.Outbox
+}
+
+func NewUserServiceWithOutbox(repository UserArticleRepository, renderer ports.UserContentRenderer, assets ports.ArticleAssets,
+	idempotency *idempotencyApp.Service, clock ports.Clock, policy AssetPolicy, outbox ports.Outbox) *UserService {
+	service := NewUserService(repository, renderer, assets, idempotency, clock, policy)
+	service.outbox = outbox
+	return service
+}
+
+func appendArticleTransition(ctx context.Context, outbox ports.Outbox, before *articleDomain.StoredArticle, after articleDomain.StoredArticle, contentChanged bool, now time.Time) error {
+	if outbox == nil {
+		return nil
+	}
+	fact := articleevent.PublicFact{ArticleID: after.ID, OriginType: string(after.Origin), RevisionID: after.RevisionID, RevisionNo: after.RevisionNumber, ContentHash: after.Revision.ContentHash, LockVersion: after.LockVersion}
+	var event articleevent.Envelope
+	var err error
+	switch {
+	case after.Status == articleDomain.StatusDeleted:
+		event, err = articleevent.Deleted(ctx, after.ID, after.RevisionID, after.LockVersion, now)
+	case before != nil && before.Status == articleDomain.StatusPublished && after.Status == articleDomain.StatusOffline:
+		reason := ""
+		if after.OfflineReason != nil {
+			reason = string(*after.OfflineReason)
+		}
+		event, err = articleevent.Offlined(ctx, after.ID, after.RevisionID, after.LockVersion, reason, now)
+	case after.Status == articleDomain.StatusPublished && (before == nil || before.Status != articleDomain.StatusPublished):
+		event, err = articleevent.Published(ctx, fact, now)
+	case after.Status == articleDomain.StatusPublished && contentChanged:
+		event, err = articleevent.Revised(ctx, fact, now)
+	default:
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return outbox.Append(ctx, event)
 }
 
 func NewUserService(repository UserArticleRepository, renderer ports.UserContentRenderer, assets ports.ArticleAssets,
@@ -109,6 +147,9 @@ func (s *UserService) Create(ctx context.Context, command CreateUserArticleComma
 		}
 		if bindErr := s.bindAssets(txContext, command.AuthorUserID, stored.ID, stored.RevisionID, rendered.AssetIDs, now); bindErr != nil {
 			return nil, "", "", bindErr
+		}
+		if eventErr := appendArticleTransition(txContext, s.outbox, nil, stored, true, now); eventErr != nil {
+			return nil, "", "", eventErr
 		}
 		result, resultErr := s.result(txContext, stored)
 		if resultErr != nil {
@@ -304,6 +345,9 @@ func (s *UserService) Update(ctx context.Context, command UpdateUserArticleComma
 				return nil, "", "", bindErr
 			}
 		}
+		if eventErr := appendArticleTransition(txContext, s.outbox, &current, stored, changed, now); eventErr != nil {
+			return nil, "", "", eventErr
+		}
 		result, resultErr := s.result(txContext, stored)
 		if resultErr != nil {
 			return nil, "", "", resultErr
@@ -380,6 +424,9 @@ func (s *UserService) changeState(ctx context.Context, operation string, command
 		stored, changeErr := change(txContext, current, now)
 		if changeErr != nil {
 			return nil, "", "", changeErr
+		}
+		if eventErr := appendArticleTransition(txContext, s.outbox, &current, stored, false, now); eventErr != nil {
+			return nil, "", "", eventErr
 		}
 		result, resultErr := s.result(txContext, stored)
 		if resultErr != nil {

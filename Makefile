@@ -1,4 +1,4 @@
-.PHONY: help backend-fmt backend-test backend-race backend-build web-install web-lint web-test web-build check compose-up compose-down migrate-up migrate-down
+.PHONY: help backend-fmt backend-test backend-race backend-build integration-postgres integration-rabbitmq integration-async web-install web-lint web-test web-build check compose-up compose-down migrate-up migrate-down
 
 GOCACHE_DIR ?= /tmp/feedvelis-go-cache
 
@@ -7,6 +7,7 @@ help:
 	@echo "make compose-up    构建并启动本地完整环境"
 	@echo "make compose-down  停止本地环境"
 	@echo "make migrate-up    对本地 PostgreSQL 执行迁移"
+	@echo "make integration-async 运行 PostgreSQL + RabbitMQ 可靠异步真实依赖测试"
 
 backend-fmt:
 	cd backend && gofmt -w $$(find . -name '*.go' -type f)
@@ -19,6 +20,16 @@ backend-race:
 
 backend-build:
 	cd backend && GOCACHE=$(GOCACHE_DIR) go build ./cmd/...
+
+integration-postgres:
+	@test -n "$(VELIS_TEST_DATABASE_URL)" || (echo "未设置 VELIS_TEST_DATABASE_URL（必须指向 _test 数据库）" && exit 2)
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v ./test/integration
+
+integration-rabbitmq:
+	@test -n "$(VELIS_TEST_RABBITMQ_URL)" || (echo "未设置 VELIS_TEST_RABBITMQ_URL" && exit 2)
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v ./internal/infrastructure/messaging/rabbitmq
+
+integration-async: integration-postgres integration-rabbitmq
 
 web-install:
 	cd web && npm ci

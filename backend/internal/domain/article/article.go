@@ -85,6 +85,22 @@ const (
 	UpsertUnchanged UpsertResult = "unchanged"
 )
 
+// MutationResult 是 RSS 写入后的数据库当前事实，供 Application 在同一事务构造集成事件。
+type MutationResult struct {
+	Result      UpsertResult
+	ArticleID   int64
+	Origin      OriginType
+	RevisionID  int64
+	RevisionNo  int
+	ContentHash string
+	Status      Status
+	LockVersion int64
+}
+
+type MutationRepository interface {
+	UpsertMutation(context.Context, Candidate, time.Time) (MutationResult, error)
+}
+
 type SourceSummary struct {
 	ID      int64
 	Title   string

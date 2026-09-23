@@ -2,22 +2,33 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"strconv"
-	"sync"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	accountApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/account"
 	assetApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asset"
+	asyncApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asynctask"
+	outboxApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/outbox"
+	relayApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/relay"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/clock"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/config"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/fetcher/httpfeed"
+	rabbitAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/messaging/rabbitmq"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/observability"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/persistence/postgres"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/scheduler"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-// RunWorker 装配抓取调度与认证数据清理；两者共用进程生命周期，任一方退出即关闭 Worker。
+// RunWorker 把各后台能力作为独立受监管组件运行；单个 MQ 组件故障不会停止 Feed。
 func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	pool, err := postgres.Open(ctx, cfg.Database)
 	if err != nil {
@@ -25,40 +36,82 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	}
 	defer pool.Close()
 
-	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
 	owner := workerOwner()
-	cleanup, err := buildCleanupScheduler(cfg, pool, logger)
+	components, err := buildWorkerComponents(cfg, pool, logger, owner)
 	if err != nil {
 		return err
 	}
 	feedMode, feedProxyHost := httpfeed.NetworkMode(cfg.Feed.ProxyURL)
 	logger.Info("velis-worker 已启动", "environment", cfg.App.Environment, "worker_id", owner,
-		"cleanup_enabled", cleanup != nil, "feed_network_mode", feedMode, "feed_proxy_host", feedProxyHost)
+		"component_count", len(components), "rabbitmq_enabled", cfg.RabbitMQ.URL != "", "feed_network_mode", feedMode, "feed_proxy_host", feedProxyHost)
 	if feedMode == "trusted_proxy" {
 		// 明确声明信任边界：代理模式下最终地址安全由出口代理负责，应用不做最终 IP 校验。
 		logger.Warn("Feed 抓取使用可信出口代理，最终目标地址安全由该代理负责",
 			"feed_proxy_host", feedProxyHost)
 	}
 
-	var (
-		wait    sync.WaitGroup
-		feedErr error
-	)
-	wait.Add(1)
-	go func() {
-		defer wait.Done()
-		feedErr = scheduler.New(feed.sources, logger, owner, cfg.Worker.HeartbeatInterval).Run(ctx)
-	}()
-	if cleanup != nil {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			cleanup.Run(ctx)
-		}()
-	}
-	wait.Wait()
+	err = NewSupervisor(components, logger, time.Second, cfg.Worker.ShutdownTimeout).Run(ctx)
 	logger.Info("velis-worker 已停止接收新任务")
-	return feedErr
+	return err
+}
+
+func buildWorkerComponents(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, owner string) ([]WorkerComponent, error) {
+	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
+	registry := prometheus.NewRegistry()
+	asyncMetrics := observability.NewAsyncMetrics(registry)
+	components := []WorkerComponent{instrumentWorkerComponent("feed", false, asyncMetrics, scheduler.New(feed.sources, logger, owner, cfg.Worker.HeartbeatInterval).Run)}
+	cleanup, err := buildCleanupScheduler(cfg, pool, logger)
+	if err != nil {
+		return nil, err
+	}
+	if cleanup != nil {
+		components = append(components, instrumentWorkerComponent("cleanup", false, asyncMetrics, func(ctx context.Context) error { cleanup.Run(ctx); return nil }))
+	}
+	relayRepository := postgres.NewRelayRepository(pool)
+	outboxCleanup := outboxApp.NewCleanup(observability.InstrumentOutboxMaintenance(relayRepository, asyncMetrics), cfg.Outbox.Retention, cfg.Outbox.CleanupBatch, cfg.Outbox.CleanupInterval, nil)
+	components = append(components, instrumentWorkerComponent("outbox-cleanup", false, asyncMetrics, outboxCleanup.Run))
+	metrics := observability.NewMetricsServer(cfg.Worker.MetricsAddress, registry)
+	components = append(components, instrumentWorkerComponent("metrics", false, asyncMetrics, metrics.Run))
+	if cfg.RabbitMQ.URL == "" {
+		return components, nil
+	}
+	relayStore := observability.InstrumentRelayStore(relayRepository, asyncMetrics)
+	components = append(components, instrumentWorkerComponent("relay", true, asyncMetrics, func(ctx context.Context) error {
+		publisher, dialErr := rabbitAdapter.DialPublisher(cfg.RabbitMQ.URL)
+		if dialErr != nil {
+			return dialErr
+		}
+		defer publisher.Close()
+		service := relayApp.NewService(relayStore, observability.InstrumentPublisher(publisher, asyncMetrics), relayApp.Config{Owner: owner, BatchSize: cfg.Relay.BatchSize, PublishWindow: cfg.Relay.PublishWindow, Lease: cfg.Relay.Lease, ConfirmTimeout: cfg.Relay.ConfirmTimeout, ScanInterval: cfg.Relay.ScanInterval, BackoffMin: cfg.Relay.BackoffMin, BackoffMax: cfg.Relay.BackoffMax, Jitter: randomJitter})
+		return service.Run(ctx)
+	}))
+	inbox, err := postgres.NewConsumedEventRepository(asyncApp.ConsumerName)
+	if err != nil {
+		return nil, err
+	}
+	projector := asyncApp.NewService(postgres.NewTxManager(pool), inbox, postgres.NewAsyncTaskRepository(), nil).WithLogger(logger, owner)
+	instrumentedProjector := observability.InstrumentProjector(projector, asyncMetrics)
+	components = append(components, instrumentWorkerComponent("consumer", true, asyncMetrics, rabbitAdapter.NewConsumer(cfg.RabbitMQ.URL, cfg.Consumer.Prefetch, instrumentedProjector, isDatabaseFailure).Run))
+	return components, nil
+}
+
+func instrumentWorkerComponent(name string, reconnect bool, metrics *observability.AsyncMetrics, run func(context.Context) error) WorkerComponent {
+	var attempts atomic.Int64
+	metricName := strings.ReplaceAll(name, "-", "_")
+	return WorkerComponent{Name: name, Run: func(ctx context.Context) error {
+		if reconnect && attempts.Add(1) > 1 {
+			metrics.MQReconnects.Inc()
+		}
+		metrics.ComponentUp.WithLabelValues(metricName).Set(1)
+		defer metrics.ComponentUp.WithLabelValues(metricName).Set(0)
+		return run(ctx)
+	}}
+}
+
+func isDatabaseFailure(err error) bool {
+	var connectErr *pgconn.ConnectError
+	var networkErr net.Error
+	return errors.As(err, &connectErr) || errors.As(err, &networkErr)
 }
 
 // buildCleanupScheduler 装配保留期清理；认证关闭时不启动清理。

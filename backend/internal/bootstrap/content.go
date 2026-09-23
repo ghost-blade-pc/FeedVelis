@@ -36,16 +36,17 @@ func buildContentServices(cfg config.Config, pool *pgxpool.Pool, logger *slog.Lo
 	assetRepository := postgres.NewArticleAssetRepository(pool)
 	txManager := postgres.NewTxManager(pool)
 	clockValue := clock.System{}
+	outbox := postgres.NewOutboxRepository(pool)
 	idempotency := idempotencyApp.NewService(
 		postgres.NewIdempotencyRepository(pool), txManager, cfg.Idempotency.Retention)
 	services := contentServices{
 		idempotency: idempotency,
-		myArticles: articleApp.NewUserService(articleRepository, markdown.NewUserRenderer(), assetRepository,
+		myArticles: articleApp.NewUserServiceWithOutbox(articleRepository, markdown.NewUserRenderer(), assetRepository,
 			idempotency, clockValue, articleApp.AssetPolicy{
 				MaxImages:     cfg.Assets.ArticleImageLimit,
 				MaxTotalBytes: cfg.Assets.ArticleBytesLimit,
-			}),
-		adminArticles: articleApp.NewAdminService(articleRepository, idempotency, clockValue),
+			}, outbox),
+		adminArticles: articleApp.NewAdminServiceWithOutbox(articleRepository, idempotency, clockValue, outbox),
 	}
 	store, err := buildAssetStore(cfg)
 	if err != nil {

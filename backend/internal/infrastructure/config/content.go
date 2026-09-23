@@ -162,6 +162,8 @@ func (cfg Config) LogValue() slog.Value {
 		slog.Bool("assets_enabled", cfg.Assets.Enabled()),
 		slog.String("asset_bucket", cfg.Assets.Bucket),
 		slog.String("feed_network_mode", proxyMode),
+		slog.Bool("rabbitmq_enabled", strings.TrimSpace(cfg.RabbitMQ.URL) != ""),
+		slog.String("rabbitmq_endpoint", RedactedRabbitMQURL(cfg.RabbitMQ.URL)),
 		slog.Duration("idempotency_retention", cfg.Idempotency.Retention),
 	)
 }

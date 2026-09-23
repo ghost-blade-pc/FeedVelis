@@ -181,8 +181,9 @@ VALUES ($1,$2,$3,'hash',$4,'active',$5,$5)`, user.id, user.username, user.nickna
 	repository := postgres.NewArticleRepository(env.pool)
 	idempotency := idempotencyApp.NewService(postgres.NewIdempotencyRepository(env.pool), postgres.NewTxManager(env.pool), 24*time.Hour)
 	clock := &articleTestClock{now: now}
-	users := articleApp.NewUserService(repository, markdown.NewUserRenderer(), postgres.NewArticleAssetRepository(env.pool), idempotency, clock, articleApp.AssetPolicy{MaxImages: 20, MaxTotalBytes: 50 << 20})
-	admins := articleApp.NewAdminService(repository, idempotency, clock)
+	outbox := postgres.NewOutboxRepository(env.pool)
+	users := articleApp.NewUserServiceWithOutbox(repository, markdown.NewUserRenderer(), postgres.NewArticleAssetRepository(env.pool), idempotency, clock, articleApp.AssetPolicy{MaxImages: 20, MaxTotalBytes: 50 << 20}, outbox)
+	admins := articleApp.NewAdminServiceWithOutbox(repository, idempotency, clock, outbox)
 	draft, _, err := users.Create(ctx, articleApp.CreateUserArticleCommand{AuthorUserID: authorID,
 		IdempotencyKey: "53000000-0000-0000-0000-000000000011", InitialStatus: articleDomain.StatusDraft})
 	if err != nil {
@@ -225,6 +226,39 @@ VALUES ($1,$2,$3,'hash',$4,'active',$5,$5)`, user.id, user.username, user.nickna
 	if _, _, err := admins.Restore(ctx, articleApp.AdminArticleCommand{Actor: admin, ArticleID: published.Article.ID,
 		ExpectedVersion: 4, IdempotencyKey: "53000000-0000-0000-0000-000000000018"}); !errors.Is(err, articleDomain.ErrNotFound) {
 		t.Fatalf("管理员不得恢复作者下架文章: %v", err)
+	}
+	rows, err := env.pool.Query(ctx, `SELECT event_type, aggregate_version,
+envelope->'payload'->>'revision_id', envelope->'payload'->>'reason'
+FROM velis.outbox_events WHERE aggregate_id=$1 ORDER BY aggregate_version`, fmtInt64(published.Article.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type eventFact struct {
+		kind, revisionID string
+		version          int64
+		reason           *string
+	}
+	var events []eventFact
+	for rows.Next() {
+		var event eventFact
+		if err := rows.Scan(&event.kind, &event.version, &event.revisionID, &event.reason); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	wantTypes := []string{"article.published.v1", "article.offlined.v1", "article.published.v1", "article.offlined.v1"}
+	wantReasons := []*string{nil, stringPointer("admin"), nil, stringPointer("author")}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("事件数量=%d events=%+v", len(events), events)
+	}
+	for index, event := range events {
+		if event.kind != wantTypes[index] || event.version != int64(index+1) || event.revisionID != fmtInt64(published.Article.RevisionID) {
+			t.Fatalf("events[%d]=%+v", index, event)
+		}
+		if (event.reason == nil) != (wantReasons[index] == nil) || event.reason != nil && *event.reason != *wantReasons[index] {
+			t.Fatalf("events[%d].reason=%v", index, event.reason)
+		}
 	}
 }
 

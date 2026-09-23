@@ -1,0 +1,26 @@
+{
+  "users": [
+    {"name":"velis","password_hash":"BvaGDNp8Ai4cooVc15xcx6/vtbr/Q5Bjj6pe8Skh3pu8Jy5Z","hashing_algorithm":"rabbit_password_hashing_sha256","tags":["administrator"]}
+  ],
+  "vhosts": [
+    {"name":"velis"}
+  ],
+  "permissions": [
+    {"user":"velis","vhost":"velis","configure":".*","write":".*","read":".*"}
+  ],
+  "exchanges": [
+    {"name":"velis.events.v1","vhost":"velis","type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}},
+    {"name":"velis.dlx.v1","vhost":"velis","type":"topic","durable":true,"auto_delete":false,"internal":false,"arguments":{}}
+  ],
+  "queues": [
+    {"name":"velis.async-task-projector.v1","vhost":"velis","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum"}},
+    {"name":"velis.async-task-projector.dlq.v1","vhost":"velis","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum"}}
+  ],
+  "bindings": [
+    {"source":"velis.events.v1","vhost":"velis","destination":"velis.async-task-projector.v1","destination_type":"queue","routing_key":"article.*.v1","arguments":{}},
+    {"source":"velis.dlx.v1","vhost":"velis","destination":"velis.async-task-projector.dlq.v1","destination_type":"queue","routing_key":"async-task-projector.dead.v1","arguments":{}}
+  ],
+  "policies": [
+    {"vhost":"velis","name":"velis-async-task-projector-v1","pattern":"^velis\\.async-task-projector\\.v1$","apply-to":"queues","priority":100,"definition":{"delivery-limit":5,"dead-letter-exchange":"velis.dlx.v1","dead-letter-routing-key":"async-task-projector.dead.v1","dead-letter-strategy":"at-least-once","overflow":"reject-publish","max-length-bytes":268435456}}
+  ]
+}
