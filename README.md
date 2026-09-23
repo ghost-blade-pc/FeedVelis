@@ -12,18 +12,19 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | --- | --- | --- |
 | 工程 | API、Worker、迁移、管理 CLI 四个入口；四层目录、依赖边界测试、配置、日志、健康检查与 CI | 仍处于早期业务建设阶段 |
 | 来源管理 | CLI 及管理员 HTTP/Web 新增、列出、改周期、暂停、恢复、同步抓取与抓取历史；5 分钟至 24 小时来源级周期 | 系统级来源；Feed URL 创建后不可修改，无删除、认证 Feed、自定义请求头或用户订阅 |
-| 抓取 | RSS 2.0、Atom、JSON Feed；ETag/Last-Modified、304、租约/fencing、失败退避、运行历史、超时与 5 MiB 限制 | Worker 直接编排，尚未接入 MQ/Outbox；默认忽略通用环境代理 |
+| 抓取 | RSS 2.0、Atom、JSON Feed；ETag/Last-Modified、304、租约/fencing、失败退避、运行历史、超时与 5 MiB 限制 | 抓取调度仍由 Worker 直接编排；公开文章事实会原子写入 Outbox；默认忽略通用环境代理 |
 | 文章存储 | RSS/用户互斥来源身份、不可变修订、固定站内发布时间、乐观锁、作者与管理员下架优先级 | 用户发布后直接公开，无审核队列、协作编辑或版本历史 UI |
 | 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
+| 可靠异步底座 | 文章版本化事件、PostgreSQL Outbox/Inbox、RabbitMQ confirm/重投/DLQ、收敛任务槽位、补录与 DLQ 重放 CLI、Worker 指标 | 只建立 I3 异步基础；尚未执行 AI 摘要、关键词、主题或 Embedding |
 | Web | latest/详情、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无互动、搜索、recommend 或 Agent 界面 |
 
-推荐信号、recommend Feed、Redis 业务缓存、RabbitMQ/Outbox Relay、OpenSearch、Eino AI、对话 Agent 与定时 Agent 均未实现。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+推荐信号、recommend Feed、Redis 业务缓存、OpenSearch、Eino AI、对话 Agent 与定时 Agent 均未实现。RabbitMQ/Outbox 目前只承载文章异步任务槽位投影，不代表 AI 增强已经完成。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 
-I2 核心链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。下一阶段为 I3“可靠异步与 AI 增强”，尚未实现。
+核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；当前只完成 I3 的可靠异步底座，AI 增强仍未实现。
 
 ## 目录与技术现状
 
@@ -63,6 +64,8 @@ docker compose ps
 | API 存活检查 | <http://localhost:8080/livez> |
 | API 就绪检查 | <http://localhost:8080/readyz> |
 | RabbitMQ 管理页 | <http://localhost:15672> |
+| RabbitMQ 指标 | <http://localhost:15692/metrics> |
+| Worker 指标（容器网络） | `velis-worker:9091/metrics` |
 | MinIO Console | <http://localhost:9001> |
 
 认证开启后管理员可在 Web 的“Source 管理”完成新增、周期、暂停/恢复、手动抓取和历史查看；本地 CLI 仍保留。未登记来源且没有用户投稿时，文章列表为空。
@@ -215,13 +218,15 @@ go run ./cmd/velis-admin account set-status -username alice -status disabled
 
 示例仅供本地开发；真实数据库地址、密码、Token 和模型密钥通过环境变量注入，不提交到仓库。宿主机连接配置应与 Compose 中 PostgreSQL 的实际账户和数据库匹配。
 
-I2 常用环境变量包括 `VELIS_ASSET_ENDPOINT`、`VELIS_ASSET_UPLOAD_ENDPOINT`、`VELIS_ASSET_BUCKET`、`VELIS_ASSET_ACCESS_KEY`、`VELIS_ASSET_SECRET_KEY`、`VELIS_ASSET_USE_TLS`、`VELIS_ASSET_WEB_ORIGIN`、`VELIS_IDEMPOTENCY_RETENTION` 和 `VELIS_FEED_PROXY_URL`。完整上限及默认值见示例 YAML；对象存储凭据和含凭据的代理 URL 不得提交或写入日志。
+常用环境变量除资产、幂等与 Feed 配置外，还包括 `VELIS_RABBITMQ_URL`、`VELIS_RELAY_*`、`VELIS_CONSUMER_*`、`VELIS_OUTBOX_*` 和 `VELIS_WORKER_METRICS_ADDRESS`。RabbitMQ URL 留空时只禁用 Relay/Consumer，文章事务仍写 Outbox。完整上限及默认值见示例 YAML；对象存储凭据、MQ 凭据和含凭据的代理 URL 不得提交或写入日志。
 
 ## 数据迁移与回滚
 
 `000004_unify_content_supply` 会保留历史 RSS 文章 ID，把旧正文回填为 revision 1，并以原 `discovered_at` 固定 `published_at`。迁移前应备份并在专用环境核对文章数、ID、状态、修订和 latest 抽样。
 
 `000005_sort_latest_by_source_time` 将公开文章的 latest 索引替换为 `(COALESCE(source_published_at, published_at), id)` 倒序表达式索引；down migration 只恢复旧索引，不修改文章数据。应用回滚时应先回滚 API，再回滚该迁移，避免查询排序与索引语义不一致。
+
+`000006_create_reliable_article_async` 创建 Outbox、消费 Inbox 与异步任务槽位。空表时可下迁移；只要存在事件、消费记录或任务，down 会拒绝执行。应用回滚前先停 Relay/Consumer、确认并备份这些表；不得用 force 或删数据绕过保护。已发布 Outbox 默认保留 7 天并由 Worker 分批清理，未发布事件不会被清理。
 
 down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、无资产”的旧模型可表达状态时才允许回退。只要存在用户投稿、资产或第二修订，down 会在事务内明确失败。不要使用 force 或删除数据绕过保护；此时应保持数据库前滚并修复/回滚应用。
 
@@ -230,18 +235,24 @@ down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、�
 ```bash
 make check
 cd backend && GOCACHE=/tmp/feedvelis-go-cache go vet ./...
+
+# 专用 _test PostgreSQL 与 RabbitMQ 均已启动时
+VELIS_TEST_DATABASE_URL='postgres://velis:velis@localhost:5432/velis_test?sslmode=disable' \
+VELIS_TEST_RABBITMQ_URL='amqp://velis:开发密码@localhost:5672/velis' \
+make integration-async
 ```
 
 `make check` 包含 gofmt、Go 单测/竞态/构建、Vitest 与 Web 类型检查/构建；其中 gofmt 会修改未格式化的 Go 文件。独立命令见 [Makefile](Makefile)。CI 另外执行 `go vet`，详见 [ci.yml](.github/workflows/ci.yml)。
 
 - 已有 Domain/Application、抓取解析清洗、Hertz、CLI、配置、架构依赖与前端测试；账户领域、认证用例、HTTP 中间件、安全适配器与前端会话模块都有单测。
 - PostgreSQL 集成测试通过 `VELIS_TEST_DATABASE_URL` 启用，要求已迁移的专用 `_test` 数据库（测试基座会自动应用迁移）；测试会清空 Source/Article 与账户相关表。未设置该变量时跳过，普通 CI 通过不能代替数据库集成验证。
+- 可靠异步真实依赖测试还要求 `VELIS_TEST_RABBITMQ_URL`；`make integration-async` 在任一变量缺失时直接失败。Broker 重启演练会真实重启容器，默认跳过，需按 [可靠异步验证说明](backend/test/integration/reliable_async.md) 单独执行。
 - 真实 MinIO 测试通过 `VELIS_TEST_MINIO_ENDPOINT`、`VELIS_TEST_MINIO_UPLOAD_ENDPOINT`、`VELIS_TEST_MINIO_ACCESS_KEY`、`VELIS_TEST_MINIO_SECRET_KEY`、`VELIS_TEST_MINIO_BUCKET` 启用；Compose CORS 测试还要求 `VELIS_TEST_MINIO_WEB_ORIGIN`。内部与公共测试端点应使用不同 authority（例如 `127.0.0.1:9000` 与 `http://localhost:9000`）；未设置内部端点时测试会明确报告跳过，不能计作通过。
 - [I2 可复现闭环脚本](web/e2e/README.md) 会在本地/`.test` API 创建临时用户、文章和 Source，验证用户直发、RSS 抓取、联合 latest、编辑冲突和作者/管理员下架；它不是生产脚本。
 - 2026-09-22 使用专用 `_test` 数据库和真实 MinIO 完成 I2 全依赖回归：PostgreSQL 集成套件、MinIO 私有 Bucket/三种图片格式/流式读取与删除测试，以及上述 8 步 HTTP 闭环均通过；临时 API、数据库和测试对象已在验证后清理。
-- 认证相关计数与耗时以结构化日志字段落地：认证请求为 `operation`/`result`/`request_id`（确认身份后附 `user_id`/`session_id`），密码散列为 `operation=password_hash|password_verify` + `duration_ms`，限流为 `code=AUTH_RATE_LIMITED` + `dimension=account|ip`，刷新重放为 `event=refresh_replay`，清理为 `operation=cleanup` + `deleted_*`/`duration_ms`。**当前没有 `/metrics` 端点**，Prometheus 接入在后续阶段。
-- 浏览器 Playwright E2E、压测、完整监控告警和故障演练尚未完成；当前 I2 闭环以确定性前端单测、HTTP/集成测试和可复现脚本覆盖，不把它描述为完整浏览器兼容性验证。
-- Prometheus/Grafana 仅有 Compose/配置入口；可通过 `docker compose --profile observability up -d` 启动，不代表业务指标与仪表盘已经交付。
+- 认证相关计数与耗时继续使用结构化日志；异步投影日志使用 `trace_id`、`event_id`、`task_id`、`worker_id` 串联，错误限长并脱敏。
+- Worker 已提供内部 `/metrics`，包含低基数 Outbox、发布、Consumer、任务、DLQ、MQ 重连和组件状态指标；Prometheus 同时抓取 Worker 与 RabbitMQ。Grafana 只有 Compose 入口，尚无正式仪表盘或告警规则。
+- 浏览器 Playwright E2E、压测和完整监控告警尚未完成；可靠异步故障演练范围与证据见单独说明，不把它描述为生产级灾备验证。
 
 文档中的“已实现”依据当前代码，不代表每次文档更新都重新执行了运行验证。I1 及更早的详细 change 验证保存在只读的 `code_copilot/changes/`；后续规范与 change 统一使用 `openspec/`。
 
