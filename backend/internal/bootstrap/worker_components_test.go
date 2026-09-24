@@ -42,6 +42,21 @@ func TestWorkerComponentsDisableOnlyMQWhenURLIsEmpty(t *testing.T) {
 	if !names["relay"] || !names["consumer"] {
 		t.Fatalf("MQ 开启后组件缺失: %+v", names)
 	}
+	cfg = config.Default()
+	cfg.AI.Generation.Profile.Provider = "test"
+	cfg.AI.Generation.Profile.BaseURL = "http://model.internal/v1"
+	cfg.AI.Generation.Profile.APIKey = "secret"
+	cfg.AI.Generation.Profile.Model = "chat"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	components, err = buildWorkerComponents(cfg, nil, logger, "worker-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !componentNames(components)["ai_enrichment"] {
+		t.Fatal("仅 generation profile 时应装配独立 AI 组件")
+	}
 }
 func componentNames(components []WorkerComponent) map[string]bool {
 	result := map[string]bool{}

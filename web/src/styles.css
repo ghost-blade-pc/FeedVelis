@@ -167,3 +167,24 @@ button.danger { background: #a54135; }
   main { margin-top: 2rem; }
   .source-create { grid-template-columns: 1fr; }
 }
+.ai-enhancement {
+  margin: 0.8rem 0;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid var(--accent, #4f46e5);
+  background: color-mix(in srgb, var(--accent, #4f46e5) 7%, transparent);
+}
+
+.ai-badge {
+  display: inline-block;
+  margin-bottom: 0.35rem;
+  color: var(--accent, #4f46e5);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.ai-labels { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.ai-label { border-radius: 999px; padding: 0.18rem 0.55rem; font-size: 0.75rem; }
+.ai-label.keyword { background: #e0e7ff; color: #3730a3; }
+.ai-label.topic { background: #dcfce7; color: #166534; }
+.detail-enhancement { margin: 1.2rem 0; }

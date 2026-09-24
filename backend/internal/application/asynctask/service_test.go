@@ -123,7 +123,10 @@ func TestProjectConvergesToCurrentArticleFact(t *testing.T) {
 			return v
 		}(), &baseTask, "update", OutcomeApplied},
 		{"相同目标", baseFact, &baseTask, "", OutcomeNoop},
+		{"运行中的相同目标", baseFact, &Task{ID: "task", Status: "running", Generation: 1, RevisionID: 81, ContentHash: baseFact.ContentHash, ObservedVersion: 7}, "", OutcomeNoop},
+		{"已成功的相同目标", baseFact, &Task{ID: "task", Status: "succeeded", Generation: 1, RevisionID: 81, ContentHash: baseFact.ContentHash, ObservedVersion: 7}, "", OutcomeNoop},
 		{"下架", func() ArticleFact { v := baseFact; v.Status = "offline"; v.LockVersion = 8; return v }(), &baseTask, "cancel", OutcomeApplied},
+		{"下架中止运行任务", func() ArticleFact { v := baseFact; v.Status = "offline"; v.LockVersion = 8; return v }(), &Task{ID: "task", Status: "running", Generation: 1, RevisionID: 81, ContentHash: baseFact.ContentHash, ObservedVersion: 7}, "cancel", OutcomeApplied},
 		{"删除且无任务", func() ArticleFact { v := baseFact; v.Status = "deleted"; return v }(), nil, "", OutcomeNoop},
 		{"重新发布", baseFact, &Task{ID: "task", Status: "canceled", Generation: 2, RevisionID: 81, ContentHash: baseFact.ContentHash, ObservedVersion: 6}, "update", OutcomeApplied},
 	}

@@ -11,6 +11,10 @@ func TestReliableAsyncMigrationUpSafeDownAndI2Preservation(t *testing.T) {
 	env.resetArticles(t)
 	runner := newMigrationRunner(t, env.databaseURL)
 	ctx := context.Background()
+	// 本测试专门验证 v6；先从当前最新结构安全退回 v6。
+	if err := runner.Steps(-1); err != nil {
+		t.Fatalf("退回可靠异步迁移: %v", err)
+	}
 
 	for _, table := range []string{"outbox_events", "consumed_events", "async_tasks"} {
 		var exists bool
@@ -48,7 +52,7 @@ VALUES ('01993a42-8e80-7a11-87dd-1dd92b6fb0c1','article.published.v1','article',
 		t.Fatalf("空表 down: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := runner.Steps(1); err != nil {
+		if err := runner.Steps(2); err != nil {
 			t.Errorf("恢复迁移: %v", err)
 		}
 	})

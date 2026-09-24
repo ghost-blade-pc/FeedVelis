@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ArticleItem } from '../../types/article'
-import { articleOriginLabel, articleOriginURL, articleTime, safeArticleURL } from './model'
+import { articleOriginLabel, articleOriginURL, articleSummary, articleTime, safeArticleURL } from './model'
 
 const rss: ArticleItem = {
   id: 1,
   title: '标题',
   excerpt: '摘要',
   published_at: '2026-09-02T00:00:00Z',
+  enhancement: null,
   origin: {
     type: 'rss',
     source: { id: 1, title: '示例 Feed', site_url: null },
@@ -21,6 +22,12 @@ const user: ArticleItem = {
   title: '投稿',
   excerpt: '摘要',
   published_at: '2026-09-02T00:00:00Z',
+  enhancement: {
+    summary: '<script>alert("x")</script> 是普通摘要文本',
+    keywords: ['<b>关键词</b>'],
+    topics: ['主题'],
+    generated_at: '2026-09-02T00:01:00Z',
+  },
   origin: { type: 'user', author: { id: 'u1', nickname: '小唯' } },
 }
 
@@ -29,6 +36,7 @@ const rssWithoutSourceTime: ArticleItem = {
   title: '缺失原站时间',
   excerpt: '摘要',
   published_at: '2026-09-02T00:00:00Z',
+  enhancement: null,
   origin: {
     type: 'rss',
     source: { id: 1, title: '示例 Feed', site_url: null },
@@ -59,5 +67,10 @@ describe('article model', () => {
     expect(articleOriginLabel(user)).toBe('小唯')
     expect(articleOriginURL(user)).toBeUndefined()
     expect(articleTime(user)).toEqual({ label: '发布于', value: '2026-09-02T00:00:00Z' })
+  })
+
+  it('优先返回 AI 摘要且 null 时回退 excerpt，HTML 标记保持普通字符串', () => {
+    expect(articleSummary(user)).toBe('<script>alert("x")</script> 是普通摘要文本')
+    expect(articleSummary(rss)).toBe('摘要')
   })
 })

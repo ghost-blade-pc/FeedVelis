@@ -25,7 +25,7 @@ func TestI2MigrationUpgradeDowngradeAndGuards(t *testing.T) {
 			t.Errorf("清理时恢复到最新迁移: %v", err)
 		}
 	}()
-	if err := runner.Steps(-3); err != nil {
+	if err := runner.Steps(-4); err != nil {
 		t.Fatalf("回到 I2 前结构: %v", err)
 	}
 	seedLegacyArticles(t, env)

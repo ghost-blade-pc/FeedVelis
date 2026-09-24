@@ -6,6 +6,7 @@ import (
 	"errors"
 	asyncApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asynctask"
 	dlqApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/dlq"
+	enrichmentApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/enrichment"
 	"strings"
 	"testing"
 )
@@ -14,6 +15,29 @@ type backfillFake struct {
 	limit  int
 	report asyncApp.BackfillReport
 	err    error
+}
+
+type aiBackfillFake struct {
+	request enrichmentApp.BackfillRequest
+	report  enrichmentApp.BackfillReport
+}
+
+func (f *aiBackfillFake) Run(_ context.Context, request enrichmentApp.BackfillRequest) (enrichmentApp.BackfillReport, error) {
+	f.request = request
+	return f.report, nil
+}
+
+func TestAIBackfillRequiresBoundedExplicitSelectionAndSupportsDryRun(t *testing.T) {
+	fake := &aiBackfillFake{report: enrichmentApp.BackfillReport{Created: 2, Skipped: 1, HasMore: true}}
+	var output bytes.Buffer
+	runner := New(Options{AIBackfill: fake, AIGenerationProfile: "g-v1", AIEmbeddingProfile: "e-v1", Stdout: &output})
+	err := runner.Run(context.Background(), []string{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-limit", "3", "-dry-run"})
+	if err != nil || !fake.request.DryRun || fake.request.Limit != 3 || !strings.Contains(output.String(), "created=2 skipped=1 failed=0 has-more=true dry-run=true") {
+		t.Fatalf("request=%+v output=%q err=%v", fake.request, output.String(), err)
+	}
+	if err := runner.Run(context.Background(), []string{"ai", "backfill", "-stage", "all", "-mode", "missing-only"}); err == nil {
+		t.Fatal("缺少 limit 应拒绝")
+	}
 }
 
 type replayFake struct {

@@ -91,6 +91,7 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 			ID: 1, Origin: articleDomain.OriginRSS, Title: "文章", CanonicalURL: "https://example.com/a",
 			Source:  articleDomain.SourceSummary{ID: 2, Title: "来源"},
 			Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
+			Enhancement: &articleDomain.Enhancement{Summary: "<b>AI 摘要</b>", Keywords: []string{"关键词"}, Topics: []string{"主题"}, GeneratedAt: published},
 		},
 		{
 			ID: 2, Origin: articleDomain.OriginUser, Title: "投稿", Excerpt: "投稿摘要",
@@ -109,10 +110,18 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 			ID          int64           `json:"id"`
 			PublishedAt time.Time       `json:"published_at"`
 			Origin      json.RawMessage `json:"origin"`
+			Enhancement *struct {
+				Summary  string   `json:"summary"`
+				Keywords []string `json:"keywords"`
+				Topics   []string `json:"topics"`
+			} `json:"enhancement"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 2 {
 		t.Fatalf("解析失败: %v body=%s", err, response.Body.String())
+	}
+	if page.Items[0].Enhancement == nil || page.Items[0].Enhancement.Summary != "<b>AI 摘要</b>" || page.Items[1].Enhancement != nil {
+		t.Fatalf("enhancement 契约错误: %+v", page.Items)
 	}
 	// RSS 条目走 rss 分支：携带 Source 摘要与原文 URL，不暴露站内作者。
 	if !strings.Contains(string(page.Items[0].Origin), `"type":"rss"`) ||
@@ -127,7 +136,7 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 		strings.Contains(string(page.Items[1].Origin), "canonical_url") {
 		t.Fatalf("用户 origin = %s", page.Items[1].Origin)
 	}
-	if body := response.Body.String(); strings.Contains(body, "content_hash") || strings.Contains(body, "discovered_at") {
+	if body := response.Body.String(); strings.Contains(body, "content_hash") || strings.Contains(body, "discovered_at") || strings.Contains(body, "provider") || strings.Contains(body, "vector") || strings.Contains(body, "prompt") {
 		t.Fatalf("不得暴露内部字段: %s", body)
 	}
 	invalid := ut.PerformRequest(h.Engine, consts.MethodGet, "/api/v1/articles?cursor=bad", nil)

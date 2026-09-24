@@ -53,6 +53,14 @@ onBeforeUnmount(() => request?.abort())
           rel="noopener noreferrer"
         >查看原文 ↗</a>
       </p>
+      <aside v-if="detail.enhancement" class="ai-enhancement detail-enhancement" aria-label="AI 内容摘要">
+        <span class="ai-badge">AI 生成</span>
+        <p class="article-excerpt">{{ detail.enhancement.summary }}</p>
+        <div class="ai-labels">
+          <span v-for="keyword in detail.enhancement.keywords" :key="`keyword-${keyword}`" class="ai-label keyword">关键词 · {{ keyword }}</span>
+          <span v-for="topic in detail.enhancement.topics" :key="`topic-${topic}`" class="ai-label topic">主题 · {{ topic }}</span>
+        </div>
+      </aside>
       <!-- 后端已用白名单清洗 content_html（含图片），v-html 可直接渲染 -->
       <div v-if="detail.content_html" class="article-content" v-html="detail.content_html"></div>
       <p v-else class="article-content-fallback">{{ detail.excerpt }}</p>

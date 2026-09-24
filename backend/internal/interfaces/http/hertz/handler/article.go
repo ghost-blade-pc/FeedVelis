@@ -78,8 +78,15 @@ func (h *Article) Get(ctx context.Context, c *app.RequestContext) {
 func toArticleItem(item articleDomain.ListItem) dto.ArticleItem {
 	return dto.ArticleItem{
 		ID: item.ID, Title: item.Title, Excerpt: item.Excerpt,
-		PublishedAt: item.SortAt.UTC(), Origin: toArticleOrigin(item),
+		PublishedAt: item.SortAt.UTC(), Origin: toArticleOrigin(item), Enhancement: toArticleEnhancement(item.Enhancement),
 	}
+}
+
+func toArticleEnhancement(value *articleDomain.Enhancement) *dto.ArticleEnhancement {
+	if value == nil {
+		return nil
+	}
+	return &dto.ArticleEnhancement{Summary: value.Summary, Keywords: value.Keywords, Topics: value.Topics, GeneratedAt: value.GeneratedAt.UTC()}
 }
 
 // toArticleOrigin 由来源类型选择判别联合分支；用户来源不携带 Source 或原文 URL。

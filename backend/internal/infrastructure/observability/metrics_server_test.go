@@ -1,12 +1,15 @@
 package observability
 
 import (
+	"bytes"
 	"context"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articleevent"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asynctask"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/enrichment"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/outbox"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/relay"
 	"github.com/prometheus/client_golang/prometheus"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -55,7 +58,7 @@ func TestMetricsEndpointUsesOnlyLowCardinalityLabels(t *testing.T) {
 	if response.Code != 200 || !strings.Contains(body, "velis_outbox_pending 2") {
 		t.Fatalf("code=%d body=%s", response.Code, body)
 	}
-	for _, metric := range []string{"velis_outbox_operations_total", "velis_consumer_operations_total", "velis_async_task_operations_total", "velis_dlq_replay_total", "velis_mq_reconnects_total", "velis_worker_component_up"} {
+	for _, metric := range []string{"velis_outbox_operations_total", "velis_consumer_operations_total", "velis_async_task_operations_total", "velis_dlq_replay_total", "velis_mq_reconnects_total", "velis_worker_component_up", "velis_ai_tasks", "velis_ai_oldest_task_age_seconds"} {
 		if !strings.Contains(body, metric) {
 			t.Errorf("缺少指标 %s", metric)
 		}
@@ -78,6 +81,13 @@ func TestRuntimeInstrumentationUpdatesLowCardinalityMetrics(t *testing.T) {
 	_, _ = InstrumentPublisher(metricsPublisher{}, metrics).Publish(ctx, articleevent.Envelope{})
 	_, _ = InstrumentProjector(metricsProjector{}, metrics).Project(ctx, articleevent.Envelope{})
 	_, _ = InstrumentOutboxMaintenance(metricsMaintenance{}, metrics).DeletePublishedBefore(ctx, time.Now(), 10)
+	tokens := 12
+	var logs bytes.Buffer
+	observer := NewAIObserver(metrics, slog.New(slog.NewJSONHandler(&logs, nil)))
+	task := enrichment.ClaimedTask{ID: "task-correlation-id", Generation: 2, Stage: "generation", ArticleID: 8, RevisionID: 9}
+	observer.Claimed(task)
+	observer.Calls(task, []enrichment.CallRecord{{Kind: "generation_single", Status: "failed", ErrorCode: enrichment.ErrorRateLimited, ErrorBrief: "正文 secret-key https://private.invalid", Duration: time.Second, Usage: enrichment.Usage{TotalTokens: &tokens}}})
+	observer.Finished(task, "retry", enrichment.ErrorRateLimited)
 
 	request := httptest.NewRequest("GET", "/metrics", nil)
 	response := httptest.NewRecorder()
@@ -90,6 +100,8 @@ func TestRuntimeInstrumentationUpdatesLowCardinalityMetrics(t *testing.T) {
 		`velis_outbox_operations_total{operation="publish",result="success"} 1`,
 		`velis_consumer_operations_total{result="applied"} 1`,
 		`velis_async_task_operations_total{operation="update"} 1`,
+		`velis_ai_operations_total{operation="claim",result="success",stage="generation"} 1`,
+		`velis_ai_tokens_total{stage="generation",type="total"} 12`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("缺少运行指标 %q", expected)
@@ -98,6 +110,17 @@ func TestRuntimeInstrumentationUpdatesLowCardinalityMetrics(t *testing.T) {
 	for _, secret := range []string{"worker-secret-id", "event-secret-id", "lease-secret-id", "body-secret"} {
 		if strings.Contains(body, secret) {
 			t.Errorf("指标泄露 %q", secret)
+		}
+	}
+	logBody := logs.String()
+	for _, expected := range []string{"task-correlation-id", `"task_generation":2`, `"revision_id":9`, `"result":"retry"`, `"error_code":"rate_limited"`} {
+		if !strings.Contains(logBody, expected) {
+			t.Errorf("缺少 AI 关联日志字段 %q: %s", expected, logBody)
+		}
+	}
+	for _, secret := range []string{"正文 secret-key", "https://private.invalid"} {
+		if strings.Contains(logBody, secret) {
+			t.Errorf("日志泄露 %q", secret)
 		}
 	}
 }

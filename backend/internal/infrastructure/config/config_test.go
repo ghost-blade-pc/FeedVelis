@@ -205,6 +205,10 @@ func TestConfigLogValueRedactsSensitiveValues(t *testing.T) {
 	cfg.Assets.SecretKey = "secret-object-password"
 	cfg.Assets.WebOrigin = "http://localhost:5173"
 	cfg.Feed.ProxyURL = "http://proxy-user:secret-proxy-password@proxy.internal:3128"
+	cfg.AI.Generation.Profile.Provider = "test"
+	cfg.AI.Generation.Profile.BaseURL = "https://models.internal/v1"
+	cfg.AI.Generation.Profile.APIKey = "secret-model-key"
+	cfg.AI.Generation.Profile.Model = "chat-model"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("测试配置无效: %v", err)
 	}
@@ -213,7 +217,7 @@ func TestConfigLogValueRedactsSensitiveValues(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
 	logger.Info("配置已加载", "config", cfg)
 	logged := output.String()
-	for _, secret := range []string{"secret-user", "secret-db-password", "secret-access", "secret-object-password", "proxy-user", "secret-proxy-password"} {
+	for _, secret := range []string{"secret-user", "secret-db-password", "secret-access", "secret-object-password", "proxy-user", "secret-proxy-password", "secret-model-key"} {
 		if strings.Contains(logged, secret) {
 			t.Errorf("日志泄露敏感值 %q: %s", secret, logged)
 		}
@@ -222,5 +226,64 @@ func TestConfigLogValueRedactsSensitiveValues(t *testing.T) {
 		if !strings.Contains(logged, safe) {
 			t.Errorf("日志缺少安全摘要 %q: %s", safe, logged)
 		}
+	}
+}
+
+func TestAIConfigDisabledByDefault(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AI.Generation.Profile.Enabled() || cfg.AI.Embedding.Profile.Enabled() {
+		t.Fatal("空 profile 应禁用模型阶段")
+	}
+}
+
+func TestAIConfigEnvironmentOverridesYAML(t *testing.T) {
+	t.Setenv("VELIS_AI_GENERATION_PROVIDER", "env-provider")
+	t.Setenv("VELIS_AI_GENERATION_BASE_URL", "https://chat.internal/v1")
+	t.Setenv("VELIS_AI_GENERATION_API_KEY", "env-secret")
+	t.Setenv("VELIS_AI_GENERATION_MODEL", "env-model")
+	t.Setenv("VELIS_AI_GENERATION_MAX_CHUNKS", "6")
+	t.Setenv("VELIS_AI_GENERATION_MAX_CALLS", "7")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("ai:\n  generation:\n    provider: yaml-provider\n    base_url: https://yaml.invalid/v1\n    api_key: yaml-secret\n    model: yaml-model\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AI.Generation.Profile.Provider != "env-provider" || cfg.AI.Generation.Profile.Model != "env-model" || cfg.AI.Generation.MaxChunks != 6 {
+		t.Fatalf("AI 环境覆盖失败: %+v", cfg.AI.Generation)
+	}
+}
+
+func TestAIConfigRejectsPartialAndUnboundedProfiles(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"部分 generation profile", func(cfg *Config) { cfg.AI.Generation.Profile.Provider = "partial" }},
+		{"Embedding 缺少维度", func(cfg *Config) {
+			p := &cfg.AI.Embedding.Profile
+			p.Provider = "test"
+			p.BaseURL = "https://embed.internal/v1"
+			p.APIKey = "key"
+			p.Model = "embed"
+		}},
+		{"分块无界", func(cfg *Config) { cfg.AI.Generation.MaxChunks = 65; cfg.AI.Generation.MaxCalls = 66 }},
+		{"尝试无界", func(cfg *Config) { cfg.AI.Embedding.MaxAttempts = 6 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			tc.mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("应拒绝非法 AI 配置")
+			}
+		})
 	}
 }

@@ -29,11 +29,19 @@ type UserArticleOrigin struct {
 }
 
 type ArticleItem struct {
-	ID          int64     `json:"id"`
-	Title       string    `json:"title"`
-	Excerpt     string    `json:"excerpt"`
-	PublishedAt time.Time `json:"published_at"`
-	Origin      any       `json:"origin"`
+	ID          int64               `json:"id"`
+	Title       string              `json:"title"`
+	Excerpt     string              `json:"excerpt"`
+	PublishedAt time.Time           `json:"published_at"`
+	Origin      any                 `json:"origin"`
+	Enhancement *ArticleEnhancement `json:"enhancement"`
+}
+
+type ArticleEnhancement struct {
+	Summary     string    `json:"summary"`
+	Keywords    []string  `json:"keywords"`
+	Topics      []string  `json:"topics"`
+	GeneratedAt time.Time `json:"generated_at"`
 }
 
 type ArticleListResponse struct {

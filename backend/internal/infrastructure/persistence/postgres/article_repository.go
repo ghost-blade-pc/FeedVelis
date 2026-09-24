@@ -189,12 +189,12 @@ func (r *ArticleRepository) UpdateUserRevision(ctx context.Context, articleID in
 	err := NewTxManager(r.pool).WithinTransaction(ctx, func(txContext context.Context) error {
 		tx, _ := transactionFromContext(txContext)
 		var lockVersion int64
+		var currentRevisionID int64
 		var revisionNo int
 		var currentHash string
-		err := tx.QueryRow(txContext, `SELECT a.lock_version,v.revision_no,v.content_hash FROM velis.articles a
-JOIN velis.article_versions v ON v.id=a.current_revision_id
-WHERE a.id=$1 AND a.origin_type='user' AND a.author_user_id=$2 AND a.status<>'deleted' FOR UPDATE`, articleID, authorID).
-			Scan(&lockVersion, &revisionNo, &currentHash)
+		err := tx.QueryRow(txContext, `SELECT lock_version,current_revision_id FROM velis.articles
+WHERE id=$1 AND origin_type='user' AND author_user_id=$2 AND status<>'deleted' FOR UPDATE`, articleID, authorID).
+			Scan(&lockVersion, &currentRevisionID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return articleDomain.ErrNotFound
 		}
@@ -203,6 +203,9 @@ WHERE a.id=$1 AND a.origin_type='user' AND a.author_user_id=$2 AND a.status<>'de
 		}
 		if lockVersion != expected {
 			return articleDomain.ErrVersionConflict
+		}
+		if err = tx.QueryRow(txContext, `SELECT revision_no,content_hash FROM velis.article_versions WHERE article_id=$1 AND id=$2`, articleID, currentRevisionID).Scan(&revisionNo, &currentHash); err != nil {
+			return err
 		}
 		if currentHash != revision.ContentHash {
 			revisionID, err := nextIdentity(txContext, tx, "velis.article_versions")
@@ -290,9 +293,11 @@ func nextIdentity(ctx context.Context, tx pgx.Tx, table string) (int64, error) {
 func (r *ArticleRepository) GetPublished(ctx context.Context, articleID int64) (articleDomain.Detail, error) {
 	row := r.pool.QueryRow(ctx, `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,
 v.source_author_name,v.excerpt,a.source_published_at,a.discovered_at,a.published_at,
-u.id::text,u.nickname,v.sanitized_html
+u.id::text,u.nickname,g.summary,g.keywords,g.topics,g.generated_at,v.sanitized_html
 FROM velis.articles a JOIN velis.article_versions v ON v.id=a.current_revision_id
 	LEFT JOIN velis.sources s ON s.id=a.source_id LEFT JOIN velis.users u ON u.id=a.author_user_id
+	LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
+	LEFT JOIN velis.ai_generation_results g ON g.id=cs.generation_result_id AND g.article_id=a.id AND g.revision_id=a.current_revision_id
 WHERE a.id=$1 AND a.status='published'`, articleID)
 	item, html, err := scanPublished(row, true)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -303,9 +308,13 @@ WHERE a.id=$1 AND a.status='published'`, articleID)
 
 func (r *ArticleRepository) ListPublished(ctx context.Context, cursor *articleDomain.Cursor, limit int) ([]articleDomain.ListItem, error) {
 	query := `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
-v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname FROM velis.articles a
+v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
+g.summary,g.keywords,g.topics,g.generated_at FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
-LEFT JOIN velis.users u ON u.id=a.author_user_id WHERE a.status='published'`
+LEFT JOIN velis.users u ON u.id=a.author_user_id
+LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
+LEFT JOIN velis.ai_generation_results g ON g.id=cs.generation_result_id AND g.article_id=a.id AND g.revision_id=a.current_revision_id
+WHERE a.status='published'`
 	args := []any{}
 	if cursor != nil {
 		query += ` AND (COALESCE(a.source_published_at,a.published_at),a.id)<($1,$2)`
@@ -336,10 +345,14 @@ func scanPublished(row rowScanner, withHTML bool) (articleDomain.ListItem, *stri
 	var canonicalURL *string
 	var sourceID *int64
 	var sourceTitle, sourceSiteURL, sourceAuthorName, authorID, authorNickname *string
+	var enhancementSummary *string
+	var enhancementKeywords, enhancementTopics []string
+	var enhancementGeneratedAt *time.Time
 	var html *string
 	targets := []any{&item.ID, &item.Origin, &item.Title, &canonicalURL, &sourceID, &sourceTitle,
 		&sourceSiteURL, &sourceAuthorName, &item.Excerpt, &item.SourcePublishedAt,
-		&item.DiscoveredAt, &item.SortAt, &authorID, &authorNickname}
+		&item.DiscoveredAt, &item.SortAt, &authorID, &authorNickname,
+		&enhancementSummary, &enhancementKeywords, &enhancementTopics, &enhancementGeneratedAt}
 	if withHTML {
 		targets = append(targets, &html)
 	}
@@ -352,6 +365,9 @@ func scanPublished(row rowScanner, withHTML bool) (articleDomain.ListItem, *stri
 		item.AuthorName = sourceAuthorName
 	} else {
 		item.Author = &articleDomain.AuthorSummary{ID: *authorID, Nickname: *authorNickname}
+	}
+	if enhancementSummary != nil && enhancementGeneratedAt != nil {
+		item.Enhancement = &articleDomain.Enhancement{Summary: *enhancementSummary, Keywords: enhancementKeywords, Topics: enhancementTopics, GeneratedAt: enhancementGeneratedAt.UTC()}
 	}
 	return item, html, nil
 }

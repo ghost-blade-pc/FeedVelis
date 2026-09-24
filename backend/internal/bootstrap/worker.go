@@ -14,8 +14,10 @@ import (
 	accountApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/account"
 	assetApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asset"
 	asyncApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asynctask"
+	enrichmentApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/enrichment"
 	outboxApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/outbox"
 	relayApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/relay"
+	einoAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/ai/eino"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/clock"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/config"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/fetcher/httpfeed"
@@ -72,6 +74,11 @@ func buildWorkerComponents(cfg config.Config, pool *pgxpool.Pool, logger *slog.L
 	components = append(components, instrumentWorkerComponent("outbox-cleanup", false, asyncMetrics, outboxCleanup.Run))
 	metrics := observability.NewMetricsServer(cfg.Worker.MetricsAddress, registry)
 	components = append(components, instrumentWorkerComponent("metrics", false, asyncMetrics, metrics.Run))
+	if cfg.AI.Generation.Profile.Enabled() || cfg.AI.Embedding.Profile.Enabled() {
+		components = append(components, instrumentWorkerComponent("ai_enrichment", false, asyncMetrics, func(ctx context.Context) error {
+			return runAIEnrichment(ctx, cfg, pool, logger, owner, asyncMetrics)
+		}))
+	}
 	if cfg.RabbitMQ.URL == "" {
 		return components, nil
 	}
@@ -93,6 +100,61 @@ func buildWorkerComponents(cfg config.Config, pool *pgxpool.Pool, logger *slog.L
 	instrumentedProjector := observability.InstrumentProjector(projector, asyncMetrics)
 	components = append(components, instrumentWorkerComponent("consumer", true, asyncMetrics, rabbitAdapter.NewConsumer(cfg.RabbitMQ.URL, cfg.Consumer.Prefetch, instrumentedProjector, isDatabaseFailure).Run))
 	return components, nil
+}
+
+func runAIEnrichment(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, owner string, metrics *observability.AsyncMetrics) error {
+	var generator enrichmentApp.Generator
+	var embedder enrichmentApp.Embedder
+	var generationProfile, embeddingProfile *enrichmentApp.ActiveProfile
+	if cfg.AI.Generation.Profile.Enabled() {
+		workflow, err := einoAdapter.NewOpenAIWorkflow(ctx, cfg.AI.Generation)
+		if err != nil {
+			return err
+		}
+		generator = workflow
+		generationProfile = &enrichmentApp.ActiveProfile{Provider: cfg.AI.Generation.Profile.Provider, Model: cfg.AI.Generation.Profile.Model, ProfileVersion: cfg.AI.Generation.Profile.ProfileVersion, WorkflowVersion: cfg.AI.Generation.WorkflowVersion, PromptVersion: cfg.AI.Generation.PromptVersion, MaxAttempts: cfg.AI.Generation.MaxAttempts, AuditTokenBudget: cfg.AI.Generation.AuditTokenBudget, Timeout: cfg.AI.Generation.Profile.Timeout, StageBudget: cfg.AI.Generation.Profile.Budget}
+	}
+	if cfg.AI.Embedding.Profile.Enabled() {
+		adapter, err := einoAdapter.NewOpenAIEmbedder(ctx, cfg.AI.Embedding)
+		if err != nil {
+			return err
+		}
+		embedder = adapter
+		embeddingProfile = &enrichmentApp.ActiveProfile{Provider: cfg.AI.Embedding.Profile.Provider, Model: cfg.AI.Embedding.Profile.Model, ProfileVersion: cfg.AI.Embedding.Profile.ProfileVersion, InputVersion: cfg.AI.Embedding.InputVersion, Dimensions: cfg.AI.Embedding.Dimensions, MaxAttempts: cfg.AI.Embedding.MaxAttempts, AuditTokenBudget: cfg.AI.Embedding.AuditTokenBudget, Timeout: cfg.AI.Embedding.Profile.Timeout, StageBudget: cfg.AI.Embedding.Profile.Budget}
+	}
+	executor := enrichmentApp.NewExecutor(postgres.NewEnrichmentRepository(pool), generator, embedder, generationProfile, embeddingProfile, enrichmentApp.ExecutorPolicy{
+		Lease: cfg.AI.Worker.Lease, GenerationBackoffMin: cfg.AI.Generation.BackoffMin, GenerationBackoffMax: cfg.AI.Generation.BackoffMax,
+		EmbeddingBackoffMin: cfg.AI.Embedding.BackoffMin, EmbeddingBackoffMax: cfg.AI.Embedding.BackoffMax,
+		ChunkChars: cfg.AI.Generation.ChunkChars, MaxChunks: cfg.AI.Generation.MaxChunks, SingleInputChars: cfg.AI.Generation.SingleInputChars,
+		MaxCalls: cfg.AI.Generation.MaxCalls, Concurrency: cfg.AI.Generation.ChunkConcurrency, MaxOutputTokens: cfg.AI.Generation.MaxOutputTokens,
+		OutputLimits:       enrichmentApp.OutputLimits{SummaryChars: cfg.AI.Generation.SummaryMaxChars, KeywordCount: cfg.AI.Generation.KeywordMaxCount, TopicCount: cfg.AI.Generation.TopicMaxCount, LabelChars: cfg.AI.Generation.LabelMaxChars},
+		EmbeddingBodyChars: cfg.AI.Embedding.MaxInputChars,
+	}, nil, func(delay time.Duration) time.Duration { return time.Duration(float64(delay) * (1 + randomJitter())) }).WithObserver(observability.NewAIObserver(metrics, logger))
+	ticker := time.NewTicker(cfg.AI.Worker.Poll)
+	defer ticker.Stop()
+	processedInBatch := 0
+	for {
+		if err := observability.RefreshAITaskStats(ctx, pool, metrics); err != nil {
+			return err
+		}
+		processed, err := executor.ProcessOne(ctx, owner)
+		if err != nil {
+			logger.Error("AI 内容增强执行失败", "worker_id", owner, "error", err)
+			return err
+		}
+		if processed {
+			processedInBatch++
+			if processedInBatch < cfg.AI.Worker.BatchSize {
+				continue
+			}
+		}
+		processedInBatch = 0
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func instrumentWorkerComponent(name string, reconnect bool, metrics *observability.AsyncMetrics, run func(context.Context) error) WorkerComponent {

@@ -42,6 +42,54 @@ outbox:
   cleanup_interval: 1h
   cleanup_batch: 500
 
+# AI 内容增强默认关闭。任一 profile 启用时，provider/base_url/api_key/model/profile_version
+# 必须完整提供；真实密钥只通过对应 VELIS_AI_*_API_KEY 注入。
+ai:
+  generation:
+    provider: ""
+    base_url: ""
+    api_key: ""
+    model: ""
+    profile_version: generation-v1
+    timeout: 30s
+    budget: 2m
+    workflow_version: hierarchical-v1
+    prompt_version: summary-v1
+    single_input_chars: 12000
+    chunk_chars: 6000
+    max_chunks: 8
+    chunk_concurrency: 2
+    max_calls: 9
+    max_attempts: 3
+    backoff_min: 5s
+    backoff_max: 5m
+    max_output_tokens: 1200
+    audit_token_budget: 20000
+    summary_max_chars: 1000
+    keyword_max_count: 12
+    topic_max_count: 5
+    label_max_chars: 64
+  embedding:
+    provider: ""
+    base_url: ""
+    api_key: ""
+    model: ""
+    profile_version: embedding-v1
+    timeout: 20s
+    budget: 30s
+    input_version: retrieval-document-v1
+    # 启用 Embedding 时必须设置为服务实际返回维度。
+    dimensions: 0
+    max_input_chars: 12000
+    max_attempts: 3
+    backoff_min: 5s
+    backoff_max: 5m
+    audit_token_budget: 10000
+  worker:
+    lease: 2m
+    poll_interval: 1s
+    batch_size: 8
+
 # 私有文章图片存储。endpoint 留空时资产能力局部降级；RSS、latest、Source 管理和纯文本投稿仍可用。
 assets:
   # 服务端内部连接使用 host:port；启用时公共上传端点也必须配置。

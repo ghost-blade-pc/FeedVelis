@@ -29,6 +29,7 @@ type Config struct {
 	Relay       RelayConfig       `yaml:"relay"`
 	Consumer    ConsumerConfig    `yaml:"consumer"`
 	Outbox      OutboxConfig      `yaml:"outbox"`
+	AI          AIConfig          `yaml:"ai"`
 }
 
 type AppConfig struct {
@@ -116,6 +117,22 @@ func Default() Config {
 		Relay:    RelayConfig{BatchSize: 100, PublishWindow: 16, LeaseRaw: "30s", ScanRaw: "1s", ConfirmRaw: "10s", BackoffMinRaw: "1s", BackoffMaxRaw: "60s"},
 		Consumer: ConsumerConfig{Prefetch: 16, BackoffMinRaw: "1s", BackoffMaxRaw: "30s"},
 		Outbox:   OutboxConfig{RetentionRaw: "168h", CleanupRaw: "1h", CleanupBatch: 500},
+		AI: AIConfig{
+			Generation: GenerationConfig{
+				Profile:         ModelProfileConfig{ProfileVersion: "generation-v1", TimeoutRaw: "30s", BudgetRaw: "2m"},
+				WorkflowVersion: "hierarchical-v1", PromptVersion: "summary-v1",
+				SingleInputChars: 12000, ChunkChars: 6000, MaxChunks: 8, ChunkConcurrency: 2,
+				MaxCalls: 9, MaxAttempts: 3, BackoffMinRaw: "5s", BackoffMaxRaw: "5m",
+				MaxOutputTokens: 1200, AuditTokenBudget: 20000, SummaryMaxChars: 1000,
+				KeywordMaxCount: 12, TopicMaxCount: 5, LabelMaxChars: 64,
+			},
+			Embedding: EmbeddingConfig{
+				Profile:      ModelProfileConfig{ProfileVersion: "embedding-v1", TimeoutRaw: "20s", BudgetRaw: "30s"},
+				InputVersion: "retrieval-document-v1", MaxInputChars: 12000, MaxAttempts: 3,
+				BackoffMinRaw: "5s", BackoffMaxRaw: "5m", AuditTokenBudget: 10000,
+			},
+			Worker: AIWorkerConfig{LeaseRaw: "2m", PollRaw: "1s", BatchSize: 8},
+		},
 		Assets: AssetConfig{
 			Bucket:            "velis-article-assets",
 			UploadRaw:         "15m",
@@ -214,6 +231,9 @@ func applyEnvironment(cfg *Config) error {
 	setString(&cfg.Assets.UnboundRaw, "VELIS_ASSET_UNBOUND_TTL")
 	setString(&cfg.Idempotency.RetentionRaw, "VELIS_IDEMPOTENCY_RETENTION")
 	setString(&cfg.Feed.ProxyURL, "VELIS_FEED_PROXY_URL")
+	if err := applyAIEnvironment(cfg); err != nil {
+		return err
+	}
 
 	if err := setInt32(&cfg.Database.MaxConnections, "VELIS_DATABASE_MAX_CONNECTIONS"); err != nil {
 		return err
@@ -451,6 +471,9 @@ func (cfg *Config) Validate() error {
 		return errors.New("database.min_connections 必须介于 0 和 max_connections 之间")
 	}
 	if err := validateContentConfig(cfg); err != nil {
+		return err
+	}
+	if err := validateAIConfig(&cfg.AI); err != nil {
 		return err
 	}
 	return validateAuth(&cfg.Auth, cfg.App.Environment)

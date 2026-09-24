@@ -84,7 +84,7 @@ func (s *Service) Project(ctx context.Context, event articleevent.Envelope) (Out
 				task, taskErr = s.tasks.CreatePending(txContext, uuid.NewString(), fact, now)
 				taskID = task.ID
 				changed = taskErr == nil
-			} else if current.Status != "pending" || current.RevisionID != fact.RevisionID || current.ContentHash != fact.ContentHash {
+			} else if current.Status == "canceled" || current.RevisionID != fact.RevisionID || current.ContentHash != fact.ContentHash {
 				var task Task
 				task, taskErr = s.tasks.SetPending(txContext, *current, fact, now)
 				taskID = task.ID
@@ -94,7 +94,7 @@ func (s *Service) Project(ctx context.Context, event articleevent.Envelope) (Out
 				task, taskErr = s.tasks.Observe(txContext, *current, fact, now)
 				taskID = task.ID
 			}
-		} else if current != nil && current.Status == "pending" {
+		} else if current != nil && current.Status != "canceled" {
 			var task Task
 			task, taskErr = s.tasks.Cancel(txContext, *current, fact, now)
 			taskID = task.ID

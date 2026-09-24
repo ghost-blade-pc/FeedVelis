@@ -27,6 +27,10 @@ export function articleOriginURL(item: ArticleItem): string | undefined {
   return item.origin.type === 'rss' ? safeArticleURL(item.origin.canonical_url) : undefined
 }
 
+export function articleSummary(item: ArticleItem): string {
+  return item.enhancement?.summary || item.excerpt
+}
+
 export function formatTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value

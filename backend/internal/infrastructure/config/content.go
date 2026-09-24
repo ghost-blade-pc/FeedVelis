@@ -164,6 +164,10 @@ func (cfg Config) LogValue() slog.Value {
 		slog.String("feed_network_mode", proxyMode),
 		slog.Bool("rabbitmq_enabled", strings.TrimSpace(cfg.RabbitMQ.URL) != ""),
 		slog.String("rabbitmq_endpoint", RedactedRabbitMQURL(cfg.RabbitMQ.URL)),
+		slog.Bool("ai_generation_enabled", cfg.AI.Generation.Profile.Enabled()),
+		slog.String("ai_generation_endpoint", RedactedModelEndpoint(cfg.AI.Generation.Profile.BaseURL)),
+		slog.Bool("ai_embedding_enabled", cfg.AI.Embedding.Profile.Enabled()),
+		slog.String("ai_embedding_endpoint", RedactedModelEndpoint(cfg.AI.Embedding.Profile.BaseURL)),
 		slog.Duration("idempotency_retention", cfg.Idempotency.Retention),
 	)
 }

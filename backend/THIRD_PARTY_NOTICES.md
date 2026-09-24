@@ -7,6 +7,9 @@
 | 组件 | 版本 | 许可证 |
 | --- | --- | --- |
 | [CloudWeGo Hertz](https://github.com/cloudwego/hertz) | v0.10.6 | Apache-2.0 |
+| [CloudWeGo Eino](https://github.com/cloudwego/eino) | v0.7.13 | Apache-2.0 |
+| [Eino OpenAI-compatible ChatModel](https://github.com/cloudwego/eino-ext/tree/main/components/model/openai) | v0.1.13 | Apache-2.0 |
+| [Eino OpenAI-compatible Embedding](https://github.com/cloudwego/eino-ext/tree/main/components/embedding/openai) | v0.0.0-20260923073216-8dee1c82d215 | Apache-2.0 |
 | [golang-jwt/jwt](https://github.com/golang-jwt/jwt) | v5.3.1 | MIT |
 | [golang-migrate](https://github.com/golang-migrate/migrate) | v4.19.1 | MIT |
 | [pgx](https://github.com/jackc/pgx) | v5.9.2 | MIT |
@@ -18,6 +21,8 @@
 | [gopkg.in/yaml.v3](https://pkg.go.dev/gopkg.in/yaml.v3) | v3.0.1 | MIT 与 Apache-2.0 |
 
 认证相关组件的用途：`golang-jwt/jwt` 负责访问令牌的 HS256 签发与校验，`golang.org/x/crypto` 提供 Argon2id 密码散列，`golang.org/x/term` 负责 CLI 的隐藏密码输入。三者都在 `go.mod` 中固定版本，升级前需复核模块兼容性与已知漏洞。
+
+AI 内容增强使用 Eino v0.7.13 编译有界 Workflow，并分别通过两个 OpenAI-compatible 扩展组件调用 Chat Completions 与 Embeddings。三个模块均为 Apache-2.0；Embedding 当前固定到未发布 tag 的完整伪版本，升级时必须重新验证 API 兼容性和许可证。
 
 ## 随应用发布的数据文件
 

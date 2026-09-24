@@ -108,12 +108,13 @@ Velis 是一个可自托管的图文 Feed 与智能阅读系统。平台管理�
 | 联合 latest、站内详情、Vue 阅读与投稿页 | I2 已完成 | 在 I4 增加搜索和 recommend Feed |
 | 账户、JWT、会话轮换、RBAC、限流和管理审计 | I1 已完成 | 作为投稿、管理和 Agent 会话身份基础 |
 | 用户投稿、图片资产、幂等写入和乐观并发 | I2 已完成 | 复用为 AI、搜索和 Agent 的内容事实基础 |
-| Outbox、RabbitMQ Relay、消费幂等与文章任务槽位 | I3 异步底座已完成 | 后续 I3 change 接入 AI 内容增强 |
+| Outbox、RabbitMQ Relay、消费幂等与文章任务槽位 | I3 已完成 | 已承载 AI 内容增强任务状态机 |
 | Redis 业务缓存、推荐信号、recommend Feed | 未实现 | I4 |
-| Eino、OpenSearch、对话/定时 Agent | 未实现 | I3–I6 |
+| Eino 内容增强 | I3 已完成 | 摘要、关键词、主题、Embedding、版本化结果与降级读取 |
+| OpenSearch、对话/定时 Agent | 未实现 | I4–I6 |
 | 微服务、Kubernetes、完整可观测性、压测和 GC 报告 | 未实现 | I7–I10 |
 
-当前文章已支持互斥的 RSS/用户来源、不可变修订及 `draft/published/offline/deleted` 生命周期，MinIO 已用于私有图片资产。文章公开事实已通过 Outbox、RabbitMQ Relay、消费 Inbox 收敛到版本化异步任务槽位；任务尚未执行 Eino AI 或 OpenSearch 投影。Redis 业务能力、Eino、OpenSearch 和 Agent 仍未实现。现有 PostgreSQL `vector` 扩展和 pgvector 镜像是遗留配置，目标向量检索为 OpenSearch，后续迁移不得改写已执行迁移或无条件级联删除扩展。
+当前文章已支持互斥的 RSS/用户来源、不可变修订及 `draft/published/offline/deleted` 生命周期，MinIO 已用于私有图片资产。文章公开事实通过 Outbox、RabbitMQ Relay、消费 Inbox 收敛到版本化异步任务槽位，并由 Eino Worker 生成摘要、关键词、主题和普通浮点向量；结果缺失或失败时读取链路降级。Redis 业务能力、OpenSearch 和 Agent 仍未实现。现有 PostgreSQL `vector` 扩展和 pgvector 镜像是遗留配置，目标向量检索为 OpenSearch，后续迁移不得改写已执行迁移或无条件级联删除扩展。
 
 ## 6. 核心领域与数据边界
 
@@ -252,7 +253,7 @@ I2–I6 保持模块化单体代码库和清晰模块接口，API 与 Worker 可
 | I0：目标与工程基线 | 已完成 | 四层架构、四入口、迁移、CI、健康检查、文档入口 | 当前能力与未来目标分离，基础命令可复现 |
 | I1：账户与权限 | 已完成（2026-09-19） | 注册登录、JWT、会话轮换撤销、RBAC、限流、管理 CLI/审计、最小 Web | 正常/过期/撤销/轮换/重复账号/越权测试；管理员初始化可复现 |
 | I2：统一内容供给 | 已完成（2026-09-21） | 用户草稿/图片/直接发布/编辑/下架/删除；管理员 Source API/Web；RSS 与投稿统一公开读取；latest | RSS 自动发布与用户直接发布均可匿名阅读；并发、幂等、权限、资产和历史数据迁移正确；不依赖 MQ/Redis/模型 |
-| I3：可靠异步与 AI 增强 | 进行中（可靠异步底座已完成） | 已交付 Outbox、RabbitMQ Relay、消费去重、任务状态、重投/DLQ；待交付 Eino 摘要/关键词/主题/Embedding | MQ 中断与重复消息已可恢复；后续仍需证明模型超时/非法输出/旧结果不破坏发布 |
+| I3：可靠异步与 AI 增强 | 已完成（2026-09-23） | Outbox、RabbitMQ Relay、消费去重、租约任务状态、重投/DLQ；Eino 摘要/关键词/主题/Embedding、补录与降级展示 | MQ/模型故障、重复消息、非法输出与迟到结果不破坏发布和当前修订读取 |
 | I4：搜索与 recommend Feed | 待实施 | Redis 缓存；OpenSearch BM25/KNN/RRF、索引同步与重建；最小阅读/收藏/负反馈信号 | latest/recommend 分页稳定并能降级；下架不泄露；缓存清空、迟到事件、Bulk 部分失败和重建增量可验证 |
 | I5：对话 Agent | 待实施 | 会话/消息、只读工具、SSE、引用、有限记忆、Agent 页面与评测集 | 查询约束和引用正确；无结果、工具失败、超时、断流、取消、越权和注入场景有证据 |
 | I6：定时 Agent 与收件箱 | 待实施 | 定时任务 CRUD/调度、水位、幂等匹配、站内收件箱与已读状态 | 新文章只投递一次；暂停/恢复/错过调度/重试正确；用户重新上线可查看结果 |
@@ -263,13 +264,13 @@ I2–I6 保持模块化单体代码库和清晰模块接口，API 与 Worker 可
 
 ### 下一阶段的执行边界
 
-下一项业务工作仍属于 **I3：AI 内容增强**。可靠异步底座已经定稿并实现；后续 OpenSpec change 需要继续定稿：
+I3 的可靠异步与 AI 内容增强已实现。下一项业务工作进入 **I4：搜索与 recommend Feed**；后续 OpenSpec change 需要继续定稿：
 
-- Eino 摘要、关键词、主题和 Embedding Workflow，以及模型、Prompt、输入哈希和成本元数据；
-- 文章修订版本条件，确保迟到 AI 结果不能覆盖新内容或复活下架/删除文章；
-- 未配置模型密钥时的启动与降级行为，以及确定性模型桩和真实模型边界测试。
+- OpenSearch 版本、索引模板、中文分析器、BM25/KNN/RRF 参数与索引生命周期；
+- 从当前 Embedding 指针构建可重放的搜索投影，并处理下架、删除、迟到事件和 Bulk 部分失败；
+- latest/recommend 的缓存、候选融合、分页稳定性和搜索不可用时降级。
 
-I3 不引入 Redis、OpenSearch、recommend Feed 或 Agent。可靠事件链路已经证明 MQ 故障不阻塞发布与阅读、恢复后可追赶；下一 change 只在该任务槽位之上完成版本化 AI 增强。搜索投影与推荐统一在 I4 交付。
+I3 没有引入 Redis、OpenSearch、recommend Feed 或 Agent；当前向量只以 `real[]` 持久化，不提供检索 API。搜索投影与推荐统一在 I4 交付。
 
 后续仍需在对应 change 中决定的主要细节：
 

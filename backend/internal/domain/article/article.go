@@ -112,6 +112,13 @@ type AuthorSummary struct {
 	Nickname string
 }
 
+type Enhancement struct {
+	Summary     string
+	Keywords    []string
+	Topics      []string
+	GeneratedAt time.Time
+}
+
 type ListItem struct {
 	ID                int64
 	Origin            OriginType
@@ -124,6 +131,7 @@ type ListItem struct {
 	DiscoveredAt      time.Time
 	SortAt            time.Time
 	Author            *AuthorSummary
+	Enhancement       *Enhancement
 }
 
 type Cursor struct {

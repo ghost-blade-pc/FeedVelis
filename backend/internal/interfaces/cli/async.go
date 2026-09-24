@@ -4,7 +4,39 @@ import (
 	"context"
 	"flag"
 	"fmt"
+
+	enrichmentApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/enrichment"
 )
+
+func (r *Runner) runAI(ctx context.Context, args []string) error {
+	if len(args) == 0 || args[0] != "backfill" {
+		return fmt.Errorf("缺少或不支持的 ai 命令\n%s", usage)
+	}
+	if r.options.AIBackfill == nil {
+		return fmt.Errorf("AI 补录未装配")
+	}
+	flags := flag.NewFlagSet("ai backfill", flag.ContinueOnError)
+	flags.SetOutput(r.stderr())
+	stage := flags.String("stage", "", "阶段：generation|embedding|all（必填）")
+	mode := flags.String("mode", "", "模式：missing-only|outdated-only（必填）")
+	limit := flags.Int("limit", 0, "最多处理文章数（1..1000，必填）")
+	dryRun := flags.Bool("dry-run", false, "只预览，不写入")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *limit < 1 || *limit > 1000 {
+		return fmt.Errorf("-limit 必须介于 1 和 1000")
+	}
+	if *stage != "generation" && *stage != "embedding" && *stage != "all" {
+		return fmt.Errorf("-stage 必须是 generation、embedding 或 all")
+	}
+	if *mode != "missing-only" && *mode != "outdated-only" {
+		return fmt.Errorf("-mode 必须是 missing-only 或 outdated-only")
+	}
+	report, err := r.options.AIBackfill.Run(ctx, enrichmentApp.BackfillRequest{Stage: *stage, Mode: *mode, Limit: *limit, DryRun: *dryRun, GenerationProfile: r.options.AIGenerationProfile, EmbeddingProfile: r.options.AIEmbeddingProfile})
+	fmt.Fprintf(r.stdout(), "created=%d skipped=%d failed=%d has-more=%t dry-run=%t\n", report.Created, report.Skipped, report.Failed, report.HasMore, *dryRun)
+	return err
+}
 
 func (r *Runner) runAsync(ctx context.Context, args []string) error {
 	if len(args) == 0 {

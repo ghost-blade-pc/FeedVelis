@@ -957,7 +957,7 @@ components:
           type: boolean
     ArticleItem:
       type: object
-      required: [id, title, excerpt, published_at, origin]
+      required: [id, title, excerpt, published_at, origin, enhancement]
       properties:
         id:
           type: integer
@@ -972,6 +972,41 @@ components:
           description: latest 使用的有效发布时间；RSS 原站时间优先，缺失时回退固定站内发布时间。
         origin:
           $ref: "#/components/schemas/ArticleOrigin"
+        enhancement:
+          oneOf:
+            - $ref: "#/components/schemas/ArticleEnhancement"
+            - type: "null"
+          description: 当前修订选中的 AI 增强结果；未生成、失败或仅旧修订存在结果时为 null。
+    ArticleEnhancement:
+      type: object
+      required: [summary, keywords, topics, generated_at]
+      additionalProperties: false
+      properties:
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        keywords:
+          type: array
+          minItems: 1
+          maxItems: 12
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        topics:
+          type: array
+          minItems: 1
+          maxItems: 5
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        generated_at:
+          type: string
+          format: date-time
     ArticleSource:
       type: object
       required: [id, title, site_url]

@@ -13,21 +13,21 @@ func TestLatestEffectiveTimeIndexMigrationCanRollbackAndRestore(t *testing.T) {
 	isRolledBack := false
 	defer func() {
 		if isRolledBack {
-			if err := runner.Steps(2); err != nil {
+			if err := runner.Steps(3); err != nil {
 				t.Errorf("清理时恢复 latest 有效时间索引: %v", err)
 			}
 		}
 	}()
 
 	assertLatestIndexDefinition(t, env, "COALESCE(source_published_at, published_at)")
-	if err := runner.Steps(-2); err != nil {
+	if err := runner.Steps(-3); err != nil {
 		t.Fatalf("回滚 latest 有效时间索引: %v", err)
 	}
 	isRolledBack = true
 	assertLatestIndexDefinition(t, env, "published_at DESC")
 	assertLatestIndexDefinitionDoesNotContain(t, env, "COALESCE(source_published_at, published_at)")
 
-	if err := runner.Steps(2); err != nil {
+	if err := runner.Steps(3); err != nil {
 		t.Fatalf("重新应用 latest 有效时间索引: %v", err)
 	}
 	isRolledBack = false

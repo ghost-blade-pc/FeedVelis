@@ -1,6 +1,6 @@
 # Velis Feed
 
-Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发布与用户 Markdown 图文投稿的统一内容池、稳定 latest、站内阅读、私有图片资产、管理员 Source 管理，以及账户与会话闭环。后端采用 Go + CloudWeGo Hertz + PostgreSQL，前端采用 Vue 3 + TypeScript。
+Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发布与用户 Markdown 图文投稿的统一内容池、稳定 latest、站内阅读、私有图片资产、AI 内容增强、管理员 Source 管理，以及账户与会话闭环。后端采用 Go + CloudWeGo Hertz/Eino + PostgreSQL，前端采用 Vue 3 + TypeScript。
 
 本文只描述当前功能、开发现状和运行方式。项目目标、技术决策、开发顺序与验收标准统一见 [Velis Roadmap](<Velis Roadmap.md>)。目录占位、依赖声明和 Compose 服务不代表业务能力已实现。
 
@@ -17,14 +17,14 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
-| 可靠异步底座 | 文章版本化事件、PostgreSQL Outbox/Inbox、RabbitMQ confirm/重投/DLQ、收敛任务槽位、补录与 DLQ 重放 CLI、Worker 指标 | 只建立 I3 异步基础；尚未执行 AI 摘要、关键词、主题或 Embedding |
+| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量仅持久化，尚无检索 API |
 | Web | latest/详情、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无互动、搜索、recommend 或 Agent 界面 |
 
-推荐信号、recommend Feed、Redis 业务缓存、OpenSearch、Eino AI、对话 Agent 与定时 Agent 均未实现。RabbitMQ/Outbox 目前只承载文章异步任务槽位投影，不代表 AI 增强已经完成。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+推荐信号、recommend Feed、Redis 业务缓存、OpenSearch、向量检索、对话 Agent 与定时 Agent 均未实现。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 
-核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；当前只完成 I3 的可靠异步底座，AI 增强仍未实现。
+核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；模型未配置或故障时 `enhancement` 为 null，Web 回退到原始 excerpt。
 
 ## 目录与技术现状
 
@@ -42,7 +42,7 @@ code_copilot/          迁移前 Spec Copilot 历史证据（只读）
 
 后端 module：`github.com/ghost-blade-pc/Velis_Feed/backend`。实际数据访问为 pgx + 显式 SQL，迁移使用 golang-migrate。
 
-当前 Compose 仍使用 `pgvector/pgvector:pg17`，初始迁移创建 `vector` 扩展；没有向量业务表或查询实现。目标搜索与向量方案已确定为 OpenSearch，但尚未接入，遗留 pgvector 的迁移清理列入 Roadmap。本次文档定稿不改变运行配置。
+当前 Compose 仍使用 `pgvector/pgvector:pg17`，初始迁移创建 `vector` 扩展；AI Embedding 已以 PostgreSQL `real[]` 版本化持久化，但没有向量查询实现。目标搜索与向量方案已确定为 OpenSearch，但尚未接入，遗留 pgvector 的迁移清理列入 Roadmap。
 
 ## 本地启动
 
@@ -120,6 +120,14 @@ go run ./cmd/velis-admin -config configs/config.example.yaml source resume 1
 ```
 
 `source fetch 1 --force` 可忽略条件请求头，重新拉取并清洗内容；它仍遵循来源认领规则。正常运行时 Worker 按每个 Source 的周期自动认领。CLI 与管理员 HTTP 复用应用规则。
+
+AI profile 升级不会自动触发全量费用。管理员必须给出阶段、候选模式和数量上限；先 dry-run，再按小批执行：
+
+```bash
+cd backend
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -limit 20 -dry-run
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage generation -mode outdated-only -limit 20
+```
 
 ## 当前 API
 
@@ -220,6 +228,24 @@ go run ./cmd/velis-admin account set-status -username alice -status disabled
 
 常用环境变量除资产、幂等与 Feed 配置外，还包括 `VELIS_RABBITMQ_URL`、`VELIS_RELAY_*`、`VELIS_CONSUMER_*`、`VELIS_OUTBOX_*` 和 `VELIS_WORKER_METRICS_ADDRESS`。RabbitMQ URL 留空时只禁用 Relay/Consumer，文章事务仍写 Outbox。完整上限及默认值见示例 YAML；对象存储凭据、MQ 凭据和含凭据的代理 URL 不得提交或写入日志。
 
+### AI 内容增强配置
+
+generation 与 Embedding 是两个独立的 OpenAI-compatible profile。某组的 provider/base URL/API Key/model 任一被填写时，其余项必须完整；两组均为空时不装配 AI Worker，也不影响 readiness。API Key 只通过 `VELIS_AI_GENERATION_API_KEY`、`VELIS_AI_EMBEDDING_API_KEY` 注入。
+
+Compose 用户可直接在本地 `.env` 中按 [.env.example](.env.example) 的 AI 区块取消注释并填写；这些参数只传给 `velis-worker`，无需也不应把真实密钥写入 YAML。Embedding 未配置时仍会生成并公开摘要、关键词和主题。
+
+| 配置 | 默认值 | 硬边界/说明 |
+| --- | --- | --- |
+| generation timeout / stage budget | 30s / 2m | 单次 1s–5m；阶段预算不小于单次且不超过 15m |
+| single input / chunk chars | 12000 / 6000 | 1000–100000 / 500–single input，按 Unicode 字符计 |
+| max chunks / concurrency / calls | 8 / 2 / 9 | 1–64 / 1–8 / 1–65，调用数至少覆盖 map + reduce |
+| generation attempts / backoff | 3 / 5s–5m | 尝试 1–5；退避 1s–1h 且有界抖动 |
+| output / audit Token | 1200 / 20000 | 输出 64–8192；审计预算不小于输出且最多 1000000 |
+| summary / keyword / topic / label | 1000 / 12 / 5 / 64 字符 | summary 最多 4000；关键词 1–12、主题 1–5、标签最多 128 |
+| Embedding timeout / stage budget | 20s / 30s | dimensions 启用时必填且为 1–65536 |
+| Embedding input / attempts / audit Token | 12000 / 3 / 10000 | 输入 1000–100000；尝试 1–5；审计预算最多 1000000 |
+| Worker lease / poll / batch | 2m / 1s / 8 | lease 10s–10m；poll 100ms–1m；batch 1–100 |
+
 ## 数据迁移与回滚
 
 `000004_unify_content_supply` 会保留历史 RSS 文章 ID，把旧正文回填为 revision 1，并以原 `discovered_at` 固定 `published_at`。迁移前应备份并在专用环境核对文章数、ID、状态、修订和 latest 抽样。
@@ -227,6 +253,8 @@ go run ./cmd/velis-admin account set-status -username alice -status disabled
 `000005_sort_latest_by_source_time` 将公开文章的 latest 索引替换为 `(COALESCE(source_published_at, published_at), id)` 倒序表达式索引；down migration 只恢复旧索引，不修改文章数据。应用回滚时应先回滚 API，再回滚该迁移，避免查询排序与索引语义不一致。
 
 `000006_create_reliable_article_async` 创建 Outbox、消费 Inbox 与异步任务槽位。空表时可下迁移；只要存在事件、消费记录或任务，down 会拒绝执行。应用回滚前先停 Relay/Consumer、确认并备份这些表；不得用 force 或删数据绕过保护。已发布 Outbox 默认保留 7 天并由 Worker 分批清理，未发布事件不会被清理。
+
+`000007_add_ai_content_enrichment` 扩展任务阶段、租约、重试与完成状态，并创建不可变 generation/Embedding 结果、独立 current 指针和模型调用审计表。回滚前先停 AI Worker；只要存在增强结果、调用记录或任务已进入新状态，down 会明确拒绝。向量保存为 `real[]`，此阶段没有向量查询或索引。
 
 down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、无资产”的旧模型可表达状态时才允许回退。只要存在用户投稿、资产或第二修订，down 会在事务内明确失败。不要使用 force 或删除数据绕过保护；此时应保持数据库前滚并修复/回滚应用。
 

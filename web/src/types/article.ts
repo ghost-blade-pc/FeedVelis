@@ -23,12 +23,20 @@ export interface UserArticleOrigin {
 
 export type ArticleOrigin = RSSArticleOrigin | UserArticleOrigin
 
+export interface ArticleEnhancement {
+  summary: string
+  keywords: string[]
+  topics: string[]
+  generated_at: string
+}
+
 export interface ArticleItem {
   id: number
   title: string
   excerpt: string
   published_at: string
   origin: ArticleOrigin
+  enhancement: ArticleEnhancement | null
 }
 
 export interface ArticlePage {
