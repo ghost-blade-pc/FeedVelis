@@ -27,11 +27,11 @@ func BuildRetrievalDocument(version string, revision RevisionInput, content Gene
 
 func ValidateVector(vector []float64, dimensions int) error {
 	if len(vector) == 0 || len(vector) != dimensions {
-		return invalidOutput("Embedding 向量为空或维度不符", nil)
+		return invalidOutput(ReasonVectorDimensions, "Embedding 向量为空或维度不符", nil)
 	}
 	for _, value := range vector {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return invalidOutput("Embedding 向量包含非有限数值", nil)
+			return invalidOutput(ReasonVectorNonFinite, "Embedding 向量包含非有限数值", nil)
 		}
 	}
 	return nil

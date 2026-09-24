@@ -13,19 +13,44 @@ func TestParseGeneratedContentStrictValidation(t *testing.T) {
 	if err != nil || valid.Keywords[0] != "Go" {
 		t.Fatalf("合法结果: %+v err=%v", valid, err)
 	}
-	tests := []string{
-		"```json\n{\"summary\":\"摘要\",\"keywords\":[\"k\"],\"topics\":[\"t\"]}\n```",
-		`{"summary":"摘要","keywords":["k"],"topics":["t"],"extra":true}`,
-		`{"summary":"","keywords":["k"],"topics":["t"]}`,
-		`{"summary":"摘要","keywords":[],"topics":["t"]}`,
-		`{"summary":"摘要","keywords":["Go"," go "],"topics":["t"]}`,
-		`{"summary":"摘要","keywords":["012345678"],"topics":["t"]}`,
+	tests := []struct {
+		raw, reason string
+	}{
+		{"```json\n{\"summary\":\"摘要\",\"keywords\":[\"k\"],\"topics\":[\"t\"]}\n```", ReasonJSONSyntax},
+		{`{"summary":"摘要","keywords":["k"],"topics":["t"]} {}`, ReasonExtraContent},
+		{`{"summary":"摘要","keywords":["k"],"topics":["t"],"extra":true}`, ReasonUnknownField},
+		{`{"summary":"","keywords":["k"],"topics":["t"]}`, ReasonSummaryEmpty},
+		{`{"summary":"这是一个超过二十个字符的摘要文本而且仍然继续增长","keywords":["k"],"topics":["t"]}`, ReasonSummaryTooLong},
+		{`{"summary":"摘\u0001要","keywords":["k"],"topics":["t"]}`, ReasonControlCharacter},
+		{`{"summary":"摘要","keywords":[],"topics":["t"]}`, ReasonLabelCount},
+		{`{"summary":"摘要","keywords":["Go"," go "],"topics":["t"]}`, ReasonDuplicateLabel},
+		{`{"summary":"摘要","keywords":["012345678"],"topics":["t"]}`, ReasonLabelTooLong},
 	}
-	for _, raw := range tests {
-		if _, err := ParseGeneratedContent([]byte(raw), testLimits); err == nil {
-			t.Fatalf("应拒绝: %s", raw)
+	for _, tc := range tests {
+		if _, err := ParseGeneratedContent([]byte(tc.raw), testLimits); err == nil {
+			t.Fatalf("应拒绝: %s", tc.raw)
 		} else if code, _ := ErrorClassification(err); code != ErrorInvalidOutput {
 			t.Fatalf("错误分类=%s", code)
+		} else if reason := ErrorReason(err); reason != tc.reason {
+			t.Fatalf("raw=%s reason=%s want=%s", tc.raw, reason, tc.reason)
+		}
+	}
+}
+
+func TestValidateMapSummaryUsesStableReasons(t *testing.T) {
+	if value, err := ValidateMapSummary("  合法摘要  ", 8); err != nil || value != "合法摘要" {
+		t.Fatalf("合法 Map 摘要=%q err=%v", value, err)
+	}
+	for _, tc := range []struct {
+		value, reason string
+	}{
+		{"", ReasonSummaryEmpty},
+		{"超过限制", ReasonSummaryTooLong},
+		{"控\u0001制", ReasonControlCharacter},
+	} {
+		_, err := ValidateMapSummary(tc.value, 3)
+		if err == nil || ErrorReason(err) != tc.reason {
+			t.Fatalf("value=%q reason=%q err=%v", tc.value, ErrorReason(err), err)
 		}
 	}
 }

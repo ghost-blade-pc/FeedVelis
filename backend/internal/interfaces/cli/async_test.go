@@ -20,9 +20,11 @@ type backfillFake struct {
 type aiBackfillFake struct {
 	request enrichmentApp.BackfillRequest
 	report  enrichmentApp.BackfillReport
+	runs    int
 }
 
 func (f *aiBackfillFake) Run(_ context.Context, request enrichmentApp.BackfillRequest) (enrichmentApp.BackfillReport, error) {
+	f.runs++
 	f.request = request
 	return f.report, nil
 }
@@ -35,8 +37,47 @@ func TestAIBackfillRequiresBoundedExplicitSelectionAndSupportsDryRun(t *testing.
 	if err != nil || !fake.request.DryRun || fake.request.Limit != 3 || !strings.Contains(output.String(), "created=2 skipped=1 failed=0 has-more=true dry-run=true") {
 		t.Fatalf("request=%+v output=%q err=%v", fake.request, output.String(), err)
 	}
+	if fake.request.Order != "oldest" {
+		t.Fatalf("默认顺序=%q", fake.request.Order)
+	}
 	if err := runner.Run(context.Background(), []string{"ai", "backfill", "-stage", "all", "-mode", "missing-only"}); err == nil {
-		t.Fatal("缺少 limit 应拒绝")
+		t.Fatal("缺少范围选择器应拒绝")
+	}
+}
+
+func TestAIBackfillSupportsArticleNewestAndConfirmedAll(t *testing.T) {
+	fake := &aiBackfillFake{}
+	runner := New(Options{AIBackfill: fake, AIGenerationProfile: "g-v2", AIEmbeddingProfile: "e-v2"})
+	ctx := context.Background()
+	if err := runner.Run(ctx, []string{"ai", "backfill", "-stage", "generation", "-mode", "missing-only", "-article-id", "324"}); err != nil || fake.request.ArticleID != 324 {
+		t.Fatalf("article request=%+v err=%v", fake.request, err)
+	}
+	if err := runner.Run(ctx, []string{"ai", "backfill", "-stage", "generation", "-mode", "missing-only", "-limit", "5", "-order", "newest"}); err != nil || fake.request.Order != "newest" || fake.request.Limit != 5 {
+		t.Fatalf("newest request=%+v err=%v", fake.request, err)
+	}
+	if err := runner.Run(ctx, []string{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-all", "-confirm-all"}); err != nil || !fake.request.All || !fake.request.ConfirmAll {
+		t.Fatalf("all request=%+v err=%v", fake.request, err)
+	}
+	if err := runner.Run(ctx, []string{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-all", "-dry-run"}); err != nil || !fake.request.All || !fake.request.DryRun {
+		t.Fatalf("all dry-run request=%+v err=%v", fake.request, err)
+	}
+}
+
+func TestAIBackfillRejectsUnsafeSelectorCombinationsBeforeCallingService(t *testing.T) {
+	cases := [][]string{
+		{"ai", "backfill", "-stage", "all", "-mode", "missing-only"},
+		{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-article-id", "1", "-limit", "2"},
+		{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-article-id", "1", "-order", "newest"},
+		{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-limit", "2", "-order", "random"},
+		{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-all"},
+		{"ai", "backfill", "-stage", "all", "-mode", "missing-only", "-limit", "2", "-confirm-all"},
+	}
+	for _, args := range cases {
+		fake := &aiBackfillFake{}
+		err := New(Options{AIBackfill: fake, AIGenerationProfile: "g", AIEmbeddingProfile: "e"}).Run(context.Background(), args)
+		if err == nil || fake.runs != 0 {
+			t.Fatalf("args=%v runs=%d err=%v", args, fake.runs, err)
+		}
 	}
 }
 

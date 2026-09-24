@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -14,6 +15,7 @@ type ActiveProfile struct {
 	WorkflowVersion, PromptVersion  string
 	InputVersion                    string
 	Dimensions                      int
+	StructuredOutput                string
 	MaxAttempts, AuditTokenBudget   int
 	Timeout, StageBudget            time.Duration
 }
@@ -35,6 +37,7 @@ type ClaimedTask struct {
 	Revision                            RevisionInput
 	GenerationProfile, EmbeddingProfile *ActiveProfile
 	LeaseExpiresAt                      time.Time
+	GenerationRepairUsed                bool
 }
 
 type GenerationResult struct {
@@ -72,6 +75,7 @@ type ExecutionStore interface {
 	SaveEmbedding(context.Context, ClaimedTask, EmbeddingResult, time.Time) (bool, error)
 	Fail(context.Context, FailureUpdate) (bool, error)
 	RecordCalls(context.Context, ClaimedTask, ActiveProfile, []CallRecord, time.Time) error
+	ReserveGenerationRepair(context.Context, ClaimedTask, time.Time) (bool, error)
 }
 
 type ExecutorPolicy struct {
@@ -79,6 +83,8 @@ type ExecutorPolicy struct {
 	GenerationBackoffMin, GenerationBackoffMax                     time.Duration
 	EmbeddingBackoffMin, EmbeddingBackoffMax                       time.Duration
 	ChunkChars, MaxChunks, SingleInputChars, MaxCalls, Concurrency int
+	MapSummaryChars                                                int
+	RepairInputChars                                               int
 	MaxOutputTokens                                                int
 	OutputLimits                                                   OutputLimits
 	EmbeddingBodyChars                                             int
@@ -87,6 +93,7 @@ type ExecutorPolicy struct {
 type Executor struct {
 	store                 ExecutionStore
 	generator             Generator
+	repairer              OutputRepairer
 	embedder              Embedder
 	generation, embedding *ActiveProfile
 	policy                ExecutorPolicy
@@ -103,14 +110,14 @@ type Observer interface {
 
 func (e *Executor) WithObserver(observer Observer) *Executor { e.observer = observer; return e }
 
-func NewExecutor(store ExecutionStore, generator Generator, embedder Embedder, generation, embedding *ActiveProfile, policy ExecutorPolicy, now func() time.Time, jitter func(time.Duration) time.Duration) *Executor {
+func NewExecutor(store ExecutionStore, generator Generator, repairer OutputRepairer, embedder Embedder, generation, embedding *ActiveProfile, policy ExecutorPolicy, now func() time.Time, jitter func(time.Duration) time.Duration) *Executor {
 	if now == nil {
 		now = time.Now
 	}
 	if jitter == nil {
 		jitter = func(d time.Duration) time.Duration { return d }
 	}
-	return &Executor{store: store, generator: generator, embedder: embedder, generation: generation, embedding: embedding, policy: policy, now: now, jitter: jitter}
+	return &Executor{store: store, generator: generator, repairer: repairer, embedder: embedder, generation: generation, embedding: embedding, policy: policy, now: now, jitter: jitter}
 }
 
 func (e *Executor) ProcessOne(ctx context.Context, owner string) (bool, error) {
@@ -144,9 +151,15 @@ func (e *Executor) runGeneration(ctx context.Context, task ClaimedTask) error {
 	}
 	request := GenerationRequest{Revision: prepared.Normalized, InputHash: prepared.Hash, Chunks: chunks, InputTruncated: truncated,
 		PromptVersion: task.GenerationProfile.PromptVersion, WorkflowVersion: task.GenerationProfile.WorkflowVersion,
-		MaxOutputTokens: e.policy.MaxOutputTokens, MaxCalls: e.policy.MaxCalls, Concurrency: e.policy.Concurrency,
+		MaxOutputTokens: e.policy.MaxOutputTokens, MaxCalls: e.policy.MaxCalls, Concurrency: e.policy.Concurrency, MapSummaryChars: e.policy.MapSummaryChars,
 		TotalTimeout: task.GenerationProfile.StageBudget, AuditTokenBudget: task.GenerationProfile.AuditTokenBudget, Limits: e.policy.OutputLimits}
-	response, callErr := e.generator.Generate(ctx, request)
+	stageCtx := ctx
+	var cancel context.CancelFunc
+	if task.GenerationProfile.StageBudget > 0 {
+		stageCtx, cancel = context.WithTimeout(ctx, task.GenerationProfile.StageBudget)
+		defer cancel()
+	}
+	response, callErr := e.generator.Generate(stageCtx, request)
 	if err := e.store.RecordCalls(ctx, task, *task.GenerationProfile, response.Calls, e.now().UTC()); err != nil {
 		return err
 	}
@@ -154,8 +167,46 @@ func (e *Executor) runGeneration(ctx context.Context, task ClaimedTask) error {
 		e.observer.Calls(task, response.Calls)
 	}
 	if callErr != nil {
-		code, retryable := ErrorClassification(callErr)
-		return e.finishFailure(ctx, task, code, retryable, safeFailureMessage(code))
+		if response.Candidate == nil || e.repairer == nil || task.GenerationRepairUsed {
+			code, retryable := ErrorClassification(callErr)
+			return e.finishFailure(ctx, task, code, retryable, safeFailureMessage(code))
+		}
+		if utf8.RuneCountInString(response.Candidate.Raw) > e.policy.RepairInputChars {
+			return e.finishFailure(ctx, task, ErrorInvalidOutput, true, safeFailureMessage(ErrorInvalidOutput))
+		}
+		if len(response.Calls)+1 > e.policy.MaxCalls || knownTokenUsage(response.Calls)+e.policy.MaxOutputTokens > task.GenerationProfile.AuditTokenBudget {
+			return e.finishFailure(ctx, task, ErrorBudgetExceeded, false, safeFailureMessage(ErrorBudgetExceeded))
+		}
+		if stageCtx.Err() != nil {
+			return e.finishFailure(ctx, task, ErrorTimeout, true, safeFailureMessage(ErrorTimeout))
+		}
+		reserved, err := e.store.ReserveGenerationRepair(ctx, task, e.now().UTC())
+		if err != nil {
+			return err
+		}
+		if !reserved {
+			if e.observer != nil {
+				e.observer.Finished(task, "stale", "")
+			}
+			return nil
+		}
+		repair, repairErr := e.repairer.Repair(stageCtx, RepairRequest{Candidate: *response.Candidate, PromptVersion: task.GenerationProfile.PromptVersion,
+			WorkflowVersion: task.GenerationProfile.WorkflowVersion, MaxOutputTokens: e.policy.MaxOutputTokens, Limits: e.policy.OutputLimits})
+		if err := e.store.RecordCalls(ctx, task, *task.GenerationProfile, repair.Calls, e.now().UTC()); err != nil {
+			return err
+		}
+		if e.observer != nil {
+			e.observer.Calls(task, repair.Calls)
+		}
+		allCalls := append(append([]CallRecord(nil), response.Calls...), repair.Calls...)
+		if repairErr != nil {
+			code, retryable := ErrorClassification(repairErr)
+			return e.finishFailure(ctx, task, code, retryable, safeFailureMessage(code))
+		}
+		if usageExceeds(allCalls, task.GenerationProfile.AuditTokenBudget) {
+			return e.finishFailure(ctx, task, ErrorBudgetExceeded, false, "generation Token 审计预算已超出")
+		}
+		response = repair
 	}
 	if usageExceeds(response.Calls, task.GenerationProfile.AuditTokenBudget) {
 		return e.finishFailure(ctx, task, ErrorBudgetExceeded, false, "generation Token 审计预算已超出")
@@ -171,6 +222,16 @@ func (e *Executor) runGeneration(ctx context.Context, task ClaimedTask) error {
 		}
 	}
 	return err
+}
+
+func knownTokenUsage(calls []CallRecord) int {
+	total := 0
+	for _, call := range calls {
+		if call.Usage.TotalTokens != nil {
+			total += *call.Usage.TotalTokens
+		}
+	}
+	return total
 }
 
 func (e *Executor) runEmbedding(ctx context.Context, task ClaimedTask) error {

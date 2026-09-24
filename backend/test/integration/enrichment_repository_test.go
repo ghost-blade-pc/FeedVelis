@@ -18,7 +18,7 @@ func TestEnrichmentRepositoryLeaseFencingAndStageCommits(t *testing.T) {
 	seedAIUpgradeTasks(t, env)
 	repository := postgres.NewEnrichmentRepository(env.pool)
 	now := time.Now().UTC()
-	gen := &enrichment.ActiveProfile{Provider: "stub", Model: "chat", ProfileVersion: "g-v1", WorkflowVersion: "w-v1", PromptVersion: "p-v1", MaxAttempts: 3, AuditTokenBudget: 100, StageBudget: time.Minute}
+	gen := &enrichment.ActiveProfile{Provider: "stub", Model: "chat", ProfileVersion: "g-v1", WorkflowVersion: "w-v1", PromptVersion: "p-v1", StructuredOutput: "prompt", MaxAttempts: 3, AuditTokenBudget: 100, StageBudget: time.Minute}
 	embed := &enrichment.ActiveProfile{Provider: "stub", Model: "embed", ProfileVersion: "e-v1", InputVersion: "i-v1", Dimensions: 2, MaxAttempts: 3, AuditTokenBudget: 100, StageBudget: time.Minute}
 
 	var claims [2]*enrichment.ClaimedTask
@@ -68,6 +68,24 @@ func TestEnrichmentRepositoryLeaseFencingAndStageCommits(t *testing.T) {
 	call := enrichment.CallRecord{Kind: "generation_single", InputHash: strings.Repeat("c", 64), Status: "succeeded", Duration: time.Millisecond}
 	if err := repository.RecordCalls(context.Background(), *task, *gen, []enrichment.CallRecord{call}, now); err != nil {
 		t.Fatal(err)
+	}
+	invalidCall := enrichment.CallRecord{Kind: "generation_reduce", InputHash: strings.Repeat("e", 64), Status: "failed", ErrorCode: enrichment.ErrorInvalidOutput,
+		ErrorBrief: "模型输出未通过严格校验", ErrorReason: enrichment.ReasonUnknownField, Duration: time.Millisecond}
+	if err := repository.RecordCalls(context.Background(), *task, *gen, []enrichment.CallRecord{invalidCall}, now); err != nil {
+		t.Fatal(err)
+	}
+	var errorCode, errorMessage, structuredMode, errorReason string
+	if err := env.pool.QueryRow(context.Background(), `SELECT error_code,error_message,structured_output_mode,error_reason FROM velis.ai_model_calls
+WHERE task_id=$1 AND call_kind='generation_reduce'`, task.ID).Scan(&errorCode, &errorMessage, &structuredMode, &errorReason); err != nil {
+		t.Fatal(err)
+	}
+	if errorCode != string(enrichment.ErrorInvalidOutput) || errorMessage != "模型输出未通过严格校验" || structuredMode != "prompt" || errorReason != enrichment.ReasonUnknownField {
+		t.Fatalf("非法输出审计错误: %s/%s/%s/%s", errorCode, errorMessage, structuredMode, errorReason)
+	}
+	for _, forbidden := range []string{"正文", "Prompt", "原始输出", "secret"} {
+		if strings.Contains(errorMessage, forbidden) || strings.Contains(errorReason, forbidden) {
+			t.Fatalf("非法输出审计泄露 %q", forbidden)
+		}
 	}
 	result := enrichment.GenerationResult{ID: "72000000-0000-0000-0000-000000000001", ArticleID: task.ArticleID, RevisionID: task.RevisionID, Profile: *gen, InputHash: strings.Repeat("d", 64), Content: enrichment.GeneratedContent{Summary: "摘要", Keywords: []string{"词"}, Topics: []string{"主题"}}, GeneratedAt: now}
 	ok, err := repository.SaveGeneration(context.Background(), *task, result, true, now.Add(time.Second))
@@ -121,7 +139,7 @@ VALUES(7101,7111,'75000000-0000-0000-0000-000000000001','75000000-0000-0000-0000
 		t.Fatal(err)
 	}
 	repository := postgres.NewEnrichmentRepository(env.pool)
-	gen := &enrichment.ActiveProfile{Provider: "stub", Model: "new-chat", ProfileVersion: "g-new", WorkflowVersion: "w2", PromptVersion: "p2", MaxAttempts: 2}
+	gen := &enrichment.ActiveProfile{Provider: "stub", Model: "new-chat", ProfileVersion: "g-new", WorkflowVersion: "w2", PromptVersion: "p2", StructuredOutput: "prompt", MaxAttempts: 2}
 	embed := &enrichment.ActiveProfile{Provider: "stub", Model: "new-embed", ProfileVersion: "e-new", InputVersion: "i2", Dimensions: 2, MaxAttempts: 2}
 	task, err := repository.Claim(ctx, enrichment.ClaimRequest{Owner: "worker", Lease: time.Minute, Generation: gen, Embedding: embed, Now: now})
 	if err != nil || task == nil {
@@ -155,7 +173,7 @@ func TestEnrichmentRepositoryRejectsExpiredAndChangedGeneration(t *testing.T) {
 	seedAIUpgradeTasks(t, env)
 	repository := postgres.NewEnrichmentRepository(env.pool)
 	now := time.Now().UTC()
-	gen := &enrichment.ActiveProfile{Provider: "stub", Model: "chat", ProfileVersion: "g-v1", WorkflowVersion: "w-v1", PromptVersion: "p-v1", MaxAttempts: 3}
+	gen := &enrichment.ActiveProfile{Provider: "stub", Model: "chat", ProfileVersion: "g-v1", WorkflowVersion: "w-v1", PromptVersion: "p-v1", StructuredOutput: "prompt", MaxAttempts: 3}
 	task, err := repository.Claim(context.Background(), enrichment.ClaimRequest{Owner: "worker", Lease: time.Second, Generation: gen, Now: now})
 	if err != nil || task == nil {
 		t.Fatalf("claim=%+v err=%v", task, err)
@@ -173,6 +191,62 @@ func TestEnrichmentRepositoryRejectsExpiredAndChangedGeneration(t *testing.T) {
 	var count int
 	if err := env.pool.QueryRow(context.Background(), `SELECT count(*) FROM velis.ai_generation_results WHERE id=$1`, result.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("stale 结果被保存 count=%d err=%v", count, err)
+	}
+}
+
+func TestEnrichmentRepositoryRepairReservationIsAtomicAndSurvivesLeaseRecovery(t *testing.T) {
+	env := newTestEnv(t)
+	env.resetArticles(t)
+	env.resetAccounts(t)
+	seedAIUpgradeTasks(t, env)
+	ctx := context.Background()
+	repository := postgres.NewEnrichmentRepository(env.pool)
+	now := time.Now().UTC()
+	gen := &enrichment.ActiveProfile{Provider: "stub", Model: "chat", ProfileVersion: "g-v1", WorkflowVersion: "w-v1", PromptVersion: "p-v1", StructuredOutput: "prompt", MaxAttempts: 3}
+	task, err := repository.Claim(ctx, enrichment.ClaimRequest{Owner: "worker-a", Lease: time.Second, Generation: gen, Now: now})
+	if err != nil || task == nil || task.GenerationRepairUsed {
+		t.Fatalf("首次 claim=%+v err=%v", task, err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan bool, 2)
+	errs := make(chan error, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			reserved, reserveErr := repository.ReserveGenerationRepair(ctx, *task, now.Add(100*time.Millisecond))
+			results <- reserved
+			errs <- reserveErr
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	close(errs)
+	reservedCount := 0
+	for reserveErr := range errs {
+		if reserveErr != nil {
+			t.Fatal(reserveErr)
+		}
+	}
+	for reserved := range results {
+		if reserved {
+			reservedCount++
+		}
+	}
+	if reservedCount != 1 {
+		t.Fatalf("并发预占成功数=%d", reservedCount)
+	}
+
+	recovered, err := repository.Claim(ctx, enrichment.ClaimRequest{Owner: "worker-b", Lease: time.Minute, Generation: gen, Now: now.Add(2 * time.Second)})
+	if err != nil || recovered == nil || !recovered.GenerationRepairUsed || recovered.Attempt != 2 {
+		t.Fatalf("租约恢复未保留纠正额度: task=%+v err=%v", recovered, err)
+	}
+	if reserved, err := repository.ReserveGenerationRepair(ctx, *recovered, now.Add(3*time.Second)); err != nil || reserved {
+		t.Fatalf("恢复后不应再次预占: reserved=%t err=%v", reserved, err)
 	}
 }
 
@@ -211,7 +285,7 @@ OVERRIDING SYSTEM VALUE VALUES(7113,$1,2,'新标题','','新正文','<p>新正�
 			ctx := context.Background()
 			repository := postgres.NewEnrichmentRepository(env.pool)
 			now := time.Now().UTC()
-			profile := &enrichment.ActiveProfile{Provider: "stub", Model: "chat", ProfileVersion: "g-v1", WorkflowVersion: "w-v1", PromptVersion: "p-v1", MaxAttempts: 3}
+			profile := &enrichment.ActiveProfile{Provider: "stub", Model: "chat", ProfileVersion: "g-v1", WorkflowVersion: "w-v1", PromptVersion: "p-v1", StructuredOutput: "prompt", MaxAttempts: 3}
 			task, err := repository.Claim(ctx, enrichment.ClaimRequest{Owner: "worker", Lease: time.Minute, Generation: profile, Now: now})
 			if err != nil || task == nil {
 				t.Fatalf("claim=%+v err=%v", task, err)

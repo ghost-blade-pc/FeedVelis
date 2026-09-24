@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,33 +18,61 @@ func NewEnrichmentBackfillRepository(pool *pgxpool.Pool) *EnrichmentBackfillRepo
 	return &EnrichmentBackfillRepository{pool: pool}
 }
 
-func (r *EnrichmentBackfillRepository) Candidates(ctx context.Context, request enrichment.BackfillRequest) ([]int64, bool, error) {
-	rows, err := r.pool.Query(ctx, `SELECT a.id FROM velis.articles a
+func (r *EnrichmentBackfillRepository) MaxArticleID(ctx context.Context) (int64, error) {
+	var id int64
+	err := r.pool.QueryRow(ctx, `SELECT COALESCE(max(id),0) FROM velis.articles`).Scan(&id)
+	return id, err
+}
+
+func (r *EnrichmentBackfillRepository) Candidates(ctx context.Context, request enrichment.BackfillRequest, cursor *enrichment.BackfillCursor, limit int, maxArticleID int64) ([]enrichment.BackfillCandidate, bool, error) {
+	var cursorTime any
+	var cursorID int64
+	if cursor != nil {
+		cursorTime, cursorID = cursor.EffectivePublishedAt, cursor.ArticleID
+	}
+	cursorPredicate, order := `($7::timestamptz IS NULL OR (effective_published_at,id)>($7,$8))`, "ASC"
+	if request.Order == "newest" {
+		cursorPredicate, order = `($7::timestamptz IS NULL OR (effective_published_at,id)<($7,$8))`, "DESC"
+	}
+	query := fmt.Sprintf(`WITH facts AS (
+SELECT a.id,a.current_revision_id,COALESCE(a.source_published_at,a.published_at) AS effective_published_at,
+($1 IN ('generation','all') AND (($2='missing-only' AND s.generation_result_id IS NULL) OR ($2='outdated-only' AND s.generation_result_id IS NOT NULL AND s.generation_profile_version<>$3))) AS need_generation,
+($1 IN ('embedding','all') AND s.generation_result_id IS NOT NULL AND (($2='missing-only' AND s.embedding_result_id IS NULL) OR ($2='outdated-only' AND s.embedding_result_id IS NOT NULL AND (s.embedding_profile_version<>$4 OR NOT EXISTS(SELECT 1 FROM velis.ai_embedding_results e WHERE e.id=s.embedding_result_id AND e.generation_result_id=s.generation_result_id))))) AS need_embedding
+FROM velis.articles a
 LEFT JOIN velis.ai_current_selections s ON s.article_id=a.id AND s.revision_id=a.current_revision_id
-WHERE a.status='published' AND (
-($1 IN ('generation','all') AND (($2='missing-only' AND s.generation_result_id IS NULL) OR ($2='outdated-only' AND s.generation_result_id IS NOT NULL AND s.generation_profile_version<>$3)))
-OR ($1 IN ('embedding','all') AND s.generation_result_id IS NOT NULL AND (($2='missing-only' AND s.embedding_result_id IS NULL) OR ($2='outdated-only' AND s.embedding_result_id IS NOT NULL AND (s.embedding_profile_version<>$4 OR NOT EXISTS(SELECT 1 FROM velis.ai_embedding_results e WHERE e.id=s.embedding_result_id AND e.generation_result_id=s.generation_result_id)))))
-) ORDER BY a.id LIMIT $5`, request.Stage, request.Mode, request.GenerationProfile, request.EmbeddingProfile, request.Limit+1)
+WHERE a.status='published' AND ($5=0 OR a.id<=$5) AND ($6=0 OR a.id=$6)
+), eligible AS (
+SELECT f.* FROM facts f WHERE (f.need_generation OR f.need_embedding) AND NOT EXISTS(
+SELECT 1 FROM velis.async_tasks t WHERE t.article_id=f.id AND t.revision_id=f.current_revision_id
+AND t.status IN ('pending','running','retry_wait') AND (
+(f.need_generation AND t.stage='generation' AND t.generation_profile_version=$3 AND ($1<>'all' OR t.embedding_profile_version=$4))
+OR (NOT f.need_generation AND f.need_embedding AND t.stage='embedding' AND t.embedding_profile_version=$4)
+))
+)
+SELECT id,effective_published_at FROM eligible WHERE %s
+ORDER BY effective_published_at %s,id %s LIMIT $9`, cursorPredicate, order, order)
+	rows, err := r.pool.Query(ctx, query, request.Stage, request.Mode, request.GenerationProfile, request.EmbeddingProfile,
+		maxArticleID, request.ArticleID, cursorTime, cursorID, limit+1)
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
-	ids := make([]int64, 0, request.Limit+1)
+	candidates := make([]enrichment.BackfillCandidate, 0, limit+1)
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var candidate enrichment.BackfillCandidate
+		if err := rows.Scan(&candidate.ArticleID, &candidate.EffectivePublishedAt); err != nil {
 			return nil, false, err
 		}
-		ids = append(ids, id)
+		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	more := len(ids) > request.Limit
+	more := len(candidates) > limit
 	if more {
-		ids = ids[:request.Limit]
+		candidates = candidates[:limit]
 	}
-	return ids, more, nil
+	return candidates, more, nil
 }
 
 func (r *EnrichmentBackfillRepository) AdvanceCandidate(ctx context.Context, articleID int64, request enrichment.BackfillRequest) (bool, error) {
@@ -89,7 +119,7 @@ FROM velis.articles a LEFT JOIN velis.ai_current_selections s ON s.article_id=a.
 	if needGeneration {
 		genTarget = request.GenerationProfile
 	}
-	if needEmbedding {
+	if needEmbedding || (request.Stage == "all" && needGeneration) {
 		embedTarget = request.EmbeddingProfile
 	}
 	if err == pgx.ErrNoRows {
@@ -99,14 +129,17 @@ FROM velis.articles a LEFT JOIN velis.ai_current_selections s ON s.article_id=a.
 			return false, err
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO velis.async_tasks(id,task_type,aggregate_type,aggregate_id,article_id,revision_id,revision_no,content_hash,status,generation,observed_aggregate_version,created_at,updated_at,stage,generation_profile_version,embedding_profile_version,next_attempt_at)
-VALUES($1,'article.enrichment','article',$2,$3,$4,$5,$6,'pending',1,(SELECT lock_version FROM velis.articles WHERE id=$3),clock_timestamp(),clock_timestamp(),$7,$8,$9,clock_timestamp())`, uuid.NewString(), articleID, articleID, revisionID, revisionNo, hash, stage, genTarget, embedTarget)
+VALUES($1,'article.enrichment','article',$2,$3,$4,$5,$6,'pending',1,(SELECT lock_version FROM velis.articles WHERE id=$3),clock_timestamp(),clock_timestamp(),$7,$8,$9,clock_timestamp())`, uuid.NewString(), strconv.FormatInt(articleID, 10), articleID, revisionID, revisionNo, hash, stage, genTarget, embedTarget)
 	} else if err == nil {
 		if currentStatus == "pending" || currentStatus == "running" || currentStatus == "retry_wait" {
-			if currentStage == stage && ((stage == "generation" && currentGenProfile != nil && *currentGenProfile == request.GenerationProfile) || (stage == "embedding" && currentEmbedProfile != nil && *currentEmbedProfile == request.EmbeddingProfile)) {
+			generationMatches := stage == "generation" && currentGenProfile != nil && *currentGenProfile == request.GenerationProfile &&
+				(request.Stage != "all" || (currentEmbedProfile != nil && *currentEmbedProfile == request.EmbeddingProfile))
+			embeddingMatches := stage == "embedding" && currentEmbedProfile != nil && *currentEmbedProfile == request.EmbeddingProfile
+			if currentStage == stage && (generationMatches || embeddingMatches) {
 				return false, tx.Commit(ctx)
 			}
 		}
-		_, err = tx.Exec(ctx, `UPDATE velis.async_tasks SET generation=generation+1,stage=$2,status='pending',generation_profile_version=COALESCE($3,generation_profile_version),embedding_profile_version=COALESCE($4,embedding_profile_version),generation_attempt=0,embedding_attempt=0,next_attempt_at=clock_timestamp(),last_error_code=NULL,last_error_message=NULL,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,generation_completed_at=NULL,embedding_completed_at=NULL,completed_at=NULL,canceled_at=NULL,updated_at=clock_timestamp() WHERE id=$1`, taskID, stage, genTarget, embedTarget)
+		_, err = tx.Exec(ctx, `UPDATE velis.async_tasks SET generation=generation+1,stage=$2,status='pending',generation_profile_version=COALESCE($3,generation_profile_version),embedding_profile_version=COALESCE($4,embedding_profile_version),generation_attempt=0,embedding_attempt=0,generation_repair_used_at=NULL,next_attempt_at=clock_timestamp(),last_error_code=NULL,last_error_message=NULL,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,generation_completed_at=NULL,embedding_completed_at=NULL,completed_at=NULL,canceled_at=NULL,updated_at=clock_timestamp() WHERE id=$1`, taskID, stage, genTarget, embedTarget)
 	}
 	if err != nil {
 		return false, err

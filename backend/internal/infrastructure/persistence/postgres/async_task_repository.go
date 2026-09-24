@@ -90,7 +90,7 @@ func (r *AsyncTaskRepository) change(ctx context.Context, current asynctask.Task
 	}
 	var task asynctask.Task
 	err = tx.QueryRow(ctx, `UPDATE velis.async_tasks SET revision_id=$3,revision_no=$4,content_hash=$5,status=$6::varchar,generation=generation+1,observed_aggregate_version=$7,updated_at=$8::timestamptz,canceled_at=CASE WHEN $6::varchar='canceled' THEN $8::timestamptz ELSE NULL END,
-stage='generation',generation_profile_version=NULL,embedding_profile_version=NULL,generation_attempt=0,embedding_attempt=0,next_attempt_at=$8::timestamptz,last_error_code=NULL,last_error_message=NULL,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,generation_completed_at=NULL,embedding_completed_at=NULL,completed_at=NULL
+stage='generation',generation_profile_version=NULL,embedding_profile_version=NULL,generation_attempt=0,embedding_attempt=0,generation_repair_used_at=NULL,next_attempt_at=$8::timestamptz,last_error_code=NULL,last_error_message=NULL,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,generation_completed_at=NULL,embedding_completed_at=NULL,completed_at=NULL
 WHERE id=$1 AND generation=$2 RETURNING id::text,article_id,status,generation,revision_id,revision_no,content_hash,observed_aggregate_version`, current.ID, current.Generation, fact.RevisionID, fact.RevisionNo, fact.ContentHash, status, fact.LockVersion, now).Scan(&task.ID, &task.ArticleID, &task.Status, &task.Generation, &task.RevisionID, &task.RevisionNo, &task.ContentHash, &task.ObservedVersion)
 	if err == pgx.ErrNoRows {
 		return asynctask.Task{}, fmt.Errorf("任务 generation 已变化")

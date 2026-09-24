@@ -26,7 +26,7 @@ const usage = `用法: velis-admin <source|account|async|ai> <命令> [参数]
   account set-status -username <name> -status active|disabled
   async backfill-articles -limit <1..1000>
   async replay-dlq -limit <1..1000>
-  ai backfill -stage generation|embedding|all -mode missing-only|outdated-only -limit <1..1000> [-dry-run]`
+  ai backfill -stage generation|embedding|all -mode missing-only|outdated-only (-article-id <id> | -limit <1..1000> [-order oldest|newest] | -all [-confirm-all]) [-dry-run]`
 
 type SourceService interface {
 	AddWithInterval(context.Context, string, time.Duration) (sourceDomain.Source, bool, error)

@@ -21,7 +21,7 @@ func TestAIEnrichmentMigrationUpgradeConstraintsAndSafeDown(t *testing.T) {
 		}
 	}()
 
-	if err := runner.Steps(-1); err != nil {
+	if err := runner.Steps(-2); err != nil {
 		t.Fatalf("退回 v6: %v", err)
 	}
 	seedAIUpgradeTasks(t, env)
@@ -78,6 +78,79 @@ DELETE FROM velis.article_versions; DELETE FROM velis.articles; DELETE FROM veli
 	}
 	if err := runner.Steps(-1); err != nil {
 		t.Fatalf("空增强数据 down: %v", err)
+	}
+}
+
+func TestAIEnrichmentHardeningMigrationUpgradeConstraintsAndSafeDown(t *testing.T) {
+	env := newTestEnv(t)
+	env.resetArticles(t)
+	env.resetAccounts(t)
+	runner := newMigrationRunner(t, env.databaseURL)
+	ctx := context.Background()
+	defer func() {
+		if err := runner.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			t.Errorf("清理时恢复最新迁移: %v", err)
+		}
+	}()
+
+	if err := runner.Steps(-1); err != nil {
+		t.Fatalf("退回 v7: %v", err)
+	}
+	seedAIUpgradeTasks(t, env)
+	_, err := env.pool.Exec(ctx, `INSERT INTO velis.ai_model_calls
+(id,task_id,task_generation,stage,call_kind,attempt,provider,model,profile_version,workflow_version,prompt_version,input_hash,duration_ms,status,created_at)
+VALUES('71000000-0000-0000-0000-000000000031','71000000-0000-0000-0000-000000000011',1,'generation','generation_single',1,'stub','chat','g-v1','w-v1','p-v1',repeat('c',64),1,'succeeded',now())`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Steps(1); err != nil {
+		t.Fatalf("升级 v8: %v", err)
+	}
+
+	var repairUsed bool
+	if err := env.pool.QueryRow(ctx, `SELECT generation_repair_used_at IS NOT NULL FROM velis.async_tasks WHERE article_id=7101`).Scan(&repairUsed); err != nil || repairUsed {
+		t.Fatalf("既有任务的纠正额度状态错误: used=%t err=%v", repairUsed, err)
+	}
+	var mode *string
+	if err := env.pool.QueryRow(ctx, `SELECT structured_output_mode FROM velis.ai_model_calls WHERE id='71000000-0000-0000-0000-000000000031'`).Scan(&mode); err != nil || mode == nil || *mode != "prompt" {
+		t.Fatalf("既有生成调用模式未安全升级: mode=%v err=%v", mode, err)
+	}
+
+	_, err = env.pool.Exec(ctx, `INSERT INTO velis.ai_model_calls
+(id,task_id,task_generation,stage,call_kind,attempt,provider,model,profile_version,workflow_version,prompt_version,input_hash,duration_ms,status,error_code,error_message,structured_output_mode,error_reason,created_at)
+VALUES('71000000-0000-0000-0000-000000000032','71000000-0000-0000-0000-000000000011',1,'generation','generation_repair',1,'stub','chat','g-v1','w-v1','p-v1',repeat('d',64),1,'failed','invalid_output','输出格式非法','json_schema','json_syntax',now())`)
+	if err != nil {
+		t.Fatalf("合法纠正审计写入失败: %v", err)
+	}
+	if _, err = env.pool.Exec(ctx, `INSERT INTO velis.ai_model_calls
+(id,task_id,task_generation,stage,call_kind,attempt,provider,model,profile_version,input_hash,duration_ms,status,structured_output_mode,created_at)
+VALUES('71000000-0000-0000-0000-000000000033','71000000-0000-0000-0000-000000000011',1,'generation','generation_single',1,'stub','chat','g-v1',repeat('e',64),1,'succeeded','provider_magic',now())`); err == nil {
+		t.Fatal("非法结构化输出模式必须被约束拒绝")
+	}
+	if _, err = env.pool.Exec(ctx, `INSERT INTO velis.ai_model_calls
+(id,task_id,task_generation,stage,call_kind,attempt,provider,model,profile_version,input_hash,duration_ms,status,error_code,structured_output_mode,error_reason,created_at)
+VALUES('71000000-0000-0000-0000-000000000034','71000000-0000-0000-0000-000000000011',1,'generation','generation_single',1,'stub','chat','g-v1',repeat('f',64),1,'failed','invalid_output','prompt','包含 原文',now())`); err == nil {
+		t.Fatal("非安全原因必须被约束拒绝")
+	}
+	if _, err = env.pool.Exec(ctx, `UPDATE velis.async_tasks SET generation_repair_used_at=now() WHERE article_id=7101`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runner.Steps(-1); err == nil || !strings.Contains(err.Error(), "拒绝回滚 AI 内容增强加固迁移") {
+		t.Fatalf("存在纠正数据时 down 应拒绝，实际: %v", err)
+	}
+	if err := runner.Force(8); err != nil {
+		t.Fatalf("恢复失败迁移版本: %v", err)
+	}
+	if _, err := env.pool.Exec(ctx, `DELETE FROM velis.ai_model_calls; UPDATE velis.async_tasks SET generation_repair_used_at=NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Steps(-1); err != nil {
+		t.Fatalf("无纠正数据 down: %v", err)
+	}
+	if _, err := env.pool.Exec(ctx, `DELETE FROM velis.async_tasks; DELETE FROM velis.article_versions;
+DELETE FROM velis.articles; DELETE FROM velis.users WHERE username='ai_migration_user'`); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -119,15 +119,15 @@ func Default() Config {
 		Outbox:   OutboxConfig{RetentionRaw: "168h", CleanupRaw: "1h", CleanupBatch: 500},
 		AI: AIConfig{
 			Generation: GenerationConfig{
-				Profile:         ModelProfileConfig{ProfileVersion: "generation-v1", TimeoutRaw: "30s", BudgetRaw: "2m"},
-				WorkflowVersion: "hierarchical-v1", PromptVersion: "summary-v1",
-				SingleInputChars: 12000, ChunkChars: 6000, MaxChunks: 8, ChunkConcurrency: 2,
+				Profile:         ModelProfileConfig{ProfileVersion: "generation-v2", TimeoutRaw: "30s", BudgetRaw: "2m"},
+				WorkflowVersion: "hierarchical-v2", PromptVersion: "summary-v2", StructuredOutput: "prompt", MaxTokensParam: "max_tokens",
+				SingleInputChars: 12000, ChunkChars: 6000, MapSummaryChars: 800, RepairInputChars: 16000, MaxChunks: 8, ChunkConcurrency: 2,
 				MaxCalls: 9, MaxAttempts: 3, BackoffMinRaw: "5s", BackoffMaxRaw: "5m",
-				MaxOutputTokens: 1200, AuditTokenBudget: 20000, SummaryMaxChars: 1000,
+				MaxOutputTokens: 3072, AuditTokenBudget: 20000, SummaryMaxChars: 1000,
 				KeywordMaxCount: 12, TopicMaxCount: 5, LabelMaxChars: 64,
 			},
 			Embedding: EmbeddingConfig{
-				Profile:      ModelProfileConfig{ProfileVersion: "embedding-v1", TimeoutRaw: "20s", BudgetRaw: "30s"},
+				Profile:      ModelProfileConfig{ProfileVersion: "embedding-v2", TimeoutRaw: "20s", BudgetRaw: "30s"},
 				InputVersion: "retrieval-document-v1", MaxInputChars: 12000, MaxAttempts: 3,
 				BackoffMinRaw: "5s", BackoffMaxRaw: "5m", AuditTokenBudget: 10000,
 			},

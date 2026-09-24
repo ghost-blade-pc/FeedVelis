@@ -55,3 +55,24 @@
 - [x] 8.3 增加使用确定性 ChatModel/Embedder 的 I3 可复现演示或 E2E，验证发布立即进入 latest、随后出现 AI 摘要/标签、向量已持久化而无检索 API、编辑后旧结果立即隐藏，以及无模型配置仍可发布阅读。
 - [x] 8.4 更新 README、配置示例、迁移/回滚说明和 Roadmap 当前状态，明确已实现 AI 增强但 OpenSearch/检索仍未实现，并核对所有仓库文档、注释、日志和错误消息使用简体中文。
 - [x] 8.5 运行 `openspec validate add-ai-content-enrichment --strict`、迁移测试、后端单元/竞态/构建、Web lint/test/build 和适用的真实依赖测试；记录任何因环境缺失而未执行的验证，且不得把跳过描述为通过。
+
+## 9. 真实 Provider 验收缺陷修复
+
+- [x] 9.1 为 generation 增加默认 `prompt` 的 `prompt|json_object|json_schema` 模式、Map 摘要字符上限和纠正输入字符上限，为 Embedding 增加默认关闭的 `request_dimensions`；同步 YAML、`VELIS_*`、Compose、`.env.example` 与 README，并以默认兼容、枚举拒绝、边界和 profile 脱敏测试验证。
+- [x] 9.2 新增 `000008` migration，为 task generation 增加 nullable 纠正额度使用时间，扩展 `generation_repair` 调用审计及结构化模式/安全原因元数据；以既有 `000007` 数据升级、generation 变化重置、约束、空库 up/down 和含修复数据受保护回滚测试验证，且不得改写旧迁移。
+- [x] 9.3 从同一输出边界生成完整最终 Prompt 与 JSON Schema，将标题和正文编码为不可信数据，并为 Map 输出增加明确长度约束及本地校验；以长 RSS、Unicode、多段文本、提示注入、过长 Map 和三类结构化模式的确定性单元测试验证。
+- [x] 9.4 将纯文本 Map ChatModel 与 Final/Repair ChatModel 分离，仅对后者应用显式 response format，并以 `httptest` 验证 `prompt` 不发送可选参数、`json_object`/`json_schema` 请求正确、Map 始终为文本、Provider 不支持时不静默降级且全部结果仍经严格本地校验。
+- [x] 9.5 将首次生成与格式纠正拆为应用端口，实现调用审计后、模型调用前的短事务额度预占，并让一个 attempt 共享 deadline、调用数和 Token 预算；以同一 generation 多 attempt 至多一次、预算不足不预占、预占后崩溃、租约恢复、多 Worker、迟到 token、新 generation 重置和纠正后二次严格校验测试验证。
+- [x] 9.6 为严格输出校验增加固定低基数安全原因，并统一 ChatModel、Embedding 底层 API/Request、context 与 net 错误分类；以 JSON 语法/额外内容/未知字段/摘要和标签边界以及 400/401/403/408/429/5xx、DNS、连接、超时测试验证审计可诊断且不含正文、Prompt、原始输出、Provider 原始错误体或密钥。
+- [x] 9.7 调整 Embedding 适配器，使预期维数始终用于本地有限数校验、仅在 `request_dimensions=true` 时发送请求参数；以固定 1024 维模型、可变维数模型、省略参数、错误维度和 generation 已公开但 Embedding 失败的适配器/应用测试验证。
+- [x] 9.8 增加真实 PostgreSQL/RabbitMQ 的长 RSS E2E，覆盖 single、map-reduce、一次纠正、失败后有界 `missing-only`/`outdated-only` 恢复和 1024 维 Embedding；升级 generation/embedding profile 示例并运行 OpenSpec strict、迁移、后端单元/竞态/构建、Web 与适用真实依赖测试，明确记录未执行的真实模型验证。
+
+- [x] 9.9 修复瞬时失败与上层取消的分类和重试：把 context 取消（含 `url.Error` 包装）先于 net 判定归一化为可重试的 `canceled`，并在同一 attempt 内只就地重试传输与 Provider 侧瞬时失败的分块，受剩余调用数、Token 审计预算和阶段取消约束；以取消分类与脱敏、只重试失败分块且复用同一分块输入、调用数预算不足不重试、永久错误不重试的确定性测试验证。
+
+- [x] 9.10 让生成输出上限真正生效：新增部署值选择输出上限参数名（默认兼容性最高的 `max_tokens`），适配器只发送所选参数名，并把默认 `max_output_tokens` 从 1200 提高到覆盖真实输出的 3072；以配置默认值/非法枚举拒绝测试和 httptest 请求体断言（两种参数名各自只出现其一）验证，同步示例 YAML、`VELIS_*`、Compose、`.env.example` 与 README 配置表。
+
+## 10. 可控的精确、排序与全量补录
+
+- [x] 10.1 扩展 AI Backfill 应用请求与 PostgreSQL Repository，支持精确 article ID、按有效发布时间稳定 `newest|oldest` 排序、游标化内部分页和排除相同目标的活跃任务；保留 failed 显式重推，并修复 `stage=all` 重新生成时同步刷新 Embedding profile，以应用及真实 PostgreSQL 测试验证并发、幂等、非公开文章和旧 profile 恢复。
+- [x] 10.2 扩展 `velis-admin ai backfill`，使 `-article-id`、`-limit`、`-all` 三类范围选择器恰好选择一种，`-order` 仅用于有限批次，非 dry-run 的 `-all` 必须带 `-confirm-all`；保持 dry-run 零写入、输出累计脱敏统计且不直接调用模型，并以 CLI 测试覆盖全部合法组合和写入前拒绝路径。
+- [x] 10.3 更新 README 与可靠异步运维说明，记录精确重试、最新优先小批量和停用后全量补齐命令及费用风险；运行 OpenSpec strict、后端单元/竞态/构建和适用真实 PostgreSQL 测试，且不在自动验证中调用真实模型。

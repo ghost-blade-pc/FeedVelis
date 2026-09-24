@@ -121,13 +121,37 @@ go run ./cmd/velis-admin -config configs/config.example.yaml source resume 1
 
 `source fetch 1 --force` 可忽略条件请求头，重新拉取并清洗内容；它仍遵循来源认领规则。正常运行时 Worker 按每个 Source 的周期自动认领。CLI 与管理员 HTTP 复用应用规则。
 
-AI profile 升级不会自动触发全量费用。管理员必须给出阶段、候选模式和数量上限；先 dry-run，再按小批执行：
+AI profile 升级不会自动触发全量费用。管理员必须在精确文章、有限批次、全量候选三种范围中恰好选择一种。可先精确重试单篇，或按有效发布时间从新到旧处理有限批次：
 
 ```bash
 cd backend
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -limit 20 -dry-run
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage generation -mode outdated-only -limit 20
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 324 -dry-run
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 324
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -limit 20 -order newest
 ```
+
+AI 停用一段时间后，可先预览没有 AI 内容增强内容的全部文章，再显式确认全量推进：
+
+```bash
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -all -dry-run
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -all -confirm-all
+```
+
+`-mode missing-only` 只为没有 AI 内容增强内容的文章补齐：当前没有生成结果的文章（`stage=all` 时连同 Embedding 一起补齐），以及已有摘要、关键词和主题但缺 Embedding 的文章；已有当前 generation 与 embedding 结果的文章不会被全量命令重算；`-article-id` 与 `-limit` 只改变范围，不绕过这一判断。要推进 profile 落后的文章请改用 `-mode outdated-only`。
+
+`-order oldest|newest` 只适用于 `-limit 1..1000`，默认 `oldest`。`-all` 固定命令开始时的文章 ID 快照并在内部短事务分页，只推进异步任务，不在 CLI 进程内调用模型；非 dry-run 必须带 `-confirm-all`。相同目标的 pending/running/retry_wait 任务会跳过，failed 任务可显式重推。全量执行可能产生大量模型费用，应先 dry-run，并检查 Token 预算、错误指标及 generation/Embedding 配置；`stage=all` 重新生成时会同时更新两个目标 profile。
+
+推进 profile 升级后，用下面的查询核对是否仍有文章停留在旧 profile，把两个版本值换成当前部署的取值：
+
+```sql
+SELECT s.article_id, s.generation_profile_version, s.embedding_profile_version
+FROM velis.ai_current_selections s
+JOIN velis.articles a ON a.id = s.article_id AND a.current_revision_id = s.revision_id
+WHERE a.status = 'published'
+  AND (s.generation_profile_version <> 'generation-v2' OR s.embedding_profile_version <> 'embedding-v2');
+```
+
+Compose 部署中执行：`docker compose exec postgres psql -U velis -d velis -c "<上面的 SQL>"`。有结果说明该文章仍是旧 profile，用 `-mode outdated-only` 精确推进；没有结果表示所有公开文章的增强结果都与当前 profile 一致。
 
 ## 当前 API
 
@@ -237,12 +261,15 @@ Compose 用户可直接在本地 `.env` 中按 [.env.example](.env.example) 的 
 | 配置 | 默认值 | 硬边界/说明 |
 | --- | --- | --- |
 | generation timeout / stage budget | 30s / 2m | 单次 1s–5m；阶段预算不小于单次且不超过 15m |
+| structured output mode | prompt | `prompt|json_object|json_schema`；只在 Provider 明确兼容时启用后两者 |
+| output token 参数名 | max_tokens | `max_tokens|max_completion_tokens`；Provider 忽略参数名时输出上限静默失效，需按实测选择 |
 | single input / chunk chars | 12000 / 6000 | 1000–100000 / 500–single input，按 Unicode 字符计 |
+| Map summary / repair input chars | 800 / 16000 | 64–4000 / 1000–100000，防止中间与纠正输入无界 |
 | max chunks / concurrency / calls | 8 / 2 / 9 | 1–64 / 1–8 / 1–65，调用数至少覆盖 map + reduce |
 | generation attempts / backoff | 3 / 5s–5m | 尝试 1–5；退避 1s–1h 且有界抖动 |
-| output / audit Token | 1200 / 20000 | 输出 64–8192；审计预算不小于输出且最多 1000000 |
+| output / audit Token | 3072 / 20000 | 输出 64–8192；审计预算不小于输出且最多 1000000 |
 | summary / keyword / topic / label | 1000 / 12 / 5 / 64 字符 | summary 最多 4000；关键词 1–12、主题 1–5、标签最多 128 |
-| Embedding timeout / stage budget | 20s / 30s | dimensions 启用时必填且为 1–65536 |
+| Embedding timeout / stage budget | 20s / 30s | dimensions 启用时必填且为 1–65536；`request_dimensions=false` 时只校验、不发送参数 |
 | Embedding input / attempts / audit Token | 12000 / 3 / 10000 | 输入 1000–100000；尝试 1–5；审计预算最多 1000000 |
 | Worker lease / poll / batch | 2m / 1s / 8 | lease 10s–10m；poll 100ms–1m；batch 1–100 |
 
@@ -255,6 +282,8 @@ Compose 用户可直接在本地 `.env` 中按 [.env.example](.env.example) 的 
 `000006_create_reliable_article_async` 创建 Outbox、消费 Inbox 与异步任务槽位。空表时可下迁移；只要存在事件、消费记录或任务，down 会拒绝执行。应用回滚前先停 Relay/Consumer、确认并备份这些表；不得用 force 或删数据绕过保护。已发布 Outbox 默认保留 7 天并由 Worker 分批清理，未发布事件不会被清理。
 
 `000007_add_ai_content_enrichment` 扩展任务阶段、租约、重试与完成状态，并创建不可变 generation/Embedding 结果、独立 current 指针和模型调用审计表。回滚前先停 AI Worker；只要存在增强结果、调用记录或任务已进入新状态，down 会明确拒绝。向量保存为 `real[]`，此阶段没有向量查询或索引。
+
+`000008_harden_ai_provider_acceptance` 增加同一任务 generation 跨重试共享的单次格式纠正额度，并为模型调用审计补充结构化输出模式与低基数安全原因。只要已经使用纠正额度或存在新调用类型/审计字段数据，down 会拒绝；应用回滚时应保留该迁移和审计事实。
 
 down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、无资产”的旧模型可表达状态时才允许回退。只要存在用户投稿、资产或第二修订，down 会在事务内明确失败。不要使用 force 或删除数据绕过保护；此时应保持数据库前滚并修复/回滚应用。
 
@@ -275,6 +304,7 @@ make integration-async
 - 已有 Domain/Application、抓取解析清洗、Hertz、CLI、配置、架构依赖与前端测试；账户领域、认证用例、HTTP 中间件、安全适配器与前端会话模块都有单测。
 - PostgreSQL 集成测试通过 `VELIS_TEST_DATABASE_URL` 启用，要求已迁移的专用 `_test` 数据库（测试基座会自动应用迁移）；测试会清空 Source/Article 与账户相关表。未设置该变量时跳过，普通 CI 通过不能代替数据库集成验证。
 - 可靠异步真实依赖测试还要求 `VELIS_TEST_RABBITMQ_URL`；`make integration-async` 在任一变量缺失时直接失败。Broker 重启演练会真实重启容器，默认跳过，需按 [可靠异步验证说明](backend/test/integration/reliable_async.md) 单独执行。
+- 推荐的新部署 profile 示例为 generation `generation-v2`（Workflow `hierarchical-v2`、Prompt `summary-v2`）与 Embedding `embedding-v2`（输入 `retrieval-document-v1`、固定维数模型示例为 1024 维）。profile 版本变化不会自动全量重算，应通过精确、有限批次或经确认的全量 backfill 显式推进。
 - 真实 MinIO 测试通过 `VELIS_TEST_MINIO_ENDPOINT`、`VELIS_TEST_MINIO_UPLOAD_ENDPOINT`、`VELIS_TEST_MINIO_ACCESS_KEY`、`VELIS_TEST_MINIO_SECRET_KEY`、`VELIS_TEST_MINIO_BUCKET` 启用；Compose CORS 测试还要求 `VELIS_TEST_MINIO_WEB_ORIGIN`。内部与公共测试端点应使用不同 authority（例如 `127.0.0.1:9000` 与 `http://localhost:9000`）；未设置内部端点时测试会明确报告跳过，不能计作通过。
 - [I2 可复现闭环脚本](web/e2e/README.md) 会在本地/`.test` API 创建临时用户、文章和 Source，验证用户直发、RSS 抓取、联合 latest、编辑冲突和作者/管理员下架；它不是生产脚本。
 - 2026-09-22 使用专用 `_test` 数据库和真实 MinIO 完成 I2 全依赖回归：PostgreSQL 集成套件、MinIO 私有 Bucket/三种图片格式/流式读取与删除测试，以及上述 8 步 HTTP 闭环均通过；临时 API、数据库和测试对象已在验证后清理。

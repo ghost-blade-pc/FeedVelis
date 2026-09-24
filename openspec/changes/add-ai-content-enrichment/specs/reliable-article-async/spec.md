@@ -103,3 +103,27 @@ Feed 调度、清理、Relay、Consumer 和已配置的内容增强执行器 SHA
 #### Scenario: 永久失败或尝试耗尽
 - **WHEN** 当前阶段发生永久错误或达到最大尝试次数
 - **THEN** 系统 SHALL 以条件写将任务置为 `failed`、保留已成功阶段的结果和稳定错误分类，并停止自动领取直到目标被显式推进
+
+### Requirement: 格式纠正额度跨重试持久且受 fencing 保护
+
+系统 SHALL 为每个内容增强 task generation 持久化至多一次的最终输出格式纠正额度；额度 SHALL 只在当前租约、当前公开修订和当前目标 profile 仍匹配时以短事务原子预占，generation attempt 重试不得恢复额度，而新修订或显式 profile 推进形成的新 task generation SHALL 获得新的独立额度。
+
+#### Scenario: 当前执行者首次预占纠正额度
+- **WHEN** 当前 generation 的有效租约执行者遇到可纠正的最终非法输出且额度尚未使用
+- **THEN** 系统 SHALL 原子标记额度已使用并在事务提交后才允许发起纠正模型调用
+
+#### Scenario: 后续 attempt 再次遇到非法输出
+- **WHEN** 同一 task generation 的后续 attempt 在纠正额度已使用后再次产生非法最终输出
+- **THEN** 系统 SHALL 拒绝再次纠正并按普通有限重试或终态规则处理
+
+#### Scenario: 预占后执行者退出
+- **WHEN** 执行者在成功预占额度后、纠正调用中或调用审计写入前退出
+- **THEN** 租约恢复后的执行者 SHALL 视额度为已使用，不得为保证成功而重复产生外部纠正调用
+
+#### Scenario: 迟到租约尝试预占额度
+- **WHEN** 租约已过期、token 已被替换、文章不再公开、当前修订已变化或目标 profile 已升级的执行者尝试预占
+- **THEN** 存储边界 SHALL 拒绝预占且不得改变当前 task generation 的额度状态
+
+#### Scenario: 新 task generation 重置额度
+- **WHEN** 新修订、重新发布或显式 profile 推进递增任务 generation
+- **THEN** 新 generation SHALL 获得一次独立纠正额度，旧 generation 的额度状态不得影响新目标

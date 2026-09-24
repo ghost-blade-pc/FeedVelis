@@ -37,8 +37,12 @@ type GenerationConfig struct {
 	Profile          ModelProfileConfig `yaml:",inline"`
 	WorkflowVersion  string             `yaml:"workflow_version"`
 	PromptVersion    string             `yaml:"prompt_version"`
+	StructuredOutput string             `yaml:"structured_output_mode"`
+	MaxTokensParam   string             `yaml:"max_tokens_parameter"`
 	SingleInputChars int                `yaml:"single_input_chars"`
 	ChunkChars       int                `yaml:"chunk_chars"`
+	MapSummaryChars  int                `yaml:"map_summary_max_chars"`
+	RepairInputChars int                `yaml:"repair_input_max_chars"`
 	MaxChunks        int                `yaml:"max_chunks"`
 	ChunkConcurrency int                `yaml:"chunk_concurrency"`
 	MaxCalls         int                `yaml:"max_calls"`
@@ -56,16 +60,17 @@ type GenerationConfig struct {
 }
 
 type EmbeddingConfig struct {
-	Profile          ModelProfileConfig `yaml:",inline"`
-	InputVersion     string             `yaml:"input_version"`
-	Dimensions       int                `yaml:"dimensions"`
-	MaxInputChars    int                `yaml:"max_input_chars"`
-	MaxAttempts      int                `yaml:"max_attempts"`
-	BackoffMinRaw    string             `yaml:"backoff_min"`
-	BackoffMaxRaw    string             `yaml:"backoff_max"`
-	BackoffMin       time.Duration      `yaml:"-"`
-	BackoffMax       time.Duration      `yaml:"-"`
-	AuditTokenBudget int                `yaml:"audit_token_budget"`
+	Profile           ModelProfileConfig `yaml:",inline"`
+	InputVersion      string             `yaml:"input_version"`
+	Dimensions        int                `yaml:"dimensions"`
+	RequestDimensions bool               `yaml:"request_dimensions"`
+	MaxInputChars     int                `yaml:"max_input_chars"`
+	MaxAttempts       int                `yaml:"max_attempts"`
+	BackoffMinRaw     string             `yaml:"backoff_min"`
+	BackoffMaxRaw     string             `yaml:"backoff_max"`
+	BackoffMin        time.Duration      `yaml:"-"`
+	BackoffMax        time.Duration      `yaml:"-"`
+	AuditTokenBudget  int                `yaml:"audit_token_budget"`
 }
 
 type AIWorkerConfig struct {
@@ -84,8 +89,10 @@ func applyAIEnvironment(cfg *Config) error {
 		&gen.Profile.APIKey: "VELIS_AI_GENERATION_API_KEY", &gen.Profile.Model: "VELIS_AI_GENERATION_MODEL",
 		&gen.Profile.ProfileVersion: "VELIS_AI_GENERATION_PROFILE_VERSION", &gen.Profile.TimeoutRaw: "VELIS_AI_GENERATION_TIMEOUT",
 		&gen.Profile.BudgetRaw: "VELIS_AI_GENERATION_BUDGET", &gen.WorkflowVersion: "VELIS_AI_GENERATION_WORKFLOW_VERSION",
-		&gen.PromptVersion: "VELIS_AI_GENERATION_PROMPT_VERSION", &gen.BackoffMinRaw: "VELIS_AI_GENERATION_BACKOFF_MIN",
-		&gen.BackoffMaxRaw: "VELIS_AI_GENERATION_BACKOFF_MAX", &embed.Profile.Provider: "VELIS_AI_EMBEDDING_PROVIDER",
+		&gen.PromptVersion: "VELIS_AI_GENERATION_PROMPT_VERSION", &gen.StructuredOutput: "VELIS_AI_GENERATION_STRUCTURED_OUTPUT_MODE",
+		&gen.MaxTokensParam: "VELIS_AI_GENERATION_MAX_TOKENS_PARAMETER",
+		&gen.BackoffMinRaw:  "VELIS_AI_GENERATION_BACKOFF_MIN",
+		&gen.BackoffMaxRaw:  "VELIS_AI_GENERATION_BACKOFF_MAX", &embed.Profile.Provider: "VELIS_AI_EMBEDDING_PROVIDER",
 		&embed.Profile.BaseURL: "VELIS_AI_EMBEDDING_BASE_URL", &embed.Profile.APIKey: "VELIS_AI_EMBEDDING_API_KEY",
 		&embed.Profile.Model: "VELIS_AI_EMBEDDING_MODEL", &embed.Profile.ProfileVersion: "VELIS_AI_EMBEDDING_PROFILE_VERSION",
 		&embed.Profile.TimeoutRaw: "VELIS_AI_EMBEDDING_TIMEOUT", &embed.Profile.BudgetRaw: "VELIS_AI_EMBEDDING_BUDGET",
@@ -97,6 +104,7 @@ func applyAIEnvironment(cfg *Config) error {
 	}
 	for target, key := range map[*int]string{
 		&gen.SingleInputChars: "VELIS_AI_GENERATION_SINGLE_INPUT_CHARS", &gen.ChunkChars: "VELIS_AI_GENERATION_CHUNK_CHARS",
+		&gen.MapSummaryChars: "VELIS_AI_GENERATION_MAP_SUMMARY_MAX_CHARS", &gen.RepairInputChars: "VELIS_AI_GENERATION_REPAIR_INPUT_MAX_CHARS",
 		&gen.MaxChunks: "VELIS_AI_GENERATION_MAX_CHUNKS", &gen.ChunkConcurrency: "VELIS_AI_GENERATION_CHUNK_CONCURRENCY",
 		&gen.MaxCalls: "VELIS_AI_GENERATION_MAX_CALLS", &gen.MaxAttempts: "VELIS_AI_GENERATION_MAX_ATTEMPTS",
 		&gen.MaxOutputTokens: "VELIS_AI_GENERATION_MAX_OUTPUT_TOKENS", &gen.AuditTokenBudget: "VELIS_AI_GENERATION_AUDIT_TOKEN_BUDGET",
@@ -109,6 +117,9 @@ func applyAIEnvironment(cfg *Config) error {
 		if err := setInt(target, key); err != nil {
 			return err
 		}
+	}
+	if err := setBool(&embed.RequestDimensions, "VELIS_AI_EMBEDDING_REQUEST_DIMENSIONS"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -142,8 +153,14 @@ func validateAIConfig(ai *AIConfig) error {
 	if gen.BackoffMin > gen.BackoffMax {
 		return errors.New("ai.generation.backoff_min 不得大于 backoff_max")
 	}
-	if gen.SingleInputChars < 1000 || gen.SingleInputChars > 100000 || gen.ChunkChars < 500 || gen.ChunkChars > gen.SingleInputChars || gen.MaxChunks < 1 || gen.MaxChunks > 64 || gen.ChunkConcurrency < 1 || gen.ChunkConcurrency > 8 || gen.MaxCalls < 1 || gen.MaxCalls > 65 || gen.MaxCalls < gen.MaxChunks+1 || gen.MaxAttempts < 1 || gen.MaxAttempts > 5 || gen.MaxOutputTokens < 64 || gen.MaxOutputTokens > 8192 || gen.AuditTokenBudget < gen.MaxOutputTokens || gen.AuditTokenBudget > 1000000 || gen.SummaryMaxChars < 1 || gen.SummaryMaxChars > 4000 || gen.KeywordMaxCount < 1 || gen.KeywordMaxCount > 12 || gen.TopicMaxCount < 1 || gen.TopicMaxCount > 5 || gen.LabelMaxChars < 1 || gen.LabelMaxChars > 128 {
+	if gen.SingleInputChars < 1000 || gen.SingleInputChars > 100000 || gen.ChunkChars < 500 || gen.ChunkChars > gen.SingleInputChars || gen.MapSummaryChars < 64 || gen.MapSummaryChars > 4000 || gen.RepairInputChars < 1000 || gen.RepairInputChars > 100000 || gen.MaxChunks < 1 || gen.MaxChunks > 64 || gen.ChunkConcurrency < 1 || gen.ChunkConcurrency > 8 || gen.MaxCalls < 1 || gen.MaxCalls > 65 || gen.MaxCalls < gen.MaxChunks+1 || gen.MaxAttempts < 1 || gen.MaxAttempts > 5 || gen.MaxOutputTokens < 64 || gen.MaxOutputTokens > 8192 || gen.AuditTokenBudget < gen.MaxOutputTokens || gen.AuditTokenBudget > 1000000 || gen.SummaryMaxChars < 1 || gen.SummaryMaxChars > 4000 || gen.KeywordMaxCount < 1 || gen.KeywordMaxCount > 12 || gen.TopicMaxCount < 1 || gen.TopicMaxCount > 5 || gen.LabelMaxChars < 1 || gen.LabelMaxChars > 128 {
 		return errors.New("ai.generation 的输入、分块、调用、尝试、输出或审计预算超出允许边界")
+	}
+	if gen.StructuredOutput != "prompt" && gen.StructuredOutput != "json_object" && gen.StructuredOutput != "json_schema" {
+		return errors.New("ai.generation.structured_output_mode 必须是 prompt、json_object 或 json_schema")
+	}
+	if gen.MaxTokensParam != "max_tokens" && gen.MaxTokensParam != "max_completion_tokens" {
+		return errors.New("ai.generation.max_tokens_parameter 必须是 max_tokens 或 max_completion_tokens")
 	}
 	if strings.TrimSpace(gen.WorkflowVersion) == "" || strings.TrimSpace(gen.PromptVersion) == "" {
 		return errors.New("ai.generation workflow_version 与 prompt_version 不能为空")

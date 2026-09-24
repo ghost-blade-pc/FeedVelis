@@ -54,9 +54,9 @@ UPDATE velis.async_tasks t SET status='running',lease_owner=$2,lease_token=$3,le
 FROM candidate c,velis.article_versions v
 WHERE t.id=c.id AND v.article_id=t.article_id AND v.id=t.revision_id
 RETURNING t.id::text,t.generation,t.stage,CASE WHEN t.stage='generation' THEN t.generation_attempt ELSE t.embedding_attempt END,
-t.article_id,t.revision_id,v.title,v.language,v.plain_text,t.lease_expires_at`, request.Now, request.Owner, token, request.Lease.String(), genVersion, embedVersion)
+t.article_id,t.revision_id,v.title,v.language,v.plain_text,t.lease_expires_at,t.generation_repair_used_at IS NOT NULL`, request.Now, request.Owner, token, request.Lease.String(), genVersion, embedVersion)
 	var task enrichment.ClaimedTask
-	err = row.Scan(&task.ID, &task.Generation, &task.Stage, &task.Attempt, &task.ArticleID, &task.RevisionID, &task.Revision.Title, &task.Revision.Language, &task.Revision.PlainText, &task.LeaseExpiresAt)
+	err = row.Scan(&task.ID, &task.Generation, &task.Stage, &task.Attempt, &task.ArticleID, &task.RevisionID, &task.Revision.Title, &task.Revision.Language, &task.Revision.PlainText, &task.LeaseExpiresAt, &task.GenerationRepairUsed)
 	if err == pgx.ErrNoRows {
 		return nil, tx.Commit(ctx)
 	}
@@ -215,6 +215,19 @@ AND CASE WHEN t.stage='generation' THEN t.generation_profile_version ELSE t.embe
 	return tag.RowsAffected() == 1, err
 }
 
+func (r *EnrichmentRepository) ReserveGenerationRepair(ctx context.Context, task enrichment.ClaimedTask, now time.Time) (bool, error) {
+	if task.GenerationProfile == nil {
+		return false, nil
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE velis.async_tasks t SET generation_repair_used_at=$4,updated_at=$4
+FROM velis.articles a
+WHERE t.id=$1 AND t.generation=$2 AND t.lease_token=$3 AND t.status='running' AND t.stage='generation'
+AND t.lease_expires_at>$4 AND t.generation_repair_used_at IS NULL AND t.revision_id=$5
+AND t.generation_profile_version=$6 AND a.id=t.article_id AND a.status='published' AND a.current_revision_id=t.revision_id`,
+		task.ID, task.Generation, task.LeaseToken, now, task.RevisionID, task.GenerationProfile.ProfileVersion)
+	return tag.RowsAffected() == 1, err
+}
+
 func (r *EnrichmentRepository) RecordCalls(ctx context.Context, task enrichment.ClaimedTask, profile enrichment.ActiveProfile, calls []enrichment.CallRecord, now time.Time) error {
 	for _, call := range calls {
 		if call.Kind == "" {
@@ -230,8 +243,12 @@ func (r *EnrichmentRepository) RecordCalls(ctx context.Context, task enrichment.
 		if call.Usage.TotalTokens != nil {
 			totalTokens = *call.Usage.TotalTokens
 		}
-		_, err := r.pool.Exec(ctx, `INSERT INTO velis.ai_model_calls(id,task_id,task_generation,stage,call_kind,attempt,provider,model,profile_version,workflow_version,prompt_version,embedding_input_version,input_hash,input_tokens,output_tokens,total_tokens,duration_ms,status,error_code,error_message,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`, uuid.NewString(), task.ID, task.Generation, task.Stage, call.Kind, task.Attempt, profile.Provider, profile.Model, profile.ProfileVersion, nullString(profile.WorkflowVersion), nullString(profile.PromptVersion), nullString(profile.InputVersion), call.InputHash, inputTokens, outputTokens, totalTokens, call.Duration.Milliseconds(), call.Status, nullErrorCode(call.ErrorCode), nullString(truncateDBError(call.ErrorBrief)), now)
+		structuredOutput := any(nil)
+		if task.Stage == "generation" {
+			structuredOutput = profile.StructuredOutput
+		}
+		_, err := r.pool.Exec(ctx, `INSERT INTO velis.ai_model_calls(id,task_id,task_generation,stage,call_kind,attempt,provider,model,profile_version,workflow_version,prompt_version,embedding_input_version,input_hash,input_tokens,output_tokens,total_tokens,duration_ms,status,error_code,error_message,structured_output_mode,error_reason,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, uuid.NewString(), task.ID, task.Generation, task.Stage, call.Kind, task.Attempt, profile.Provider, profile.Model, profile.ProfileVersion, nullString(profile.WorkflowVersion), nullString(profile.PromptVersion), nullString(profile.InputVersion), call.InputHash, inputTokens, outputTokens, totalTokens, call.Duration.Milliseconds(), call.Status, nullErrorCode(call.ErrorCode), nullString(truncateDBError(call.ErrorBrief)), structuredOutput, nullString(call.ErrorReason), now)
 		if err != nil {
 			return err
 		}

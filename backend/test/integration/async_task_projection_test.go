@@ -67,6 +67,9 @@ VALUES($1,'projector_author','作者','hash','user','active',$2,$2)`, authorID, 
 		}
 	}
 	assertProjectedTask(t, env, published.Article, "pending", 1, 1)
+	if _, err := env.pool.Exec(ctx, `UPDATE velis.async_tasks SET generation_repair_used_at=now() WHERE article_id=$1`, published.Article.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	clock.now = now.Add(time.Minute)
 	revised, _, err := articles.Update(ctx, articleApp.UpdateUserArticleCommand{AuthorUserID: authorID, ArticleID: published.Article.ID,
@@ -80,6 +83,10 @@ VALUES($1,'projector_author','作者','hash','user','active',$2,$2)`, authorID, 
 		t.Fatal(err)
 	}
 	assertProjectedTask(t, env, revised.Article, "pending", 2, revised.Article.LockVersion)
+	var repairUsed bool
+	if err := env.pool.QueryRow(ctx, `SELECT generation_repair_used_at IS NOT NULL FROM velis.async_tasks WHERE article_id=$1`, revised.Article.ID).Scan(&repairUsed); err != nil || repairUsed {
+		t.Fatalf("新修订 generation 未重置纠正额度: used=%t err=%v", repairUsed, err)
+	}
 
 	clock.now = now.Add(2 * time.Minute)
 	offline, _, err := articles.Offline(ctx, articleApp.UserArticleStateCommand{AuthorUserID: authorID, ArticleID: revised.Article.ID,

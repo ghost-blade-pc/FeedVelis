@@ -50,20 +50,27 @@ ai:
     base_url: ""
     api_key: ""
     model: ""
-    profile_version: generation-v1
+    profile_version: generation-v2
     timeout: 30s
     budget: 2m
-    workflow_version: hierarchical-v1
-    prompt_version: summary-v1
+    workflow_version: hierarchical-v2
+    prompt_version: summary-v2
+    # 默认仅通过 Prompt 请求严格 JSON；确认 Provider 兼容后可选 json_object 或 json_schema。
+    structured_output_mode: prompt
+    # 输出上限参数名，默认 max_tokens（兼容性最高）；Provider 只认 max_completion_tokens 时改这里。
+    # 参数名不匹配时 Provider 会忽略上限，导致输出无界、单次调用拖到超时。
+    max_tokens_parameter: max_tokens
     single_input_chars: 12000
     chunk_chars: 6000
+    map_summary_max_chars: 800
+    repair_input_max_chars: 16000
     max_chunks: 8
     chunk_concurrency: 2
     max_calls: 9
     max_attempts: 3
     backoff_min: 5s
     backoff_max: 5m
-    max_output_tokens: 1200
+    max_output_tokens: 3072
     audit_token_budget: 20000
     summary_max_chars: 1000
     keyword_max_count: 12
@@ -74,12 +81,14 @@ ai:
     base_url: ""
     api_key: ""
     model: ""
-    profile_version: embedding-v1
+    profile_version: embedding-v2
     timeout: 20s
     budget: 30s
     input_version: retrieval-document-v1
     # 启用 Embedding 时必须设置为服务实际返回维度。
     dimensions: 0
+    # 固定维度模型保持 false；仅可变维度且明确兼容的 Provider 才发送 dimensions。
+    request_dimensions: false
     max_input_chars: 12000
     max_attempts: 3
     backoff_min: 5s

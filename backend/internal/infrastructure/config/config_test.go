@@ -237,6 +237,18 @@ func TestAIConfigDisabledByDefault(t *testing.T) {
 	if cfg.AI.Generation.Profile.Enabled() || cfg.AI.Embedding.Profile.Enabled() {
 		t.Fatal("空 profile 应禁用模型阶段")
 	}
+	if cfg.AI.Generation.Profile.ProfileVersion != "generation-v2" || cfg.AI.Generation.WorkflowVersion != "hierarchical-v2" || cfg.AI.Generation.PromptVersion != "summary-v2" {
+		t.Fatalf("生成配置版本不是 v2: %+v", cfg.AI.Generation)
+	}
+	if cfg.AI.Generation.StructuredOutput != "prompt" || cfg.AI.Generation.MapSummaryChars != 800 || cfg.AI.Generation.RepairInputChars != 16000 {
+		t.Fatalf("生成修复默认边界错误: %+v", cfg.AI.Generation)
+	}
+	if cfg.AI.Generation.MaxTokensParam != "max_tokens" || cfg.AI.Generation.MaxOutputTokens != 3072 {
+		t.Fatalf("生成输出上限默认值错误: %+v", cfg.AI.Generation)
+	}
+	if cfg.AI.Embedding.Profile.ProfileVersion != "embedding-v2" || cfg.AI.Embedding.RequestDimensions {
+		t.Fatalf("Embedding v2 默认配置错误: %+v", cfg.AI.Embedding)
+	}
 }
 
 func TestAIConfigEnvironmentOverridesYAML(t *testing.T) {
@@ -244,8 +256,12 @@ func TestAIConfigEnvironmentOverridesYAML(t *testing.T) {
 	t.Setenv("VELIS_AI_GENERATION_BASE_URL", "https://chat.internal/v1")
 	t.Setenv("VELIS_AI_GENERATION_API_KEY", "env-secret")
 	t.Setenv("VELIS_AI_GENERATION_MODEL", "env-model")
+	t.Setenv("VELIS_AI_GENERATION_STRUCTURED_OUTPUT_MODE", "json_schema")
 	t.Setenv("VELIS_AI_GENERATION_MAX_CHUNKS", "6")
 	t.Setenv("VELIS_AI_GENERATION_MAX_CALLS", "7")
+	t.Setenv("VELIS_AI_GENERATION_MAP_SUMMARY_MAX_CHARS", "700")
+	t.Setenv("VELIS_AI_GENERATION_REPAIR_INPUT_MAX_CHARS", "14000")
+	t.Setenv("VELIS_AI_EMBEDDING_REQUEST_DIMENSIONS", "true")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	data := []byte("ai:\n  generation:\n    provider: yaml-provider\n    base_url: https://yaml.invalid/v1\n    api_key: yaml-secret\n    model: yaml-model\n")
@@ -256,8 +272,11 @@ func TestAIConfigEnvironmentOverridesYAML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AI.Generation.Profile.Provider != "env-provider" || cfg.AI.Generation.Profile.Model != "env-model" || cfg.AI.Generation.MaxChunks != 6 {
+	if cfg.AI.Generation.Profile.Provider != "env-provider" || cfg.AI.Generation.Profile.Model != "env-model" || cfg.AI.Generation.MaxChunks != 6 || cfg.AI.Generation.StructuredOutput != "json_schema" || cfg.AI.Generation.MapSummaryChars != 700 || cfg.AI.Generation.RepairInputChars != 14000 {
 		t.Fatalf("AI 环境覆盖失败: %+v", cfg.AI.Generation)
+	}
+	if !cfg.AI.Embedding.RequestDimensions {
+		t.Fatal("Embedding dimensions 请求开关环境覆盖失败")
 	}
 }
 
@@ -275,6 +294,10 @@ func TestAIConfigRejectsPartialAndUnboundedProfiles(t *testing.T) {
 			p.Model = "embed"
 		}},
 		{"分块无界", func(cfg *Config) { cfg.AI.Generation.MaxChunks = 65; cfg.AI.Generation.MaxCalls = 66 }},
+		{"结构化输出模式非法", func(cfg *Config) { cfg.AI.Generation.StructuredOutput = "provider-magic" }},
+		{"输出上限参数名非法", func(cfg *Config) { cfg.AI.Generation.MaxTokensParam = "provider-magic" }},
+		{"Map 摘要边界非法", func(cfg *Config) { cfg.AI.Generation.MapSummaryChars = 63 }},
+		{"纠正输入边界非法", func(cfg *Config) { cfg.AI.Generation.RepairInputChars = 100001 }},
 		{"尝试无界", func(cfg *Config) { cfg.AI.Embedding.MaxAttempts = 6 }},
 	}
 	for _, tc := range tests {

@@ -11,6 +11,7 @@ type ErrorCode string
 
 const (
 	ErrorTimeout             ErrorCode = "timeout"
+	ErrorCanceled            ErrorCode = "canceled"
 	ErrorRateLimited         ErrorCode = "rate_limited"
 	ErrorProviderUnavailable ErrorCode = "provider_unavailable"
 	ErrorNetwork             ErrorCode = "network"
@@ -25,6 +26,7 @@ const (
 type ClassifiedError struct {
 	Code      ErrorCode
 	Retryable bool
+	Reason    string
 	Message   string
 	Cause     error
 }
@@ -36,12 +38,35 @@ func NewError(code ErrorCode, retryable bool, message string, cause error) error
 	return &ClassifiedError{Code: code, Retryable: retryable, Message: message, Cause: cause}
 }
 
+func NewErrorWithReason(code ErrorCode, retryable bool, reason, message string, cause error) error {
+	return &ClassifiedError{Code: code, Retryable: retryable, Reason: reason, Message: message, Cause: cause}
+}
+
 func ErrorClassification(err error) (ErrorCode, bool) {
 	var classified *ClassifiedError
 	if errors.As(err, &classified) {
 		return classified.Code, classified.Retryable
 	}
 	return ErrorInternal, false
+}
+
+// ImmediateRetryable 报告分类是否属于同一批分块内可立即重试的瞬时故障：只有传输与 Provider 侧的暂时性失败在此列，
+// 非法输出等需要重新生成或纠正内容的分类仍交由任务级重试处理。
+func ImmediateRetryable(code ErrorCode) bool {
+	switch code {
+	case ErrorTimeout, ErrorCanceled, ErrorRateLimited, ErrorProviderUnavailable, ErrorNetwork:
+		return true
+	default:
+		return false
+	}
+}
+
+func ErrorReason(err error) string {
+	var classified *ClassifiedError
+	if errors.As(err, &classified) {
+		return classified.Reason
+	}
+	return ""
 }
 
 type RevisionInput struct {
@@ -65,13 +90,14 @@ type Usage struct {
 }
 
 type CallRecord struct {
-	Kind       string
-	InputHash  string
-	Usage      Usage
-	Duration   time.Duration
-	Status     string
-	ErrorCode  ErrorCode
-	ErrorBrief string
+	Kind        string
+	InputHash   string
+	Usage       Usage
+	Duration    time.Duration
+	Status      string
+	ErrorCode   ErrorCode
+	ErrorBrief  string
+	ErrorReason string
 }
 
 type GenerationRequest struct {
@@ -85,17 +111,36 @@ type GenerationRequest struct {
 	AuditTokenBudget int
 	MaxCalls         int
 	Concurrency      int
+	MapSummaryChars  int
 	TotalTimeout     time.Duration
 	Limits           OutputLimits
 }
 
 type GenerationResponse struct {
-	Content GeneratedContent
-	Calls   []CallRecord
+	Content   GeneratedContent
+	Calls     []CallRecord
+	Candidate *RepairCandidate
+}
+
+type RepairCandidate struct {
+	Raw    string
+	Reason string
+}
+
+type RepairRequest struct {
+	Candidate       RepairCandidate
+	PromptVersion   string
+	WorkflowVersion string
+	MaxOutputTokens int
+	Limits          OutputLimits
 }
 
 type Generator interface {
 	Generate(context.Context, GenerationRequest) (GenerationResponse, error)
+}
+
+type OutputRepairer interface {
+	Repair(context.Context, RepairRequest) (GenerationResponse, error)
 }
 
 type EmbeddingRequest struct {

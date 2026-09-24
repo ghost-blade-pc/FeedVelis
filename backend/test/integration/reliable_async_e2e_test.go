@@ -129,10 +129,10 @@ VALUES($1,'e2e_author','作者','hash','user','active',$2,$2)`, authorID, now); 
 	if err != nil {
 		t.Fatal(err)
 	}
-	gen := &enrichment.ActiveProfile{Provider: "deterministic", Model: "chat-stub", ProfileVersion: "g-rabbit-e2e", WorkflowVersion: "w1", PromptVersion: "p1", MaxAttempts: 2, AuditTokenBudget: 1000, StageBudget: time.Second}
+	gen := &enrichment.ActiveProfile{Provider: "deterministic", Model: "chat-stub", ProfileVersion: "g-rabbit-e2e", WorkflowVersion: "w1", PromptVersion: "p1", StructuredOutput: "prompt", MaxAttempts: 2, AuditTokenBudget: 1000, StageBudget: time.Second}
 	embed := &enrichment.ActiveProfile{Provider: "deterministic", Model: "embed-stub", ProfileVersion: "e-rabbit-e2e", InputVersion: "i1", Dimensions: 3, MaxAttempts: 2, AuditTokenBudget: 1000, StageBudget: time.Second}
-	executor := enrichment.NewExecutor(postgres.NewEnrichmentRepository(env.pool), workflow, einoAdapter.NewEmbeddingAdapter(e2eEmbedder{}, 3), gen, embed,
-		enrichment.ExecutorPolicy{Lease: time.Minute, GenerationBackoffMin: time.Second, GenerationBackoffMax: time.Minute, EmbeddingBackoffMin: time.Second, EmbeddingBackoffMax: time.Minute, ChunkChars: 1000, MaxChunks: 8, SingleInputChars: 12000, MaxCalls: 9, Concurrency: 2, MaxOutputTokens: 1000, OutputLimits: enrichment.OutputLimits{SummaryChars: 1000, KeywordCount: 12, TopicCount: 5, LabelChars: 64}, EmbeddingBodyChars: 12000}, nil, nil)
+	executor := enrichment.NewExecutor(postgres.NewEnrichmentRepository(env.pool), workflow, workflow, einoAdapter.NewEmbeddingAdapter(e2eEmbedder{}, 3), gen, embed,
+		enrichment.ExecutorPolicy{Lease: time.Minute, GenerationBackoffMin: time.Second, GenerationBackoffMax: time.Minute, EmbeddingBackoffMin: time.Second, EmbeddingBackoffMax: time.Minute, ChunkChars: 1000, MaxChunks: 8, SingleInputChars: 12000, MaxCalls: 9, Concurrency: 2, MapSummaryChars: 800, RepairInputChars: 16000, MaxOutputTokens: 1000, OutputLimits: enrichment.OutputLimits{SummaryChars: 1000, KeywordCount: 12, TopicCount: 5, LabelChars: 64}, EmbeddingBodyChars: 12000}, nil, nil)
 	for range 2 {
 		processed, runErr := executor.ProcessOne(ctx, "rabbit-e2e-worker")
 		if runErr != nil || !processed {

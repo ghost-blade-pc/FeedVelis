@@ -112,7 +112,7 @@ func runAIEnrichment(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,
 			return err
 		}
 		generator = workflow
-		generationProfile = &enrichmentApp.ActiveProfile{Provider: cfg.AI.Generation.Profile.Provider, Model: cfg.AI.Generation.Profile.Model, ProfileVersion: cfg.AI.Generation.Profile.ProfileVersion, WorkflowVersion: cfg.AI.Generation.WorkflowVersion, PromptVersion: cfg.AI.Generation.PromptVersion, MaxAttempts: cfg.AI.Generation.MaxAttempts, AuditTokenBudget: cfg.AI.Generation.AuditTokenBudget, Timeout: cfg.AI.Generation.Profile.Timeout, StageBudget: cfg.AI.Generation.Profile.Budget}
+		generationProfile = &enrichmentApp.ActiveProfile{Provider: cfg.AI.Generation.Profile.Provider, Model: cfg.AI.Generation.Profile.Model, ProfileVersion: cfg.AI.Generation.Profile.ProfileVersion, WorkflowVersion: cfg.AI.Generation.WorkflowVersion, PromptVersion: cfg.AI.Generation.PromptVersion, StructuredOutput: cfg.AI.Generation.StructuredOutput, MaxAttempts: cfg.AI.Generation.MaxAttempts, AuditTokenBudget: cfg.AI.Generation.AuditTokenBudget, Timeout: cfg.AI.Generation.Profile.Timeout, StageBudget: cfg.AI.Generation.Profile.Budget}
 	}
 	if cfg.AI.Embedding.Profile.Enabled() {
 		adapter, err := einoAdapter.NewOpenAIEmbedder(ctx, cfg.AI.Embedding)
@@ -122,11 +122,17 @@ func runAIEnrichment(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,
 		embedder = adapter
 		embeddingProfile = &enrichmentApp.ActiveProfile{Provider: cfg.AI.Embedding.Profile.Provider, Model: cfg.AI.Embedding.Profile.Model, ProfileVersion: cfg.AI.Embedding.Profile.ProfileVersion, InputVersion: cfg.AI.Embedding.InputVersion, Dimensions: cfg.AI.Embedding.Dimensions, MaxAttempts: cfg.AI.Embedding.MaxAttempts, AuditTokenBudget: cfg.AI.Embedding.AuditTokenBudget, Timeout: cfg.AI.Embedding.Profile.Timeout, StageBudget: cfg.AI.Embedding.Profile.Budget}
 	}
-	executor := enrichmentApp.NewExecutor(postgres.NewEnrichmentRepository(pool), generator, embedder, generationProfile, embeddingProfile, enrichmentApp.ExecutorPolicy{
+	var repairer enrichmentApp.OutputRepairer
+	if value, ok := generator.(enrichmentApp.OutputRepairer); ok {
+		repairer = value
+	}
+	executor := enrichmentApp.NewExecutor(postgres.NewEnrichmentRepository(pool), generator, repairer, embedder, generationProfile, embeddingProfile, enrichmentApp.ExecutorPolicy{
 		Lease: cfg.AI.Worker.Lease, GenerationBackoffMin: cfg.AI.Generation.BackoffMin, GenerationBackoffMax: cfg.AI.Generation.BackoffMax,
 		EmbeddingBackoffMin: cfg.AI.Embedding.BackoffMin, EmbeddingBackoffMax: cfg.AI.Embedding.BackoffMax,
 		ChunkChars: cfg.AI.Generation.ChunkChars, MaxChunks: cfg.AI.Generation.MaxChunks, SingleInputChars: cfg.AI.Generation.SingleInputChars,
 		MaxCalls: cfg.AI.Generation.MaxCalls, Concurrency: cfg.AI.Generation.ChunkConcurrency, MaxOutputTokens: cfg.AI.Generation.MaxOutputTokens,
+		MapSummaryChars:    cfg.AI.Generation.MapSummaryChars,
+		RepairInputChars:   cfg.AI.Generation.RepairInputChars,
 		OutputLimits:       enrichmentApp.OutputLimits{SummaryChars: cfg.AI.Generation.SummaryMaxChars, KeywordCount: cfg.AI.Generation.KeywordMaxCount, TopicCount: cfg.AI.Generation.TopicMaxCount, LabelChars: cfg.AI.Generation.LabelMaxChars},
 		EmbeddingBodyChars: cfg.AI.Embedding.MaxInputChars,
 	}, nil, func(delay time.Duration) time.Duration { return time.Duration(float64(delay) * (1 + randomJitter())) }).WithObserver(observability.NewAIObserver(metrics, logger))

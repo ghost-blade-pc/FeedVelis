@@ -51,7 +51,7 @@ docker restart velis-rabbitmq-1
 
 ## 补录、升级与 DLQ 重放
 
-命令必须给出 `1..1000` 的批量上限：
+异步文章补录和 DLQ 重放必须给出 `1..1000` 的批量上限。AI 补录则必须在 `-article-id`、`-limit`、`-all` 三种范围中恰好选择一种：
 
 ```bash
 cd backend
@@ -60,14 +60,32 @@ go run ./cmd/velis-admin -config configs/config.example.yaml \
 go run ./cmd/velis-admin -config configs/config.example.yaml \
   async replay-dlq -limit 100
 go run ./cmd/velis-admin -config configs/config.example.yaml \
-  ai backfill -stage all -mode missing-only -limit 100 -dry-run
+  ai backfill -stage all -mode missing-only -article-id 324
 go run ./cmd/velis-admin -config configs/config.example.yaml \
-  ai backfill -stage generation -mode outdated-only -limit 25
+  ai backfill -stage generation -mode outdated-only -limit 25 -order newest
+go run ./cmd/velis-admin -config configs/config.example.yaml \
+  ai backfill -stage all -mode missing-only -all -dry-run
+go run ./cmd/velis-admin -config configs/config.example.yaml \
+  ai backfill -stage all -mode missing-only -all -confirm-all
 ```
 
 补录逐篇锁定并复核，只为仍为 published 且没有事件/任务的文章写正常 published 事件；无需 MQ 即可运行，重复执行不会推进任务 generation。DLQ 重放保留原 `event_id` 和事件类型，只有重新发布收到 confirm 后才 Ack 原消息；失败消息保留在 DLQ。命令输出只有批量统计，不输出事件信封、正文或连接凭据。
 
-AI 补录必须显式指定阶段、模式和 `1..1000` 的上限。`dry-run` 只统计候选；正式执行只推进任务，不同步调用模型。部署新 Prompt、模型或 Embedding profile 不会自动全量重算，应先预览再以小批量执行并观察预算与错误指标。
+AI 补录必须显式指定阶段、模式和范围。`-order oldest|newest` 只允许与 `-limit 1..1000` 一起使用，默认 `oldest`；精确范围中的文章不存在、不再公开或不满足模式时计为 skipped。`dry-run` 只统计候选；正式执行只推进任务，不同步调用模型。相同目标的 pending/running/retry_wait 任务会排除，failed 任务仍可精确或批量重推。全量补录只为没有 AI 内容增强内容的文章补齐：`missing-only` 选择当前没有 generation 结果的文章（`stage=all` 时连同 Embedding 一起补齐），以及已有 generation 结果但缺 Embedding 的文章；已有当前 generation 与 embedding 结果的文章不会被重算；只有 profile 落后（`outdated-only`）或对应结果缺失（含 failed 重推）才会被选中。
+
+部署新 profile 后可用下面的查询核对是否仍有文章停留在旧 profile（版本值换成当前部署取值，Compose 中执行 `docker compose exec postgres psql -U velis -d velis -c "<查询>"`）：
+
+```sql
+SELECT s.article_id, s.generation_profile_version, s.embedding_profile_version
+FROM velis.ai_current_selections s
+JOIN velis.articles a ON a.id = s.article_id AND a.current_revision_id = s.revision_id
+WHERE a.status = 'published'
+  AND (s.generation_profile_version <> 'generation-v2' OR s.embedding_profile_version <> 'embedding-v2');
+```
+
+有结果的文章用 `-mode outdated-only` 推进，没有结果表示所有公开文章都与当前 profile 一致。
+
+`-all` 会固定命令开始时的最大文章 ID，并以内部固定页和短事务遍历当前候选，避免新文章让扫描无法结束。非 dry-run 的全量命令必须同时提供 `-confirm-all`；这只是防误操作确认，不限制后续 Worker 产生的模型调用和费用。部署新 Prompt、模型或 Embedding profile 不会自动全量重算，应先用 `-all -dry-run` 或最新优先的小批次预览，核对 Token 预算与错误指标后再执行。`stage=all` 重新生成时会同步更新 Embedding 目标 profile。
 
 ## 指标、保留与回滚
 
@@ -78,8 +96,9 @@ AI 补录必须显式指定阶段、模式和 `1..1000` 的上限。`dry-run` �
 - 已发布 Outbox 默认保留 7 天并批量清理；未发布事件永不由保留清理删除。
 - `000006_create_reliable_article_async` 只有在 Outbox、Inbox、任务表均为空时允许 down。回滚前停止 Relay/Consumer、备份并核对积压；禁止 force 或删除事实来绕过保护。
 - `000007_add_ai_content_enrichment` 只有在生成结果、向量、当前指针和调用审计均为空，且任务状态仍兼容旧 schema 时允许 down。应用回滚应保留该迁移及历史结果；执行 down 前先停止 AI Worker、备份并核对任务与审计数据。
+- `000008_harden_ai_provider_acceptance` 记录同一 task generation 的单次格式纠正额度，并扩展结构化输出模式与安全错误原因审计。已使用纠正额度或已有新审计数据时 down 会拒绝；不得通过清除审计事实绕过保护。
 
-## 2026-09-23 故障演练证据
+## 2026-09-24 故障演练证据
 
 | 场景 | 自动化证据 | 结果 |
 | --- | --- | --- |
@@ -93,9 +112,12 @@ AI 补录必须显式指定阶段、模式和 `1..1000` 的上限。`dry-run` �
 | MQ 不可达、恢复追赶与 AI 闭环 | `TestReliableAsyncPipelineAccumulatesWithoutMQAndCatchesUpAfterRecovery` | 文章立即可读、Outbox 积压；恢复后经任务、generation 与 Embedding 进入公开读取，编辑后旧结果立即隐藏 |
 | 任务认领、租约恢复与旧 token | `TestEnrichmentRepositoryLeaseFencingAndStageCommits`、`TestEnrichmentRepositoryRejectsExpiredAndChangedGeneration` | 并发只认领一次；崩溃后租约可恢复；迟到执行者不能提交 |
 | generation/Embedding 成功闭环 | `TestDeterministicAIEnrichmentE2E`、`TestReliableAsyncPipelineAccumulatesWithoutMQAndCatchesUpAfterRecovery` | 固定 Eino Workflow 生成公开摘要与标签，向量持久化且没有检索 API |
+| 长 RSS、纠正与有界恢复 | `TestLongRSSAIEnrichmentAndBoundedRecoveryE2E` | 真实 PostgreSQL/RabbitMQ 链路覆盖 single、map-reduce、同一 generation 一次纠正、失败后 `missing-only`/`outdated-only` 的 `limit=1` 恢复，以及当前 1024 维 Embedding |
 | 修订切换与读取降级 | `TestPublishedQueriesExposeOnlyCurrentRevisionGenerationWithoutVector` | 旧修订增强立即隐藏；无结果时显式 `null` 并继续使用 excerpt |
 | profile 补录与幂等 | `TestAIBackfillDryRunAndPendingTargetAreIdempotent`、`TestAIBackfillConcurrentRunsAdvanceOnce` | dry-run 零写入；并发重复目标只推进一次；升级目标有界推进 |
 | 模型中断、非法输出与预算 | `TestExecutorEmbeddingFailureKeepsGenerationAndBacksOff`、`TestWorkflowBudgetInvalidOutputAndCancellation` | 独立有限重试，不重复 generation，不发布不完整结果 |
 | 有界关闭与组件隔离 | `TestSupervisorReportsBoundedShutdown`、`TestSupervisorRestartsFailedComponentWithoutStoppingOthers` | MQ 组件失败不停止 Feed，关闭超时显式报告 |
 
 本轮还通过 RabbitMQ 管理命令核对了实际 exchange、binding、quorum queue、policy 和 Prometheus plugin；通过 Worker/RabbitMQ HTTP 指标端点核对运行时计数。这里的单节点 Compose 演练不等同于生产集群高可用、备份恢复或容量验证。
+
+本轮真实 Provider 验证未执行：本地没有获授权的模型端点、generation API Key 和 Embedding API Key。上述 E2E 使用确定性 ChatModel/Embedder，只证明本地 Workflow、严格校验、持久化、RabbitMQ 编排和恢复语义；不将其描述为真实模型兼容性通过。完整真实依赖套件中 MinIO API E2E 因未设置 `VELIS_TEST_MINIO_ENDPOINT` 跳过，RabbitMQ 重启演练因未设置 `VELIS_TEST_RABBITMQ_RESTART=1` 跳过；二者均不属于本次 AI Provider 加固的通过证据。

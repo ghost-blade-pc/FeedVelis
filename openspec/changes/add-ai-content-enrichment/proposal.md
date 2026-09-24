@@ -11,7 +11,7 @@
 - 持久化不可变、版本化的增强结果、普通浮点向量及调用元数据，包括 provider、model、Prompt/Workflow/Embedding 版本、输入哈希、Token、耗时和稳定错误分类。
 - 对同一修订保留 last-known-good 结果，新 profile 成功后原子切换；文章修订变化后不再公开或投影旧修订结果。
 - 在匿名 latest 与文章详情 API 中返回可选增强结果，并在 Web 中优先展示 AI 摘要、关键词和主题；缺失时继续使用原始 `excerpt`。
-- 提供有数量上限、可 dry-run、可重复执行的管理 CLI，显式补齐缺失结果或升级落后 profile，而不在部署时自动产生全量模型费用。
+- 提供可按单篇文章、带顺序的有限批次或经过二次确认的全量范围执行、支持 dry-run 且可重复运行的管理 CLI，显式补齐缺失结果或升级落后 profile，而不在部署时自动产生全量模型费用。
 - 提供确定性 ChatModel/Embedder 桩、故障注入测试和脱敏观测；未完整配置模型时不启动对应执行阶段，也不影响核心内容路径或 readiness。
 - 本 change 不实现 OpenSearch、向量检索、recommend Feed、Agent，也不恢复 pgvector 查询能力；I4 直接使用本 change 持久化的当前向量构建检索投影。
 
