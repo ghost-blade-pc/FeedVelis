@@ -33,6 +33,11 @@ func (r *Runner) runSource(ctx context.Context, args []string) error {
 		if *rawURL == "" {
 			return errors.New("source add 需要 -url")
 		}
+		// 省略 -interval 时补齐领域默认周期：0 会被 ValidateFetchInterval 拒绝，
+		// 而 AddWithInterval 不会像 Add 那样自行填充默认值。
+		if *interval == 0 {
+			*interval = sourceDomain.DefaultFetchInterval
+		}
 		src, inserted, err := service.AddWithInterval(ctx, *rawURL, *interval)
 		if err != nil {
 			return err

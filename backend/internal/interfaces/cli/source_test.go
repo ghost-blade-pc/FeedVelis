@@ -23,6 +23,10 @@ type cliSourceService struct {
 }
 
 func (s *cliSourceService) AddWithInterval(_ context.Context, rawURL string, interval time.Duration) (sourceDomain.Source, bool, error) {
+	// 与真实用例一致地校验周期，否则 CLI 传 0 之类的缺陷会被假实现掩盖。
+	if err := sourceDomain.ValidateFetchInterval(interval); err != nil {
+		return sourceDomain.Source{}, false, err
+	}
 	s.addedURL, s.addedInterval = rawURL, interval
 	return sourceDomain.Source{ID: 9, FetchInterval: interval, LockVersion: 1}, true, nil
 }
@@ -60,6 +64,9 @@ func TestSourceAddAndPause(t *testing.T) {
 	}
 	if service.addedURL != "https://example.com/feed" || !strings.Contains(stdout.String(), "source_id=9 created=true") {
 		t.Fatalf("url=%q output=%q", service.addedURL, stdout.String())
+	}
+	if service.addedInterval != sourceDomain.DefaultFetchInterval {
+		t.Fatalf("省略 -interval 时应使用默认周期，实际=%s", service.addedInterval)
 	}
 	if err := runner.Run(context.Background(), []string{"source", "pause", "9"}); err != nil {
 		t.Fatal(err)
