@@ -1,0 +1,8 @@
+# 全仓库统一使用 LF 行尾。
+#
+# 仓库内的 blob 一直是 LF，但各开发机的 core.autocrlf 会把检出结果写成 CRLF，
+# 导致 gofmt 等工具按行尾判定文件「未格式化」。显式声明后行为不再依赖本机 git 配置。
+#
+# text=auto 让 git 自行识别二进制文件；本仓库当前没有被跟踪的二进制文件。
+# 这里没有 .bat/.cmd/.ps1 等需要 CRLF 的 Windows 专用文件。
+* text=auto eol=lf
