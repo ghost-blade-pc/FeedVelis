@@ -45,6 +45,17 @@ export interface ArticlePage {
   has_more: boolean
 }
 
+export type ArticleSearchPage = ArticlePage
+
+export interface ArticleSearchQuery {
+  q: string
+  keyword?: string
+  topic?: string
+  source_id?: number
+  limit?: number
+  cursor?: string
+}
+
 export interface ArticleDetail extends ArticleItem {
   content_html: string
 }

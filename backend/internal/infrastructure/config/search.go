@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -22,10 +24,11 @@ type SearchConfig struct {
 	SchemaVersion       int      `yaml:"schema_version"`
 	EmbeddingDimensions int      `yaml:"embedding_dimensions"`
 
-	ConnectRaw     string        `yaml:"connect_timeout"`
-	ConnectTimeout time.Duration `yaml:"-"`
-	RequestRaw     string        `yaml:"request_timeout"`
-	RequestTimeout time.Duration `yaml:"-"`
+	ConnectRaw     string            `yaml:"connect_timeout"`
+	ConnectTimeout time.Duration     `yaml:"-"`
+	RequestRaw     string            `yaml:"request_timeout"`
+	RequestTimeout time.Duration     `yaml:"-"`
+	Query          SearchQueryConfig `yaml:"query"`
 
 	BulkMaxItems         int `yaml:"bulk_max_items"`
 	BulkMaxBytes         int `yaml:"bulk_max_bytes"`
@@ -34,6 +37,28 @@ type SearchConfig struct {
 	Worker  SearchWorkerConfig  `yaml:"worker"`
 	Rebuild SearchRebuildConfig `yaml:"rebuild"`
 }
+
+// SecretBytes 是只允许显式取出副本的敏感字节；任何格式化都只输出脱敏标记。
+type SecretBytes []byte
+
+func (SecretBytes) Format(state fmt.State, verb rune) { _, _ = state.Write([]byte("[REDACTED]")) }
+func (s SecretBytes) Bytes() []byte                   { return append([]byte(nil), s...) }
+func (s SecretBytes) IsSet() bool                     { return len(s) != 0 }
+
+// SearchQueryConfig 描述 API 查询侧的独立资源边界。CursorKey 永不从 YAML 读取。
+type SearchQueryConfig struct {
+	TimeoutRaw              string        `yaml:"timeout"`
+	Timeout                 time.Duration `yaml:"-"`
+	PITKeepAliveRaw         string        `yaml:"pit_keep_alive"`
+	PITKeepAlive            time.Duration `yaml:"-"`
+	CandidateBatchSize      int           `yaml:"candidate_batch_size"`
+	MaxCandidatesPerRequest int           `yaml:"max_candidates_per_request"`
+	CursorKey               SecretBytes   `yaml:"-"`
+	CursorKeyEphemeral      bool          `yaml:"-"`
+}
+
+// QueryEnabled 表示查询端点可装配真实搜索服务；投影启用状态仍由 Enabled 独立决定。
+func (c SearchConfig) QueryEnabled() bool { return c.Enabled() && c.Query.CursorKey.IsSet() }
 
 type SearchWorkerConfig struct {
 	LeaseRaw    string        `yaml:"lease"`
@@ -101,6 +126,8 @@ func applySearchEnvironment(cfg *Config) error {
 		&search.IndexPrefix:            "VELIS_SEARCH_INDEX_PREFIX",
 		&search.ConnectRaw:             "VELIS_SEARCH_CONNECT_TIMEOUT",
 		&search.RequestRaw:             "VELIS_SEARCH_REQUEST_TIMEOUT",
+		&search.Query.TimeoutRaw:       "VELIS_SEARCH_QUERY_TIMEOUT",
+		&search.Query.PITKeepAliveRaw:  "VELIS_SEARCH_QUERY_PIT_KEEP_ALIVE",
 		&search.Worker.LeaseRaw:        "VELIS_SEARCH_WORKER_LEASE",
 		&search.Worker.PollRaw:         "VELIS_SEARCH_WORKER_POLL_INTERVAL",
 		&search.Worker.BackoffMin:      "VELIS_SEARCH_WORKER_BACKOFF_MIN",
@@ -110,21 +137,33 @@ func applySearchEnvironment(cfg *Config) error {
 		setString(target, key)
 	}
 	for target, key := range map[*int]string{
-		&search.SchemaVersion:         "VELIS_SEARCH_SCHEMA_VERSION",
-		&search.EmbeddingDimensions:   "VELIS_SEARCH_EMBEDDING_DIMENSIONS",
-		&search.BulkMaxItems:          "VELIS_SEARCH_BULK_MAX_ITEMS",
-		&search.BulkMaxBytes:          "VELIS_SEARCH_BULK_MAX_BYTES",
-		&search.BulkMaxDocumentChars:  "VELIS_SEARCH_BULK_MAX_DOCUMENT_CHARS",
-		&search.Worker.BatchSize:      "VELIS_SEARCH_WORKER_BATCH_SIZE",
-		&search.Worker.MaxAttempts:    "VELIS_SEARCH_WORKER_MAX_ATTEMPTS",
-		&search.Rebuild.SnapshotBatch: "VELIS_SEARCH_REBUILD_SNAPSHOT_BATCH",
-		&search.Rebuild.SampleSize:    "VELIS_SEARCH_REBUILD_VALIDATION_SAMPLE_SIZE",
+		&search.SchemaVersion:                 "VELIS_SEARCH_SCHEMA_VERSION",
+		&search.EmbeddingDimensions:           "VELIS_SEARCH_EMBEDDING_DIMENSIONS",
+		&search.BulkMaxItems:                  "VELIS_SEARCH_BULK_MAX_ITEMS",
+		&search.BulkMaxBytes:                  "VELIS_SEARCH_BULK_MAX_BYTES",
+		&search.BulkMaxDocumentChars:          "VELIS_SEARCH_BULK_MAX_DOCUMENT_CHARS",
+		&search.Worker.BatchSize:              "VELIS_SEARCH_WORKER_BATCH_SIZE",
+		&search.Worker.MaxAttempts:            "VELIS_SEARCH_WORKER_MAX_ATTEMPTS",
+		&search.Rebuild.SnapshotBatch:         "VELIS_SEARCH_REBUILD_SNAPSHOT_BATCH",
+		&search.Rebuild.SampleSize:            "VELIS_SEARCH_REBUILD_VALIDATION_SAMPLE_SIZE",
+		&search.Query.CandidateBatchSize:      "VELIS_SEARCH_QUERY_CANDIDATE_BATCH_SIZE",
+		&search.Query.MaxCandidatesPerRequest: "VELIS_SEARCH_QUERY_MAX_CANDIDATES_PER_REQUEST",
 	} {
 		if err := setInt(target, key); err != nil {
 			return err
 		}
 	}
-	return setBool(&search.InsecureSkipVerify, "VELIS_SEARCH_INSECURE_SKIP_VERIFY")
+	if err := setBool(&search.InsecureSkipVerify, "VELIS_SEARCH_INSECURE_SKIP_VERIFY"); err != nil {
+		return err
+	}
+	if encoded, ok := os.LookupEnv("VELIS_SEARCH_CURSOR_KEY"); ok && strings.TrimSpace(encoded) != "" {
+		decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+		if err != nil || len(decoded) < 32 {
+			return errors.New("环境变量 VELIS_SEARCH_CURSOR_KEY 必须是 Base64 且解码后至少 32 字节")
+		}
+		search.Query.CursorKey = SecretBytes(decoded)
+	}
+	return nil
 }
 
 // validateSearchConfig 校验连接边界，并核对向量维度与启用的 Embedding profile 一致。
@@ -183,6 +222,27 @@ func validateSearchConfig(search *SearchConfig, ai *AIConfig, environment string
 	}
 	if search.RequestTimeout, err = durationWithin("search.request_timeout", search.RequestRaw, time.Second, 5*time.Minute); err != nil {
 		return err
+	}
+	query := &search.Query
+	if query.Timeout, err = durationWithin("search.query.timeout", query.TimeoutRaw, 100*time.Millisecond, 30*time.Second); err != nil {
+		return err
+	}
+	if query.PITKeepAlive, err = durationWithin("search.query.pit_keep_alive", query.PITKeepAliveRaw, 30*time.Second, 10*time.Minute); err != nil {
+		return err
+	}
+	if query.CandidateBatchSize < 1 || query.CandidateBatchSize > 500 {
+		return errors.New("search.query.candidate_batch_size 必须介于 1 和 500")
+	}
+	if query.MaxCandidatesPerRequest < query.CandidateBatchSize || query.MaxCandidatesPerRequest > 5000 {
+		return errors.New("search.query.max_candidates_per_request 必须不小于 candidate_batch_size 且不超过 5000")
+	}
+	if !query.CursorKey.IsSet() && development {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return errors.New("生成临时搜索游标签名键失败")
+		}
+		query.CursorKey = SecretBytes(key)
+		query.CursorKeyEphemeral = true
 	}
 	if search.BulkMaxItems < 1 || search.BulkMaxItems > 10000 {
 		return errors.New("search.bulk_max_items 必须介于 1 和 10000")

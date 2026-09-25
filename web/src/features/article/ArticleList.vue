@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
-
 import { listArticles } from '../../api/client'
 import type { ArticleItem } from '../../types/article'
-import { articleOriginLabel, articleOriginURL, articleSummary, articleTime, formatTime } from './model'
+import ArticleCard from './ArticleCard.vue'
 
 const items = ref<ArticleItem[]>([])
 const cursor = ref<string | null>(null)
@@ -50,33 +48,7 @@ onBeforeUnmount(() => request?.abort())
     <p v-else-if="items.length === 0" class="state-card">还没有公开文章。</p>
 
     <div v-else class="article-list">
-      <article v-for="item in items" :key="item.id" class="article-card">
-        <p class="article-meta">
-          <span>{{ item.origin.type === 'rss' ? 'RSS' : '站内作者' }} · {{ articleOriginLabel(item) }}</span>
-        </p>
-        <h2>
-          <RouterLink :to="`/articles/${item.id}`">{{ item.title }}</RouterLink>
-        </h2>
-        <div v-if="item.enhancement" class="ai-enhancement">
-          <span class="ai-badge">AI 生成</span>
-          <p class="article-excerpt">{{ articleSummary(item) }}</p>
-          <div class="ai-labels" aria-label="AI 关键词与主题">
-            <span v-for="keyword in item.enhancement.keywords" :key="`keyword-${keyword}`" class="ai-label keyword">关键词 · {{ keyword }}</span>
-            <span v-for="topic in item.enhancement.topics" :key="`topic-${topic}`" class="ai-label topic">主题 · {{ topic }}</span>
-          </div>
-        </div>
-        <p v-else-if="item.excerpt" class="article-excerpt">{{ articleSummary(item) }}</p>
-        <p class="article-time">
-          <span>{{ articleTime(item).label }} {{ formatTime(articleTime(item).value) }}</span>
-          <a
-            v-if="articleOriginURL(item)"
-            class="origin-link"
-            :href="articleOriginURL(item)"
-            target="_blank"
-            rel="noopener noreferrer"
-          >原文 ↗</a>
-        </p>
-      </article>
+      <ArticleCard v-for="item in items" :key="item.id" :item="item" />
       <button v-if="hasMore" class="load-more" type="button" @click="load(false)">加载更多</button>
     </div>
   </section>

@@ -16,6 +16,7 @@ import (
 	"github.com/opensearch-project/opensearch-go/v4"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	projectionApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/searchprojection"
 )
 
@@ -31,6 +32,7 @@ type Config struct {
 	InsecureSkipVerify   bool
 	ConnectTimeout       time.Duration
 	RequestTimeout       time.Duration
+	QueryTimeout         time.Duration
 	IndexPrefix          string
 	SchemaVersion        int
 	SchemaIdentity       string
@@ -53,6 +55,7 @@ type Client struct {
 var (
 	_ projectionApp.IndexAdmin     = (*Client)(nil)
 	_ projectionApp.DocumentWriter = (*Client)(nil)
+	_ articlesearch.QueryIndex     = (*Client)(nil)
 )
 
 // New 构造客户端。未配置 endpoints 时返回 ErrNotConfigured，由装配层决定禁用投影组件。

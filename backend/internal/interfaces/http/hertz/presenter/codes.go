@@ -9,6 +9,7 @@ const (
 	CodeInvalidCursor         = "INVALID_CURSOR"
 	CodeArticleNotFound       = "ARTICLE_NOT_FOUND"
 	CodeDependencyUnavailable = "DEPENDENCY_UNAVAILABLE"
+	CodeSearchUnavailable     = "SEARCH_UNAVAILABLE"
 
 	CodeInvalidCredentials   = "AUTH_INVALID_CREDENTIALS"
 	CodeSessionInvalid       = "AUTH_SESSION_INVALID"

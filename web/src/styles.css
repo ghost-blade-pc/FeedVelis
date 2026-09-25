@@ -99,6 +99,13 @@ button {
 }
 .load-more { justify-self: center; }
 
+.search-form { display: grid; gap: 1rem; padding: clamp(1.25rem, 4vw, 2rem); border: 1px solid #dce6dd; border-radius: 1rem; background: #fff; }
+.search-query input { font-size: 1.1rem; }
+.search-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
+.search-form button { justify-self: start; }
+.search-unavailable { border-color: #e7c3bd; background: #fff8f6; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #4b9b70; outline-offset: 2px; }
+
 /* 账户闭环：注册、登录与本人账户的最小样式 */
 .auth-page { display: grid; gap: 1.5rem; }
 .auth-card {
@@ -166,6 +173,7 @@ button.danger { background: #a54135; }
   .app-header { align-items: flex-start; flex-direction: column; }
   main { margin-top: 2rem; }
   .source-create { grid-template-columns: 1fr; }
+  .search-filters { grid-template-columns: 1fr; }
 }
 .ai-enhancement {
   margin: 0.8rem 0;

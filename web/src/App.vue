@@ -12,6 +12,7 @@ const { session } = useSession()
     <nav aria-label="主导航">
       <RouterLink to="/">For You</RouterLink>
       <RouterLink to="/latest">最新</RouterLink>
+      <RouterLink to="/search">搜索</RouterLink>
       <RouterLink to="/following">关注</RouterLink>
       <RouterLink to="/hot">热门</RouterLink>
       <RouterLink v-if="session.account" to="/me/articles">创作</RouterLink>

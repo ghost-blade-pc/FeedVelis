@@ -12,6 +12,7 @@ import (
 
 func TestLoadYAMLAndEnvironmentOverride(t *testing.T) {
 	t.Setenv("VELIS_HTTP_ADDRESS", "127.0.0.1:9090")
+	t.Setenv("VELIS_HTTP_METRICS_ADDRESS", "127.0.0.1:9190")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	data := []byte("app:\n  name: test-velis\nhttp:\n  shutdown_timeout: 3s\ndatabase:\n  connect_timeout: 2s\nworker:\n  heartbeat_interval: 1s\n")
@@ -28,6 +29,9 @@ func TestLoadYAMLAndEnvironmentOverride(t *testing.T) {
 	}
 	if cfg.HTTP.Address != "127.0.0.1:9090" {
 		t.Fatalf("HTTP.Address = %q", cfg.HTTP.Address)
+	}
+	if cfg.HTTP.MetricsAddress != "127.0.0.1:9190" {
+		t.Fatalf("HTTP.MetricsAddress = %q", cfg.HTTP.MetricsAddress)
 	}
 	if cfg.HTTP.ShutdownTimeout != 3*time.Second {
 		t.Fatalf("ShutdownTimeout = %v", cfg.HTTP.ShutdownTimeout)

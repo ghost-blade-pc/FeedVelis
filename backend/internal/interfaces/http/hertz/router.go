@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	articleApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/article"
+	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/handler"
@@ -26,6 +27,7 @@ type Options struct {
 	Logger          *slog.Logger
 	Health          *health.Service
 	Articles        *articleApp.Service
+	Search          searchApp.Searcher
 	// Assets 提供图片字节读取；为 nil 时不注册资产端点。匿名与作者共用同一路径。
 	Assets handler.AssetService
 	// Auth 为 nil 时不注册认证路由，保持原有匿名行为。
@@ -70,6 +72,9 @@ func NewServer(options Options) *server.Hertz {
 		h.GET("/api/v1/articles", articleHandler.List)
 		h.GET("/api/v1/articles/:id", articleHandler.Get)
 	}
+	// 搜索路由始终存在；未配置 OpenSearch 时 handler 使用稳定的 unavailable service。
+	searchHandler := handler.NewSearch(options.Search)
+	h.GET("/api/v1/search/articles", searchHandler.Articles)
 	if options.Assets != nil {
 		registerAssetContentRoutes(h, options)
 	}

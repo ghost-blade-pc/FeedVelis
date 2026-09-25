@@ -74,6 +74,80 @@ paths:
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
+  /search/articles:
+    get:
+      operationId: searchArticles
+      summary: 使用 BM25 搜索当前公开文章
+      description: >-
+        对现有文本投影执行 BM25，并在返回前由 PostgreSQL 复核当前公开事实。
+        cursor 绑定规范化查询与短期 PIT；过期或不匹配时返回 INVALID_CURSOR。
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: keyword
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+          description: 精确匹配索引中的关键词值
+        - name: topic
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+          description: 精确匹配索引中的主题值
+        - name: source_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          description: 精确来源过滤；不匹配站内投稿
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            maxLength: 16384
+          description: 服务端生成、绑定当前规范化查询与短期 PIT 的不透明游标
+      responses:
+        "200":
+          description: 公开文章搜索页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArticleSearchPage"
+        "400":
+          description: 参数越界（VALIDATION_FAILED）或游标非法/过期（INVALID_CURSOR）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 搜索后端不可用（SEARCH_UNAVAILABLE）或 PostgreSQL 复核失败（DEPENDENCY_UNAVAILABLE）
+          headers:
+            Retry-After:
+              description: 建议重试等待秒数
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /me/articles:
     get:
       operationId: listMyArticles
@@ -955,6 +1029,19 @@ components:
           type: [string, "null"]
         has_more:
           type: boolean
+    ArticleSearchPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArticleItem"
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
     ArticleItem:
       type: object
       required: [id, title, excerpt, published_at, origin, enhancement]
@@ -1437,7 +1524,7 @@ components:
                 ASSET_PENDING_LIMIT_EXCEEDED、ASSET_UNAVAILABLE、SOURCE_VERSION_CONFLICT、
                 SOURCE_ALREADY_EXISTS、SOURCE_FETCH_IN_PROGRESS、SOURCE_FETCH_FAILED；
                 通用：VALIDATION_FAILED、NOT_FOUND、NOT_READY、INTERNAL_ERROR、
-                DEPENDENCY_UNAVAILABLE。
+                INVALID_CURSOR、SEARCH_UNAVAILABLE、DEPENDENCY_UNAVAILABLE。
             message:
               type: string
             request_id:

@@ -154,6 +154,18 @@ services:
     environment:
       <<: *backend-environment
       VELIS_HTTP_ADDRESS: 0.0.0.0:8080
+      VELIS_HTTP_METRICS_ADDRESS: 0.0.0.0:9090
+      # API 只获得查询客户端；显式空 endpoints 同样禁用查询并保持路由返回 503。
+      VELIS_SEARCH_ENDPOINTS: ${VELIS_SEARCH_ENDPOINTS-http://opensearch:9200}
+      VELIS_SEARCH_USERNAME: ${VELIS_SEARCH_USERNAME-}
+      VELIS_SEARCH_PASSWORD: ${VELIS_SEARCH_PASSWORD-}
+      VELIS_SEARCH_INDEX_PREFIX: ${VELIS_SEARCH_INDEX_PREFIX-velis-articles}
+      VELIS_SEARCH_QUERY_TIMEOUT: ${VELIS_SEARCH_QUERY_TIMEOUT-3s}
+      VELIS_SEARCH_QUERY_PIT_KEEP_ALIVE: ${VELIS_SEARCH_QUERY_PIT_KEEP_ALIVE-2m}
+      VELIS_SEARCH_QUERY_CANDIDATE_BATCH_SIZE: ${VELIS_SEARCH_QUERY_CANDIDATE_BATCH_SIZE-100}
+      VELIS_SEARCH_QUERY_MAX_CANDIDATES_PER_REQUEST: ${VELIS_SEARCH_QUERY_MAX_CANDIDATES_PER_REQUEST-500}
+      # 不提供示例密钥；development 会生成内存临时键，生产必须显式注入共享 Base64 密钥。
+      VELIS_SEARCH_CURSOR_KEY: ${VELIS_SEARCH_CURSOR_KEY-}
       # velis-web 的 nginx 反代 /api：只有把反代自身的地址列为可信代理，IP 维度限流才按真实客户端隔离。
       # 留空会让所有用户共用一个 IP 来源，30 次失败即可全局锁死登录。
       # 这里用反代容器的固定地址而不是整个子网：子网还包含网桥网关，而客户端流量从发布端口进来时

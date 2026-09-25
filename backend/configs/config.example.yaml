@@ -5,6 +5,8 @@ app:
 
 http:
   address: 0.0.0.0:8080
+  # API 内部 Prometheus listener；故障不影响核心 readiness。
+  metrics_address: 127.0.0.1:9090
   shutdown_timeout: 10s
 
 database:
@@ -196,6 +198,12 @@ search:
   embedding_dimensions: 1024
   connect_timeout: 5s
   request_timeout: 30s
+  query:
+    timeout: 3s
+    pit_keep_alive: 2m
+    candidate_batch_size: 100
+    max_candidates_per_request: 500
+    # 游标签名键只允许通过 VELIS_SEARCH_CURSOR_KEY 注入，禁止写入 YAML。
   bulk_max_items: 500
   bulk_max_bytes: 5242880
   bulk_max_document_chars: 65536

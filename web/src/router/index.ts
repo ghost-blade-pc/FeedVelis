@@ -4,12 +4,14 @@ import { appSession } from '../features/auth/browser'
 import HomeView from '../views/HomeView.vue'
 import LatestView from '../views/LatestView.vue'
 import ArticleView from '../views/ArticleView.vue'
+import SearchView from '../views/SearchView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', name: 'for-you', component: HomeView, props: { title: 'For You' } },
     { path: '/latest', name: 'latest', component: LatestView },
+    { path: '/search', name: 'search', component: SearchView },
     { path: '/articles/:id', name: 'article-detail', component: ArticleView },
     { path: '/following', name: 'following', component: HomeView, props: { title: '关注内容' } },
     { path: '/hot', name: 'hot', component: HomeView, props: { title: '热门内容' } },

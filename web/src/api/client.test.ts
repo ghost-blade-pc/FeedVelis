@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { getArticle, listArticles, ping } from './client'
+import { getArticle, listArticles, ping, searchArticles } from './client'
 
 describe('ping', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -40,5 +40,31 @@ describe('getArticle', () => {
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })))
     await expect(getArticle(999)).rejects.toEqual(expect.objectContaining({ name: 'ApiError', status: 404 }))
+  })
+})
+
+describe('searchArticles', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('编码 Unicode、空白、可选过滤与续页游标，并传递 AbortSignal', async () => {
+    const fixture = { items: [], next_cursor: null, has_more: false }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(fixture)))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    await expect(searchArticles({
+      q: '中文 Go', keyword: 'C++ 空格', topic: '主题/URL', source_id: 9, limit: 12, cursor: 'opaque+/=',
+    }, controller.signal)).resolves.toEqual(fixture)
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/v1/search/articles?q=%E4%B8%AD%E6%96%87+Go&limit=12&keyword=C%2B%2B+%E7%A9%BA%E6%A0%BC&topic=%E4%B8%BB%E9%A2%98%2FURL&source_id=9&cursor=opaque%2B%2F%3D')
+    expect(options.signal).toBe(controller.signal)
+  })
+
+  it('保留 SEARCH_UNAVAILABLE 错误码', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'SEARCH_UNAVAILABLE', message: '搜索暂不可用' },
+    }), { status: 503 })))
+    await expect(searchArticles({ q: 'go' })).rejects.toEqual(expect.objectContaining({
+      name: 'ApiError', status: 503, code: 'SEARCH_UNAVAILABLE', message: '搜索暂不可用',
+    }))
   })
 })

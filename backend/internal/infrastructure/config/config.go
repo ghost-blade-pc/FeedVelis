@@ -41,6 +41,7 @@ type AppConfig struct {
 
 type HTTPConfig struct {
 	Address         string        `yaml:"address"`
+	MetricsAddress  string        `yaml:"metrics_address"`
 	ShutdownTimeout time.Duration `yaml:"-"`
 	ShutdownRaw     string        `yaml:"shutdown_timeout"`
 }
@@ -105,8 +106,9 @@ func Default() Config {
 			LogLevel:    "info",
 		},
 		HTTP: HTTPConfig{
-			Address:     "0.0.0.0:8080",
-			ShutdownRaw: "10s",
+			Address:        "0.0.0.0:8080",
+			MetricsAddress: "127.0.0.1:9090",
+			ShutdownRaw:    "10s",
 		},
 		Database: DatabaseConfig{
 			URL:            "postgres://velis:velis@localhost:5432/velis?sslmode=disable",
@@ -135,11 +137,14 @@ func Default() Config {
 			Worker: AIWorkerConfig{LeaseRaw: "2m", PollRaw: "1s", BatchSize: 8},
 		},
 		Search: SearchConfig{
-			IndexPrefix:          "velis-articles",
-			SchemaVersion:        1,
-			EmbeddingDimensions:  1024,
-			ConnectRaw:           "5s",
-			RequestRaw:           "30s",
+			IndexPrefix:         "velis-articles",
+			SchemaVersion:       1,
+			EmbeddingDimensions: 1024,
+			ConnectRaw:          "5s",
+			RequestRaw:          "30s",
+			Query: SearchQueryConfig{
+				TimeoutRaw: "3s", PITKeepAliveRaw: "2m", CandidateBatchSize: 100, MaxCandidatesPerRequest: 500,
+			},
 			BulkMaxItems:         500,
 			BulkMaxBytes:         5 * 1024 * 1024,
 			BulkMaxDocumentChars: 65536,
@@ -220,6 +225,7 @@ func applyEnvironment(cfg *Config) error {
 	setString(&cfg.App.Environment, "VELIS_APP_ENVIRONMENT")
 	setString(&cfg.App.LogLevel, "VELIS_LOG_LEVEL")
 	setString(&cfg.HTTP.Address, "VELIS_HTTP_ADDRESS")
+	setString(&cfg.HTTP.MetricsAddress, "VELIS_HTTP_METRICS_ADDRESS")
 	setString(&cfg.HTTP.ShutdownRaw, "VELIS_HTTP_SHUTDOWN_TIMEOUT")
 	setString(&cfg.Database.URL, "VELIS_DATABASE_URL")
 	setString(&cfg.Database.ConnectRaw, "VELIS_DATABASE_CONNECT_TIMEOUT")
@@ -448,6 +454,9 @@ func (cfg *Config) Validate() error {
 	}
 	if _, _, err := net.SplitHostPort(cfg.HTTP.Address); err != nil {
 		return fmt.Errorf("http.address 必须是 host:port: %w", err)
+	}
+	if _, _, err := net.SplitHostPort(cfg.HTTP.MetricsAddress); err != nil {
+		return fmt.Errorf("http.metrics_address 必须是 host:port: %w", err)
 	}
 
 	var err error

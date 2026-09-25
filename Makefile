@@ -9,8 +9,8 @@ help:
 	@echo "make migrate-up    对本地 PostgreSQL 执行迁移"
 	@echo "make integration-postgres 运行 PostgreSQL 真实依赖测试（OpenSearch 用例未配置时明确跳过）"
 	@echo "make integration-rabbitmq 运行 RabbitMQ 真实依赖测试"
-	@echo "make integration-opensearch 运行 OpenSearch 模板/Bulk/别名真实依赖测试"
-	@echo "make integration-search 运行索引重建真实依赖测试（同时需要 PostgreSQL 与 OpenSearch）"
+	@echo "make integration-opensearch 运行 OpenSearch 模板/Bulk/别名及 BM25/PIT 真实依赖测试"
+	@echo "make integration-search 运行投影重建及搜索事实源复核测试（同时需要 PostgreSQL 与 OpenSearch）"
 	@echo "make integration-async 运行 PostgreSQL + RabbitMQ 可靠异步真实依赖测试"
 	@echo "make integration-all  运行全部真实依赖测试"
 
@@ -43,7 +43,7 @@ integration-opensearch:
 integration-search:
 	@test -n "$(VELIS_TEST_DATABASE_URL)" || (echo "未设置 VELIS_TEST_DATABASE_URL（必须指向 _test 数据库）" && exit 2)
 	@test -n "$(VELIS_TEST_OPENSEARCH_URL)" || (echo "未设置 VELIS_TEST_OPENSEARCH_URL（必须指向可用的 OpenSearch 3.x）" && exit 2)
-	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run 'TestSearchProjection|TestSearchIndexRebuild|TestSearchRebuild' ./test/integration
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run 'TestSearchProjection|TestSearchIndexRebuild|TestSearchRebuild|TestArticleSearch' ./test/integration
 
 integration-async: integration-postgres integration-rabbitmq
 

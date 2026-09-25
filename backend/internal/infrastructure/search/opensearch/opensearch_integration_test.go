@@ -11,6 +11,7 @@ import (
 
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 
+	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	projectionApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/searchprojection"
 	projectionDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/searchprojection"
 )
@@ -351,4 +352,125 @@ func TestBulkPartialMappingFailureIsolatesDeliveries(t *testing.T) {
 
 func (h *harness) refresh(ctx context.Context, index string) {
 	_, _ = h.api().Indices.Refresh(ctx, &opensearchapi.IndicesRefreshReq{Index: []string{index}})
+}
+
+// TestBM25QueryPlanAndPITStability 用真实 schema v1 固定夹具验证查询侧验收。
+// 若该测试失败，应升级 schema，而不是原地修改 articles.v1.json。
+func TestBM25QueryPlanAndPITStability(t *testing.T) {
+	h := newHarness(t, 3)
+	ctx := context.Background()
+	spec := h.spec(1, 3)
+	if _, err := h.client.Ensure(ctx, spec, h.aliases(spec.PhysicalIndex)); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC)
+	source7 := int64(7)
+	fixture := func(id int64) projectionApp.Document {
+		published := base.Add(time.Duration(id) * time.Second)
+		return projectionApp.Document{ArticleID: id, Generation: 1, LockVersion: 1, RevisionID: id * 10,
+			SchemaVersion: 1, Visible: true, OriginType: "rss", SourceID: &source7, PublishedAt: &published,
+			Title: "占位标题", PlainText: "占位正文", Excerpt: "占位摘要"}
+	}
+	documents := make([]projectionApp.Document, 0)
+	for id := int64(1); id <= 9; id++ {
+		documents = append(documents, fixture(id))
+	}
+	documents[0].Title = "titleneedle"
+	documents[1].PlainText = "bodyneedle"
+	documents[2].Summary = "summaryneedle"
+	documents[3].Keywords = []string{"keywordneedle", "exact-keyword"}
+	documents[4].Topics = []string{"topicneedle", "exact-topic"}
+	documents[5].Title = "priorityneedle"
+	documents[6].PlainText = "priorityneedle"
+	documents[7].Title = "中文检索 OpenSearch URL https://example.com/path VelisPro"
+	documents[8].Title = "same-score"
+	documents[8].PublishedAt = &base
+	tie := fixture(10)
+	tie.Title, tie.PublishedAt = "same-score", &base
+	documents = append(documents, tie)
+	items := make([]projectionApp.BulkItem, 0, len(documents))
+	for _, value := range documents {
+		items = append(items, projectionApp.BulkItem{PhysicalIndex: spec.PhysicalIndex, Document: value})
+	}
+	outcomes, err := h.client.Bulk(ctx, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, outcome := range outcomes {
+		if !outcome.Result.Applied() {
+			t.Fatalf("写入夹具 %d 失败: %+v", index, outcome)
+		}
+	}
+	h.refresh(ctx, spec.PhysicalIndex)
+
+	search := func(query searchApp.Query) []int64 {
+		t.Helper()
+		pit, err := h.client.CreatePIT(ctx, 2*time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		batch, err := h.client.Search(ctx, searchApp.IndexRequest{Query: query, PITID: pit, Size: 50, KeepAlive: 2 * time.Minute})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = h.client.ClosePIT(ctx, batch.PITID)
+		ids := make([]int64, len(batch.Candidates))
+		for index, candidate := range batch.Candidates {
+			ids[index] = candidate.ArticleID
+		}
+		return ids
+	}
+	for query, want := range map[string]int64{"titleneedle": 1, "bodyneedle": 2, "summaryneedle": 3, "keywordneedle": 4, "topicneedle": 5, "中文检索": 8, "OpenSearch": 8, "https://example.com/path": 8, "VelisPro": 8} {
+		ids := search(searchApp.Query{Q: query})
+		if len(ids) == 0 || ids[0] != want {
+			t.Fatalf("字段/混合文本召回 %q = %v，期望首项 %d", query, ids, want)
+		}
+	}
+	priority := search(searchApp.Query{Q: "priorityneedle"})
+	if len(priority) < 2 || priority[0] != 6 || priority[1] != 7 {
+		t.Fatalf("标题权重未高于正文: %v", priority)
+	}
+	filtered := search(searchApp.Query{Q: "keywordneedle", Filters: searchApp.Filters{Keyword: "exact-keyword", Topic: "exact-topic", SourceID: 7}})
+	if len(filtered) != 0 { // 关键词和主题必须由同一文档同时满足。
+		t.Fatalf("组合过滤错误地使用 OR: %v", filtered)
+	}
+	documents[3].Topics = []string{"exact-topic"}
+	outcomes, _ = h.client.Bulk(ctx, []projectionApp.BulkItem{{PhysicalIndex: spec.PhysicalIndex, Document: documents[3]}})
+	if !outcomes[0].Result.Applied() {
+		t.Fatalf("更新过滤夹具失败: %+v", outcomes[0])
+	}
+	h.refresh(ctx, spec.PhysicalIndex)
+	filtered = search(searchApp.Query{Q: "keywordneedle", Filters: searchApp.Filters{Keyword: "exact-keyword", Topic: "exact-topic", SourceID: 7}})
+	if len(filtered) != 1 || filtered[0] != 4 {
+		t.Fatalf("组合精确过滤失败: %v", filtered)
+	}
+	ties := search(searchApp.Query{Q: "same-score"})
+	if len(ties) != 2 || ties[0] != 10 || ties[1] != 9 {
+		t.Fatalf("同分全序不稳定: %v", ties)
+	}
+
+	// PIT 创建后更新旧索引并切换读别名，旧 PIT 仍只观察创建时的候选。
+	pit, err := h.client.CreatePIT(ctx, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDocument := fixture(100)
+	newDocument.Title = "titleneedle"
+	if outcomes, err = h.client.Bulk(ctx, []projectionApp.BulkItem{{PhysicalIndex: spec.PhysicalIndex, Document: newDocument}}); err != nil || !outcomes[0].Result.Applied() {
+		t.Fatalf("PIT 后增量写入失败: %+v %v", outcomes, err)
+	}
+	h.refresh(ctx, spec.PhysicalIndex)
+	next := h.spec(1, 3)
+	next.PhysicalIndex = spec.PhysicalIndex + "-next"
+	if _, err := h.client.Create(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.client.SwitchAliases(ctx, projectionApp.AliasSwitch{ReadAlias: h.prefix + "-read", WriteAlias: h.prefix + "-write", Index: next.PhysicalIndex, DetachIndex: spec.PhysicalIndex}); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := h.client.Search(ctx, searchApp.IndexRequest{Query: searchApp.Query{Q: "titleneedle"}, PITID: pit, Size: 50, KeepAlive: 2 * time.Minute})
+	if err != nil || len(batch.Candidates) != 1 || batch.Candidates[0].ArticleID != 1 {
+		t.Fatalf("PIT 未隔离增量/别名切换: %+v err=%v", batch, err)
+	}
+	_ = h.client.ClosePIT(ctx, batch.PITID)
 }

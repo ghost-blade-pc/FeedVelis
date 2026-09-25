@@ -25,7 +25,7 @@ func TestVelisOpenAPIContract(t *testing.T) {
 
 	paths := objectAt(t, document, "paths")
 	requiredPaths := []string{
-		"/articles", "/articles/{article_id}",
+		"/articles", "/articles/{article_id}", "/search/articles",
 		"/me/articles", "/me/articles/preview", "/me/articles/{article_id}",
 		"/me/articles/{article_id}/publish", "/me/articles/{article_id}/offline",
 		"/me/assets", "/me/assets/{asset_id}/confirm", "/assets/{asset_id}/content",
@@ -34,6 +34,7 @@ func TestVelisOpenAPIContract(t *testing.T) {
 		"/admin/sources/{source_id}/pause", "/admin/sources/{source_id}/resume",
 		"/admin/sources/{source_id}/fetches",
 	}
+	assertArticleSearchContract(t, document, paths)
 	for _, path := range requiredPaths {
 		if _, ok := paths[path]; !ok {
 			t.Errorf("缺少 I2 路径 %s", path)
@@ -42,6 +43,43 @@ func TestVelisOpenAPIContract(t *testing.T) {
 
 	operationIDs := make(map[string]string)
 	walkContract(t, document, document, operationIDs, "#")
+}
+
+func assertArticleSearchContract(t *testing.T, document, paths map[string]any) {
+	t.Helper()
+	search := objectAt(t, objectAt(t, paths, "/search/articles"), "get")
+	parameters, ok := search["parameters"].([]any)
+	if !ok || len(parameters) != 6 {
+		t.Fatalf("搜索参数数量错误: %T %v", search["parameters"], search["parameters"])
+	}
+	byName := make(map[string]map[string]any, len(parameters))
+	for _, raw := range parameters {
+		parameter := raw.(map[string]any)
+		byName[parameter["name"].(string)] = parameter
+	}
+	if byName["q"]["required"] != true || objectAt(t, byName["q"], "schema")["maxLength"] != 200 {
+		t.Fatalf("q 必须 required 且最多 200 字符: %+v", byName["q"])
+	}
+	if objectAt(t, byName["limit"], "schema")["maximum"] != 50 || objectAt(t, byName["source_id"], "schema")["minimum"] != 1 {
+		t.Fatalf("limit/source_id 边界错误: %+v %+v", byName["limit"], byName["source_id"])
+	}
+	responses := objectAt(t, search, "responses")
+	for _, status := range []string{"200", "400", "503"} {
+		if _, ok := responses[status]; !ok {
+			t.Fatalf("搜索缺少 %s 响应", status)
+		}
+	}
+	schemas := objectAt(t, objectAt(t, document, "components"), "schemas")
+	page := objectAt(t, schemas, "ArticleSearchPage")
+	properties := objectAt(t, page, "properties")
+	items := objectAt(t, objectAt(t, properties, "items"), "items")
+	if items["$ref"] != "#/components/schemas/ArticleItem" {
+		t.Fatalf("搜索结果必须复用 ArticleItem: %+v", items)
+	}
+	types, ok := objectAt(t, properties, "next_cursor")["type"].([]any)
+	if !ok || len(types) != 2 || types[0] != "string" || types[1] != "null" {
+		t.Fatalf("next_cursor 必须 required nullable string: %+v", properties["next_cursor"])
+	}
 }
 
 func walkContract(t *testing.T, root, value map[string]any, operationIDs map[string]string, location string) {

@@ -362,6 +362,35 @@ WHERE a.status='published'`
 	return items, rows.Err()
 }
 
+// ListPublishedByIDs 批量复核搜索候选的当前公开事实。返回顺序不构成契约，
+// 应用层必须按候选顺序恢复；空输入直接返回且不访问数据库。
+func (r *ArticleRepository) ListPublishedByIDs(ctx context.Context, articleIDs []int64) ([]articleDomain.ListItem, error) {
+	if len(articleIDs) == 0 {
+		return []articleDomain.ListItem{}, nil
+	}
+	rows, err := querier(ctx, r.pool).Query(ctx, `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
+v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
+g.summary,g.keywords,g.topics,g.generated_at FROM velis.articles a
+JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
+LEFT JOIN velis.users u ON u.id=a.author_user_id
+LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
+LEFT JOIN velis.ai_generation_results g ON g.id=cs.generation_result_id AND g.article_id=a.id AND g.revision_id=a.current_revision_id
+WHERE a.status='published' AND a.id=ANY($1::bigint[])`, articleIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]articleDomain.ListItem, 0, len(articleIDs))
+	for rows.Next() {
+		item, _, scanErr := scanPublished(rows, false)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 type rowScanner interface{ Scan(...any) error }
 
 func scanPublished(row rowScanner, withHTML bool) (articleDomain.ListItem, *string, error) {

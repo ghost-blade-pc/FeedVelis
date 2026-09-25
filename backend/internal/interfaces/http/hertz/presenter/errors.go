@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	accountApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/account"
+	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	assetApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asset"
 	idempotencyApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/idempotency"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
@@ -25,6 +26,21 @@ type ErrorMapping struct {
 	Code       string
 	Message    string
 	RetryAfter time.Duration
+}
+
+func MapSearchError(err error) ErrorMapping {
+	switch searchApp.CodeOf(err) {
+	case searchApp.CodeValidationFailed:
+		return ErrorMapping{Status: consts.StatusBadRequest, Code: CodeValidationFailed, Message: "搜索参数无效"}
+	case searchApp.CodeInvalidCursor:
+		return ErrorMapping{Status: consts.StatusBadRequest, Code: CodeInvalidCursor, Message: "搜索游标无效、已过期或与查询不匹配"}
+	case searchApp.CodeSearchUnavailable:
+		return ErrorMapping{Status: consts.StatusServiceUnavailable, Code: CodeSearchUnavailable, Message: "搜索暂不可用，请稍后重试", RetryAfter: time.Second}
+	case searchApp.CodeDependencyUnavailable:
+		return ErrorMapping{Status: consts.StatusServiceUnavailable, Code: CodeDependencyUnavailable, Message: "搜索依赖暂不可用", RetryAfter: time.Second}
+	default:
+		return ErrorMapping{Status: consts.StatusInternalServerError, Code: CodeInternalError, Message: "搜索请求处理失败"}
+	}
 }
 
 // MapAuthError 映射认证相关错误。

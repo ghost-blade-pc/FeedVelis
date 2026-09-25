@@ -1,4 +1,4 @@
-import type { ArticleDetail, ArticlePage } from '../types/article'
+import type { ArticleDetail, ArticlePage, ArticleSearchPage, ArticleSearchQuery } from '../types/article'
 
 export interface PingResponse {
   message: 'pong'
@@ -100,4 +100,13 @@ export async function listArticles(cursor?: string, limit = 20, signal?: AbortSi
 
 export async function getArticle(id: number, signal?: AbortSignal): Promise<ArticleDetail> {
   return request<ArticleDetail>(`/api/v1/articles/${id}`, { signal })
+}
+
+export async function searchArticles(query: ArticleSearchQuery, signal?: AbortSignal): Promise<ArticleSearchPage> {
+  const parameters = new URLSearchParams({ q: query.q, limit: String(query.limit ?? 20) })
+  if (query.keyword !== undefined) parameters.set('keyword', query.keyword)
+  if (query.topic !== undefined) parameters.set('topic', query.topic)
+  if (query.source_id !== undefined) parameters.set('source_id', String(query.source_id))
+  if (query.cursor) parameters.set('cursor', query.cursor)
+  return request<ArticleSearchPage>(`/api/v1/search/articles?${parameters.toString()}`, { signal })
 }
