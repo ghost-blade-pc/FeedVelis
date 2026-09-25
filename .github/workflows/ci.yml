@@ -37,7 +37,8 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        image: postgres:17
+        # 与 compose 保持同一镜像：初始迁移会创建 vector 扩展，裸 postgres:17 没有该扩展。
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: velis
           POSTGRES_PASSWORD: velis
