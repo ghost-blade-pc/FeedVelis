@@ -17,7 +17,7 @@ import (
 	sourceDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/source"
 )
 
-const usage = `用法: velis-admin <source|account|async|ai> <命令> [参数]
+const usage = `用法: velis-admin <source|account|async|ai|search> <命令> [参数]
   source add -url <feed-url>
   source list
   source pause|resume|fetch <id> [--force]
@@ -26,7 +26,8 @@ const usage = `用法: velis-admin <source|account|async|ai> <命令> [参数]
   account set-status -username <name> -status active|disabled
   async backfill-articles -limit <1..1000>
   async replay-dlq -limit <1..1000>
-  ai backfill -stage generation|embedding|all -mode missing-only|outdated-only (-article-id <id> | -limit <1..1000> [-order oldest|newest] | -all [-confirm-all]) [-dry-run]`
+  ai backfill -stage generation|embedding|all -mode missing-only|outdated-only (-article-id <id> | -limit <1..1000> [-order oldest|newest] | -all [-confirm-all]) [-dry-run]
+` + searchUsage
 
 type SourceService interface {
 	AddWithInterval(context.Context, string, time.Duration) (sourceDomain.Source, bool, error)
@@ -69,6 +70,10 @@ type Options struct {
 	AIBackfill interface {
 		Run(context.Context, enrichmentApp.BackfillRequest) (enrichmentApp.BackfillReport, error)
 	}
+	// Search 为 nil 表示未配置 OpenSearch，此时 search 子命令明确拒绝执行。
+	Search SearchService
+	// Now 允许测试注入时钟；为 nil 时使用系统时钟。
+	Now                 func() time.Time
 	AIGenerationProfile string
 	AIEmbeddingProfile  string
 	Stdin               io.Reader
@@ -104,6 +109,8 @@ func (r *Runner) Run(ctx context.Context, args []string) error {
 		return r.runAsync(ctx, args[1:])
 	case "ai":
 		return r.runAI(ctx, args[1:])
+	case "search":
+		return r.runSearch(ctx, args[1:])
 	default:
 		return fmt.Errorf("不支持的命令组 %q\n%s", args[0], usage)
 	}

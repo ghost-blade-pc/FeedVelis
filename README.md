@@ -18,9 +18,10 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
 | AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量仅持久化，尚无检索 API |
+| 搜索投影 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI 与积压指标 | 默认未配置；**不提供搜索 HTTP API**，也没有 BM25/KNN 查询、查询 Embedding 或 RRF；索引是可丢弃派生状态，不是事实源 |
 | Web | latest/详情、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无互动、搜索、recommend 或 Agent 界面 |
 
-推荐信号、recommend Feed、Redis 业务缓存、OpenSearch、向量检索、对话 Agent 与定时 Agent 均未实现。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+推荐信号、recommend Feed、Redis 业务缓存、向量检索、对话 Agent 与定时 Agent 均未实现。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 
@@ -273,6 +274,64 @@ Compose 用户可直接在本地 `.env` 中按 [.env.example](.env.example) 的 
 | Embedding input / attempts / audit Token | 12000 / 3 / 10000 | 输入 1000–100000；尝试 1–5；审计预算最多 1000000 |
 | Worker lease / poll / batch | 2m / 1s / 8 | lease 10s–10m；poll 100ms–1m；batch 1–100 |
 
+### 搜索投影配置
+
+OpenSearch 是可选依赖。`search.endpoints` 为空时投影 Worker 不装配：文章发布、RSS 抓取、latest、详情与 AI 增强全部照常工作，只是 PostgreSQL 里保留一份待处理槽位。非开发环境必须使用 HTTPS 并显式提供 `search.username` 与 `search.password`；凭据只注入 Worker，日志只记录脱敏后的协议与主机。
+
+Compose 已内置固定 `opensearchproject/opensearch:3.8.0` 单节点服务，默认把 Worker 指向它。把 `VELIS_SEARCH_ENDPOINTS` 显式写成空值即可关闭投影而不影响其它组件。
+
+| 配置 | 默认值 | 硬边界/说明 |
+| --- | --- | --- |
+| endpoints | 空（未配置） | 最多 8 个；不得携带凭据、查询或路径 |
+| index_prefix | velis-articles | 2–64 位小写标识；读写别名由它派生为 `-read` / `-write` |
+| schema_version | 1 | 1–100；与映射、分析器、维度和投影编码共同构成 schema 身份 |
+| embedding_dimensions | 1024 | 1–65536；启用 Embedding profile 时必须与 `ai.embedding.dimensions` 一致 |
+| connect / request timeout | 5s / 30s | 1s–1m / 1s–5m |
+| bulk_max_items / bytes / document chars | 500 / 5 MiB / 65536 | 1–10000 / 1KiB–64MiB / 1000–4MiB；超限文档单独永久失败 |
+| worker lease / poll / batch | 2m / 1s / 20 | lease 10s–10m 且必须大于 request timeout；poll 100ms–1m；batch 1–500 |
+| worker attempts / backoff | 5 / 2s–5m | 尝试 1–20；退避 1s–1h |
+| rebuild snapshot batch / rollback window / sample | 500 / 24h / 200 | 批 1–10000；窗口 1m–30d；抽样 1–10000 |
+
+## 搜索投影运维
+
+**OpenSearch 不是事实源。** 文章、修订、公开状态与 AI 当前选择都以 PostgreSQL 为准；索引只是可丢弃的派生投影。删除整个索引不会丢任何业务事实，重建即可恢复。投影写入永远不会反向修改 PostgreSQL。
+
+一次完整的首次初始化与存量重建：
+
+```bash
+export VELIS_SEARCH_ENDPOINTS=http://localhost:9200   # Compose 只把 OpenSearch 发布到本机端口
+ADMIN="go run ./cmd/velis-admin -config configs/config.example.yaml"
+
+# 1. 建立首个物理索引、读写别名与 schema 身份（幂等，可重复执行）
+$ADMIN search index init
+
+# 2. 全量重建：创建候选索引、快照公开文章、追赶增量、校验后停在 validated
+$ADMIN search rebuild start
+
+# 3. 查看服务索引、活动重建与最近记录
+$ADMIN search rebuild status
+
+# 4. 校验通过后再原子切换读写别名，并打开 24h 回滚窗口
+$ADMIN search rebuild cutover
+
+# 5. 回滚窗口结束后清理旧索引（必须显式确认，且只删除精确目标）
+$ADMIN search rebuild cleanup -index velis-articles-v1-20260925t120000z-aaaaaa -confirm
+```
+
+命令默认读取 `configs/config.example.yaml`；该配置的数据库指向 `localhost:5432`，与 Compose 发布的端口一致。OpenSearch 端点必须显式给出，因为示例配置默认不启用投影。
+
+运维边界：
+
+- `rebuild start` 一次只允许一个活动重建；已有活动重建或回滚窗口未关闭时会明确拒绝。
+- `rebuild resume` 从持久化的文章 ID 与 change sequence 水位继续，进程中途退出不会丢进度，也不会重写已完成的批次。
+- 校验不通过（公开文档数与候选索引不一致、存在落后投递、抽样身份或内容指纹不符）时**拒绝切换**，当前索引继续服务；失败报告持久化在重建记录上。
+- `rollback` 只能在回滚窗口内执行；窗口内 Worker 会同时写新旧两个索引，因此切回不会有落后文档。
+- `cleanup` 拒绝删除当前读索引、回滚窗口内的索引、仍被投递引用或前缀未知的索引。回滚窗口到期后它会先停止该索引的投递再删除。
+- 观察积压：`velis_search_projection_jobs`、`velis_search_oldest_pending_age_seconds`、`velis_search_lagging_deliveries`、`velis_search_bulk_items_total` 与 `velis_search_rebuild_phase`。
+- 失败投递超过自动尝试上限后进入 `failed` 并停止自动重试；目标再次变化会自动重新激活，也可以用 `search retry -limit <1..1000> [-article-id <id>] [-index <物理索引>]` 有界重试，命令输出可审计报告。
+- 单篇文章的永久失败（例如映射错误）只影响该篇，不会阻塞同批其它文档。
+- 应用回滚时先停投影 Worker；旧应用忽略新增表，文章主链路继续可用。不要因应用回滚执行 down migration 或删除 OpenSearch 索引。
+
 ## 数据迁移与回滚
 
 `000004_unify_content_supply` 会保留历史 RSS 文章 ID，把旧正文回填为 revision 1，并以原 `discovered_at` 固定 `published_at`。迁移前应备份并在专用环境核对文章数、ID、状态、修订和 latest 抽样。
@@ -284,6 +343,8 @@ Compose 用户可直接在本地 `.env` 中按 [.env.example](.env.example) 的 
 `000007_add_ai_content_enrichment` 扩展任务阶段、租约、重试与完成状态，并创建不可变 generation/Embedding 结果、独立 current 指针和模型调用审计表。回滚前先停 AI Worker；只要存在增强结果、调用记录或任务已进入新状态，down 会明确拒绝。向量保存为 `real[]`，此阶段没有向量查询或索引。
 
 `000008_harden_ai_provider_acceptance` 增加同一任务 generation 跨重试共享的单次格式纠正额度，并为模型调用审计补充结构化输出模式与低基数安全原因。只要已经使用纠正额度或存在新调用类型/审计字段数据，down 会拒绝；应用回滚时应保留该迁移和审计事实。
+
+`000009_add_search_projection` 创建搜索投影槽位、按物理索引的投递、索引服务状态与重建记录，并建立一个全局 change sequence。down 只在投影槽位、投递与重建记录全为空、且回滚窗口已关闭时允许执行，避免静默丢失诊断状态。应用回滚时先停投影 Worker；旧应用忽略这些表，不要用 force 绕过保护。
 
 down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、无资产”的旧模型可表达状态时才允许回退。只要存在用户投稿、资产或第二修订，down 会在事务内明确失败。不要使用 force 或删除数据绕过保护；此时应保持数据库前滚并修复/回滚应用。
 
@@ -297,6 +358,11 @@ cd backend && GOCACHE=/tmp/feedvelis-go-cache go vet ./...
 VELIS_TEST_DATABASE_URL='postgres://velis:velis@localhost:5432/velis_test?sslmode=disable' \
 VELIS_TEST_RABBITMQ_URL='amqp://velis:开发密码@localhost:5672/velis' \
 make integration-async
+
+# OpenSearch 模板/Bulk/别名契约测试，以及索引重建的真实依赖测试
+VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-opensearch
+VELIS_TEST_DATABASE_URL='postgres://velis:velis@localhost:5432/velis_test?sslmode=disable' \
+VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 ```
 
 `make check` 包含 gofmt、Go 单测/竞态/构建、Vitest 与 Web 类型检查/构建；其中 gofmt 会修改未格式化的 Go 文件。独立命令见 [Makefile](Makefile)。CI 另外执行 `go vet`，详见 [ci.yml](.github/workflows/ci.yml)。

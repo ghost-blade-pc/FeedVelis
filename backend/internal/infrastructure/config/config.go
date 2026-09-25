@@ -30,6 +30,7 @@ type Config struct {
 	Consumer    ConsumerConfig    `yaml:"consumer"`
 	Outbox      OutboxConfig      `yaml:"outbox"`
 	AI          AIConfig          `yaml:"ai"`
+	Search      SearchConfig      `yaml:"search"`
 }
 
 type AppConfig struct {
@@ -133,6 +134,21 @@ func Default() Config {
 			},
 			Worker: AIWorkerConfig{LeaseRaw: "2m", PollRaw: "1s", BatchSize: 8},
 		},
+		Search: SearchConfig{
+			IndexPrefix:          "velis-articles",
+			SchemaVersion:        1,
+			EmbeddingDimensions:  1024,
+			ConnectRaw:           "5s",
+			RequestRaw:           "30s",
+			BulkMaxItems:         500,
+			BulkMaxBytes:         5 * 1024 * 1024,
+			BulkMaxDocumentChars: 65536,
+			Worker: SearchWorkerConfig{
+				LeaseRaw: "2m", PollRaw: "1s", BatchSize: 20, MaxAttempts: 5,
+				BackoffMin: "2s", BackoffMax: "5m",
+			},
+			Rebuild: SearchRebuildConfig{SnapshotBatch: 500, RollbackWindow: "24h", SampleSize: 200},
+		},
 		Assets: AssetConfig{
 			Bucket:            "velis-article-assets",
 			UploadRaw:         "15m",
@@ -232,6 +248,9 @@ func applyEnvironment(cfg *Config) error {
 	setString(&cfg.Idempotency.RetentionRaw, "VELIS_IDEMPOTENCY_RETENTION")
 	setString(&cfg.Feed.ProxyURL, "VELIS_FEED_PROXY_URL")
 	if err := applyAIEnvironment(cfg); err != nil {
+		return err
+	}
+	if err := applySearchEnvironment(cfg); err != nil {
 		return err
 	}
 
@@ -474,6 +493,9 @@ func (cfg *Config) Validate() error {
 		return err
 	}
 	if err := validateAIConfig(&cfg.AI); err != nil {
+		return err
+	}
+	if err := validateSearchConfig(&cfg.Search, &cfg.AI, cfg.App.Environment); err != nil {
 		return err
 	}
 	return validateAuth(&cfg.Auth, cfg.App.Environment)

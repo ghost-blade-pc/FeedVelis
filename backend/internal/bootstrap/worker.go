@@ -17,6 +17,7 @@ import (
 	enrichmentApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/enrichment"
 	outboxApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/outbox"
 	relayApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/relay"
+	projectionApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/searchprojection"
 	einoAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/ai/eino"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/clock"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/config"
@@ -24,6 +25,7 @@ import (
 	rabbitAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/messaging/rabbitmq"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/observability"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/persistence/postgres"
+	searchAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/search/opensearch"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/scheduler"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -61,6 +63,7 @@ func buildWorkerComponents(cfg config.Config, pool *pgxpool.Pool, logger *slog.L
 	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
 	registry := prometheus.NewRegistry()
 	asyncMetrics := observability.NewAsyncMetrics(registry)
+	searchMetrics := observability.NewSearchMetrics(registry)
 	components := []WorkerComponent{instrumentWorkerComponent("feed", false, asyncMetrics, scheduler.New(feed.sources, logger, owner, cfg.Worker.HeartbeatInterval).Run)}
 	cleanup, err := buildCleanupScheduler(cfg, pool, logger)
 	if err != nil {
@@ -78,6 +81,13 @@ func buildWorkerComponents(cfg config.Config, pool *pgxpool.Pool, logger *slog.L
 		components = append(components, instrumentWorkerComponent("ai_enrichment", false, asyncMetrics, func(ctx context.Context) error {
 			return runAIEnrichment(ctx, cfg, pool, logger, owner, asyncMetrics)
 		}))
+	}
+	if cfg.Search.Enabled() {
+		// 搜索投影是可重启的非核心组件：OpenSearch 故障不得终止 Feed、AI、Relay 或清理。
+		components = append(components, instrumentWorkerComponent("search_projection", false, asyncMetrics,
+			func(ctx context.Context) error {
+				return runSearchProjection(ctx, cfg, pool, logger, owner, searchMetrics)
+			}))
 	}
 	if cfg.RabbitMQ.URL == "" {
 		return components, nil
@@ -160,6 +170,62 @@ func runAIEnrichment(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,
 			return nil
 		case <-ticker.C:
 		}
+	}
+}
+
+// runSearchProjection 是搜索投影组件的运行循环。
+// 连接或索引不可用时返回错误，由 Supervisor 独立重启，不影响其他组件。
+func runSearchProjection(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, owner string, metrics *observability.SearchMetrics) error {
+	client, err := searchAdapter.New(searchClientConfig(cfg))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+	if err := client.Ping(ctx); err != nil {
+		logger.Error("搜索投影无法连接 OpenSearch，将重试", "endpoints",
+			config.RedactedSearchEndpoints(cfg.Search.Endpoints), "error", err)
+		return err
+	}
+	repository := postgres.NewSearchProjectionRepository(pool)
+	executor := projectionApp.NewExecutor(repository, repository, repository, client, projectionApp.ExecutorPolicy{
+		Lease: cfg.Search.Worker.Lease, BatchSize: cfg.Search.Worker.BatchSize, MaxAttempts: cfg.Search.Worker.MaxAttempts,
+		BackoffMin: cfg.Search.Worker.BackoffMinD, BackoffMax: cfg.Search.Worker.BackoffMaxD,
+		SchemaVersion: cfg.Search.SchemaVersion, Owner: owner,
+	}, nil, func(delay time.Duration) time.Duration { return time.Duration(float64(delay) * (1 + randomJitter())) }).
+		WithObserver(observability.NewSearchObserver(metrics, logger))
+
+	ticker := time.NewTicker(cfg.Search.Worker.Poll)
+	defer ticker.Stop()
+	for {
+		if err := observability.RefreshSearchBacklog(ctx, pool, metrics); err != nil {
+			return err
+		}
+		processed, err := executor.ProcessBatch(ctx)
+		if err != nil {
+			logger.Error("搜索投影执行失败，将重试", "worker_id", owner, "error", err)
+			return err
+		}
+		if processed > 0 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// searchClientConfig 只把 Worker 需要的信息交给适配器；凭据不进入日志。
+func searchClientConfig(cfg config.Config) searchAdapter.Config {
+	return searchAdapter.Config{
+		Endpoints: cfg.Search.Endpoints, Username: cfg.Search.Username, Password: cfg.Search.Password,
+		CAFile: cfg.Search.CAFile, InsecureSkipVerify: cfg.Search.InsecureSkipVerify,
+		ConnectTimeout: cfg.Search.ConnectTimeout, RequestTimeout: cfg.Search.RequestTimeout,
+		IndexPrefix: cfg.Search.IndexPrefix, SchemaVersion: cfg.Search.SchemaVersion,
+		SchemaIdentity: cfg.Search.SchemaIdentity(), EmbeddingDimensions: cfg.Search.EmbeddingDimensions,
+		BulkMaxItems: cfg.Search.BulkMaxItems, BulkMaxBytes: cfg.Search.BulkMaxBytes,
+		BulkMaxDocumentChars: cfg.Search.BulkMaxDocumentChars,
 	}
 }
 

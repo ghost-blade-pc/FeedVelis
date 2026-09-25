@@ -68,7 +68,13 @@ WHERE a.source_id=$1 AND a.dedupe_key=$2 AND a.origin_type='rss' FOR UPDATE`, a.
 source_item_id=$3,canonical_url=$4,author_name=$5,source_published_at=$6,source_updated_at=$7,
 last_seen_at=$8,updated_at=$8 WHERE id=$1`, articleID, revisionID, a.SourceItemID,
 		a.CanonicalURL, a.AuthorName, a.SourcePublishedAt, a.SourceUpdatedAt, now)
-	return articleDomain.MutationResult{Result: articleDomain.UpsertUpdated, ArticleID: articleID, Origin: articleDomain.OriginRSS, RevisionID: revisionID, RevisionNo: revisionNo + 1, ContentHash: a.ContentHash, Status: articleDomain.StatusPublished, LockVersion: lockVersion + 1}, err
+	if err != nil {
+		return articleDomain.MutationResult{}, err
+	}
+	if _, err := advanceSearchProjectionTarget(ctx, tx, articleID, now); err != nil {
+		return articleDomain.MutationResult{}, err
+	}
+	return articleDomain.MutationResult{Result: articleDomain.UpsertUpdated, ArticleID: articleID, Origin: articleDomain.OriginRSS, RevisionID: revisionID, RevisionNo: revisionNo + 1, ContentHash: a.ContentHash, Status: articleDomain.StatusPublished, LockVersion: lockVersion + 1}, nil
 }
 
 func insertRSSArticle(ctx context.Context, tx pgx.Tx, candidate articleDomain.Candidate, now time.Time) (articleDomain.MutationResult, error) {
@@ -94,6 +100,9 @@ ON CONFLICT (source_id,dedupe_key) DO NOTHING`, articleID, a.SourceID, a.DedupeK
 		return articleDomain.MutationResult{}, articleDomain.ErrVersionConflict
 	}
 	if err := insertRSSRevision(ctx, tx, revisionID, articleID, 1, candidate, now); err != nil {
+		return articleDomain.MutationResult{}, err
+	}
+	if _, err := advanceSearchProjectionTarget(ctx, tx, articleID, now); err != nil {
 		return articleDomain.MutationResult{}, err
 	}
 	return articleDomain.MutationResult{Result: articleDomain.UpsertInserted, ArticleID: articleID, Origin: articleDomain.OriginRSS, RevisionID: revisionID, RevisionNo: 1, ContentHash: a.ContentHash, Status: articleDomain.StatusPublished, LockVersion: 1}, nil
@@ -137,6 +146,10 @@ OVERRIDING SYSTEM VALUE VALUES ($1,'user',$2,$3,$4,$5,$6,1,$5,$5,$5)`, articleID
 			return err
 		}
 		if err := insertUserRevision(txContext, tx, revisionID, articleID, 1, authorID, revision, now); err != nil {
+			return err
+		}
+		// 草稿落到 tombstone 目标，直接发布落到 upsert 目标：都由同一个 helper 从当前事实推导。
+		if _, err := advanceSearchProjectionTarget(txContext, tx, articleID, now); err != nil {
 			return err
 		}
 		stored, err = scanStored(tx.QueryRow(txContext, storedSQL+` WHERE a.id=$1`, articleID))
@@ -219,6 +232,9 @@ WHERE id=$1 AND origin_type='user' AND author_user_id=$2 AND status<>'deleted' F
 lock_version=lock_version+1,updated_at=$3 WHERE id=$1`, articleID, revisionID, now); err != nil {
 				return err
 			}
+			if _, err := advanceSearchProjectionTarget(txContext, tx, articleID, now); err != nil {
+				return err
+			}
 			changed = true
 		}
 		stored, err = scanStored(tx.QueryRow(txContext, storedSQL+` WHERE a.id=$1`, articleID))
@@ -256,6 +272,14 @@ SET status='delete_pending',delete_requested_at=$2,updated_at=$2
 WHERE bound_article_id=$1 AND status='ready'`, articleID, now); err != nil {
 			return articleDomain.StoredArticle{}, err
 		}
+	}
+	// 发布、恢复、下架与删除共享同一条目标推进：可见性由状态本身推导，不由调用方声明。
+	tx, ok := transactionFromContext(ctx)
+	if !ok {
+		return articleDomain.StoredArticle{}, ErrProjectionTransactionRequired
+	}
+	if _, err := advanceSearchProjectionTarget(ctx, tx, articleID, now); err != nil {
+		return articleDomain.StoredArticle{}, err
 	}
 	return scanStored(querier(ctx, r.pool).QueryRow(ctx, storedSQL+` WHERE a.id=$1`, articleID))
 }

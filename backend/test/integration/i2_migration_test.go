@@ -25,19 +25,19 @@ func TestI2MigrationUpgradeDowngradeAndGuards(t *testing.T) {
 			t.Errorf("清理时恢复到最新迁移: %v", err)
 		}
 	}()
-	// 当前最新为 v8；显式退到 v3，避免新增迁移改变本测试的目标版本。
-	if err := runner.Steps(-5); err != nil {
+	// 显式退到 v3：用绝对版本而不是相对步数，新增迁移不会改变本测试的目标版本。
+	if err := runner.Migrate(3); err != nil {
 		t.Fatalf("回到 I2 前结构: %v", err)
 	}
 	seedLegacyArticles(t, env)
-	if err := runner.Steps(1); err != nil {
+	if err := runner.Migrate(4); err != nil {
 		t.Fatalf("升级 I2 结构: %v", err)
 	}
 
 	assertI2Catalog(t, env)
 	assertLegacyUpgrade(t, env)
 
-	if err := runner.Steps(-1); err != nil {
+	if err := runner.Migrate(3); err != nil {
 		t.Fatalf("纯历史 RSS 数据应可降级: %v", err)
 	}
 	var status, title, rawContent string
@@ -49,7 +49,7 @@ FROM velis.articles a JOIN velis.article_contents c ON c.article_id = a.id WHERE
 	if status != "hidden" || title != "隐藏历史" || rawContent != "<p>raw-hidden</p>" {
 		t.Fatalf("降级结果 = %q/%q/%q", status, title, rawContent)
 	}
-	if err := runner.Steps(1); err != nil {
+	if err := runner.Migrate(4); err != nil {
 		t.Fatalf("重新升级 I2 结构: %v", err)
 	}
 

@@ -123,6 +123,10 @@ embedding_profile_version=CASE WHEN velis.ai_current_selections.revision_id=EXCL
 	if err != nil {
 		return false, err
 	}
+	// 当前选择已成功切换：在同一 fenced 事务里推进无向量目标，使文本增强可独立进入索引。
+	if _, err := advanceSearchProjectionTarget(ctx, tx, task.ArticleID, now); err != nil {
+		return false, err
+	}
 	if needsEmbedding {
 		_, err = tx.Exec(ctx, `UPDATE velis.async_tasks SET stage='embedding',status='pending',generation_completed_at=$4,next_attempt_at=$4,
 lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=$4 WHERE id=$1 AND generation=$2 AND lease_token=$3`, task.ID, task.Generation, task.LeaseToken, now)
@@ -175,6 +179,10 @@ ON CONFLICT(article_id,revision_id,generation_result_id,provider,model,profile_v
 	}
 	tag, err := tx.Exec(ctx, `UPDATE velis.ai_current_selections SET embedding_result_id=$3,embedding_profile_version=$4,updated_at=$5 WHERE article_id=$1 AND revision_id=$2`, task.ArticleID, task.RevisionID, resultID, result.Profile.ProfileVersion, now)
 	if err != nil || tag.RowsAffected() != 1 {
+		return false, err
+	}
+	// Embedding 当前选择切换后才出现向量：同一事务推进更高 generation 的带向量目标。
+	if _, err := advanceSearchProjectionTarget(ctx, tx, task.ArticleID, now); err != nil {
 		return false, err
 	}
 	_, err = tx.Exec(ctx, `UPDATE velis.async_tasks SET status='succeeded',embedding_completed_at=$4,completed_at=$4,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=$4 WHERE id=$1 AND generation=$2 AND lease_token=$3`, task.ID, task.Generation, task.LeaseToken, now)

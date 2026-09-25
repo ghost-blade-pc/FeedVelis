@@ -21,11 +21,11 @@ func TestAIEnrichmentMigrationUpgradeConstraintsAndSafeDown(t *testing.T) {
 		}
 	}()
 
-	if err := runner.Steps(-2); err != nil {
+	if err := runner.Migrate(6); err != nil {
 		t.Fatalf("退回 v6: %v", err)
 	}
 	seedAIUpgradeTasks(t, env)
-	if err := runner.Steps(1); err != nil {
+	if err := runner.Migrate(7); err != nil {
 		t.Fatalf("升级 v7: %v", err)
 	}
 
@@ -66,7 +66,7 @@ VALUES('71000000-0000-0000-0000-000000000023',7101,7111,$1,'stub','embed','e-v1'
 		t.Fatal("向量维度不符必须被数据库约束拒绝")
 	}
 
-	if err := runner.Steps(-1); err == nil || !strings.Contains(err.Error(), "拒绝回滚 AI 内容增强迁移") {
+	if err := runner.Migrate(6); err == nil || !strings.Contains(err.Error(), "拒绝回滚 AI 内容增强迁移") {
 		t.Fatalf("存在结果时 down 应拒绝，实际: %v", err)
 	}
 	if err := runner.Force(7); err != nil {
@@ -76,7 +76,7 @@ VALUES('71000000-0000-0000-0000-000000000023',7101,7111,$1,'stub','embed','e-v1'
 DELETE FROM velis.article_versions; DELETE FROM velis.articles; DELETE FROM velis.users WHERE username='ai_migration_user'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Steps(-1); err != nil {
+	if err := runner.Migrate(6); err != nil {
 		t.Fatalf("空增强数据 down: %v", err)
 	}
 }
@@ -93,7 +93,7 @@ func TestAIEnrichmentHardeningMigrationUpgradeConstraintsAndSafeDown(t *testing.
 		}
 	}()
 
-	if err := runner.Steps(-1); err != nil {
+	if err := runner.Migrate(7); err != nil {
 		t.Fatalf("退回 v7: %v", err)
 	}
 	seedAIUpgradeTasks(t, env)
@@ -103,7 +103,7 @@ VALUES('71000000-0000-0000-0000-000000000031','71000000-0000-0000-0000-000000000
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Steps(1); err != nil {
+	if err := runner.Migrate(8); err != nil {
 		t.Fatalf("升级 v8: %v", err)
 	}
 
@@ -136,7 +136,7 @@ VALUES('71000000-0000-0000-0000-000000000034','71000000-0000-0000-0000-000000000
 		t.Fatal(err)
 	}
 
-	if err := runner.Steps(-1); err == nil || !strings.Contains(err.Error(), "拒绝回滚 AI 内容增强加固迁移") {
+	if err := runner.Migrate(7); err == nil || !strings.Contains(err.Error(), "拒绝回滚 AI 内容增强加固迁移") {
 		t.Fatalf("存在纠正数据时 down 应拒绝，实际: %v", err)
 	}
 	if err := runner.Force(8); err != nil {
@@ -145,7 +145,7 @@ VALUES('71000000-0000-0000-0000-000000000034','71000000-0000-0000-0000-000000000
 	if _, err := env.pool.Exec(ctx, `DELETE FROM velis.ai_model_calls; UPDATE velis.async_tasks SET generation_repair_used_at=NULL`); err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Steps(-1); err != nil {
+	if err := runner.Migrate(7); err != nil {
 		t.Fatalf("无纠正数据 down: %v", err)
 	}
 	if _, err := env.pool.Exec(ctx, `DELETE FROM velis.async_tasks; DELETE FROM velis.article_versions;

@@ -2,8 +2,11 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/golang-migrate/migrate/v4"
 )
 
 func TestLatestEffectiveTimeIndexMigrationCanRollbackAndRestore(t *testing.T) {
@@ -13,22 +16,22 @@ func TestLatestEffectiveTimeIndexMigrationCanRollbackAndRestore(t *testing.T) {
 	isRolledBack := false
 	defer func() {
 		if isRolledBack {
-			if err := runner.Steps(4); err != nil {
+			if err := runner.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 				t.Errorf("清理时恢复 latest 有效时间索引: %v", err)
 			}
 		}
 	}()
 
 	assertLatestIndexDefinition(t, env, "COALESCE(source_published_at, published_at)")
-	// 000005 是被测迁移；从当前 v8 显式退到 v4。
-	if err := runner.Steps(-4); err != nil {
+	// 000005 是被测迁移；用绝对版本退到 v4，新增迁移不会改变目标版本。
+	if err := runner.Migrate(4); err != nil {
 		t.Fatalf("回滚 latest 有效时间索引: %v", err)
 	}
 	isRolledBack = true
 	assertLatestIndexDefinition(t, env, "published_at DESC")
 	assertLatestIndexDefinitionDoesNotContain(t, env, "COALESCE(source_published_at, published_at)")
 
-	if err := runner.Steps(4); err != nil {
+	if err := runner.Migrate(8); err != nil {
 		t.Fatalf("重新应用 latest 有效时间索引: %v", err)
 	}
 	isRolledBack = false

@@ -105,7 +105,9 @@ velis.refresh_tokens, velis.auth_sessions, velis.users RESTART IDENTITY CASCADE`
 
 func (e *testEnv) resetArticles(t *testing.T) {
 	t.Helper()
-	e.truncate(t, `TRUNCATE velis.ai_model_calls, velis.ai_current_selections, velis.ai_embedding_results, velis.ai_generation_results,
+	e.truncate(t, `TRUNCATE velis.search_projection_deliveries, velis.search_projection_jobs,
+velis.search_index_rebuilds, velis.search_index_state,
+velis.ai_model_calls, velis.ai_current_selections, velis.ai_embedding_results, velis.ai_generation_results,
 velis.async_tasks, velis.consumed_events, velis.outbox_events,
 velis.article_asset_references, velis.idempotency_operations,
 velis.source_fetch_runs, velis.article_assets, velis.article_versions,

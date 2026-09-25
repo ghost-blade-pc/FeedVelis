@@ -2,8 +2,11 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/golang-migrate/migrate/v4"
 )
 
 func TestReliableAsyncMigrationUpSafeDownAndI2Preservation(t *testing.T) {
@@ -11,8 +14,8 @@ func TestReliableAsyncMigrationUpSafeDownAndI2Preservation(t *testing.T) {
 	env.resetArticles(t)
 	runner := newMigrationRunner(t, env.databaseURL)
 	ctx := context.Background()
-	// 本测试专门验证 v6；从当前 v8 显式退回 v6。
-	if err := runner.Steps(-2); err != nil {
+	// 本测试专门验证 v6；用绝对版本退回 v6，新增迁移不会改变目标版本。
+	if err := runner.Migrate(6); err != nil {
 		t.Fatalf("退回可靠异步迁移: %v", err)
 	}
 
@@ -38,7 +41,7 @@ VALUES ('01993a42-8e80-7a11-87dd-1dd92b6fb0c1','article.published.v1','article',
 '{"event_id":"01993a42-8e80-7a11-87dd-1dd92b6fb0c1","event_type":"article.published.v1","aggregate":{"type":"article","id":"42","version":7}}'::jsonb,now())`); err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Steps(-1); err == nil || !strings.Contains(err.Error(), "拒绝删除可靠异步表") {
+	if err := runner.Migrate(5); err == nil || !strings.Contains(err.Error(), "拒绝删除可靠异步表") {
 		t.Fatalf("有数据时 down 应被拒绝，实际: %v", err)
 	}
 	// golang-migrate 会把失败的 down 标为 dirty；确认拒绝行为后恢复到仍已应用的 v6。
@@ -48,11 +51,11 @@ VALUES ('01993a42-8e80-7a11-87dd-1dd92b6fb0c1','article.published.v1','article',
 	if _, err := env.pool.Exec(ctx, `DELETE FROM velis.outbox_events`); err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Steps(-1); err != nil {
+	if err := runner.Migrate(5); err != nil {
 		t.Fatalf("空表 down: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := runner.Steps(3); err != nil {
+		if err := runner.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 			t.Errorf("恢复迁移: %v", err)
 		}
 	})

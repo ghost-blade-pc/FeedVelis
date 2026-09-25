@@ -179,3 +179,34 @@ auth:
     # 每个 API 进程同时执行的散列数，超出的请求立即返回 503，不排队。
     concurrency: 1
 
+
+# 文章搜索投影（OpenSearch）。endpoints 为空表示未配置：投影 Worker 不装配，
+# 文章与 AI 写路径只留下 PostgreSQL 待处理槽位，发布、latest、详情与增强不受影响。
+# 非开发环境必须使用 HTTPS 并显式提供 username/password。
+search:
+  endpoints: []
+  username: ""
+  password: ""
+  ca_file: ""
+  insecure_skip_verify: false
+  index_prefix: velis-articles
+  # 映射、分析器、向量维度与投影编码的联合版本；任何一项变化都必须新建索引并重建。
+  schema_version: 1
+  # 必须与 ai.embedding.dimensions 一致：维度写入映射后不可变。
+  embedding_dimensions: 1024
+  connect_timeout: 5s
+  request_timeout: 30s
+  bulk_max_items: 500
+  bulk_max_bytes: 5242880
+  bulk_max_document_chars: 65536
+  worker:
+    lease: 2m
+    poll_interval: 1s
+    batch_size: 20
+    max_attempts: 5
+    backoff_min: 2s
+    backoff_max: 5m
+  rebuild:
+    snapshot_batch: 500
+    rollback_window: 24h
+    validation_sample_size: 200

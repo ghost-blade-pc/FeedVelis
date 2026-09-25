@@ -28,6 +28,57 @@ jobs:
       - name: 构建进程
         run: go build ./cmd/...
 
+  # 真实依赖测试：PostgreSQL 与固定 3.8.0 的 OpenSearch 都跑在 service 容器里。
+  # OpenSearch 用例在缺少 VELIS_TEST_OPENSEARCH_URL 时会明确跳过，所以这里必须注入该变量。
+  integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: velis
+          POSTGRES_PASSWORD: velis
+          POSTGRES_DB: velis_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U velis -d velis_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      opensearch:
+        # 与服务端和 compose 保持同一版本：分析器与映射行为必须可复现。
+        image: opensearchproject/opensearch:3.8.0
+        env:
+          discovery.type: single-node
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          DISABLE_SECURITY_PLUGIN: "true"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null || exit 1"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+          --health-start-period 60s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: PostgreSQL 与 OpenSearch 真实依赖测试
+        env:
+          VELIS_TEST_DATABASE_URL: postgres://velis:velis@localhost:5432/velis_test?sslmode=disable
+          VELIS_TEST_OPENSEARCH_URL: http://localhost:9200
+        run: |
+          go test -count=1 -v ./test/integration
+          go test -count=1 -v ./internal/infrastructure/search/opensearch
+
   web:
     runs-on: ubuntu-latest
     defaults:

@@ -71,6 +71,34 @@ services:
       timeout: 5s
       retries: 20
 
+  # 固定 3.8.0：搜索投影的 schema 与分析器行为必须可复现，不能用 latest 漂移。
+  # 单节点、禁用演示安全配置、只发布到本机端口：开发环境不做认证边界，生产必须用 HTTPS 与显式凭据。
+  opensearch:
+    image: opensearchproject/opensearch:3.8.0
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
   minio:
     image: minio/minio:latest
     command: ["server", "/data", "--console-address", ":9001"]
@@ -200,6 +228,12 @@ services:
       VELIS_AI_WORKER_LEASE: ${VELIS_AI_WORKER_LEASE:-2m}
       VELIS_AI_WORKER_POLL_INTERVAL: ${VELIS_AI_WORKER_POLL_INTERVAL:-1s}
       VELIS_AI_WORKER_BATCH_SIZE: ${VELIS_AI_WORKER_BATCH_SIZE:-8}
+      # 搜索投影只注入 Worker 与本地管理命令。用 ${VAR-default} 而不是 ${VAR:-default}：
+      # 显式写成空值时表示「未配置 OpenSearch」，投影组件保持禁用。
+      VELIS_SEARCH_ENDPOINTS: ${VELIS_SEARCH_ENDPOINTS-http://opensearch:9200}
+      VELIS_SEARCH_INDEX_PREFIX: ${VELIS_SEARCH_INDEX_PREFIX-velis-articles}
+      VELIS_SEARCH_SCHEMA_VERSION: ${VELIS_SEARCH_SCHEMA_VERSION-1}
+      VELIS_SEARCH_EMBEDDING_DIMENSIONS: ${VELIS_SEARCH_EMBEDDING_DIMENSIONS-1024}
     depends_on:
       velis-migrate:
         condition: service_completed_successfully
@@ -254,3 +288,4 @@ volumes:
   minio-data:
   rabbitmq-data:
   grafana-data:
+  opensearch-data:

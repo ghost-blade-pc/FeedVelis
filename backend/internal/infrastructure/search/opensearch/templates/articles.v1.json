@@ -1,0 +1,79 @@
+{
+  "index_patterns": ["{{index_prefix}}-v1-*"],
+  "priority": 100,
+  "_meta": {
+    "velis_schema_asset": "articles.v1",
+    "velis_projection_encoding": 1
+  },
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.mapping.total_fields.limit": 256,
+      "index.knn": true
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "_meta": {
+        "velis_schema_version": 1,
+        "velis_schema_identity": "{{schema_identity}}",
+        "velis_embedding_dimensions": {{embedding_dimensions}},
+        "velis_projection_encoding": 1
+      },
+      "properties": {
+        "article_id": {"type": "long"},
+        "projection_generation": {"type": "long"},
+        "lock_version": {"type": "long"},
+        "revision_id": {"type": "long"},
+        "schema_version": {"type": "integer"},
+        "generation_result_id": {"type": "keyword"},
+        "embedding_result_id": {"type": "keyword"},
+        "projection_content_hash": {"type": "keyword"},
+        "visible": {"type": "boolean"},
+        "invisible_reason": {"type": "keyword"},
+        "origin_type": {"type": "keyword"},
+        "source_id": {"type": "long"},
+        "author_user_id": {"type": "keyword"},
+        "published_at": {"type": "date"},
+        "source_title": {
+          "type": "text",
+          "analyzer": "cjk",
+          "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}
+        },
+        "author_name": {
+          "type": "text",
+          "analyzer": "cjk",
+          "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}
+        },
+        "title": {
+          "type": "text",
+          "analyzer": "cjk",
+          "fields": {"keyword": {"type": "keyword", "ignore_above": 512}}
+        },
+        "plain_text": {"type": "text", "analyzer": "cjk"},
+        "excerpt": {"type": "text", "analyzer": "cjk"},
+        "summary": {"type": "text", "analyzer": "cjk"},
+        "keywords": {
+          "type": "text",
+          "analyzer": "cjk",
+          "fields": {"keyword": {"type": "keyword", "ignore_above": 128}}
+        },
+        "topics": {
+          "type": "text",
+          "analyzer": "cjk",
+          "fields": {"keyword": {"type": "keyword", "ignore_above": 128}}
+        },
+        "vector": {
+          "type": "knn_vector",
+          "dimension": {{embedding_dimensions}},
+          "method": {
+            "name": "hnsw",
+            "space_type": "cosinesimil",
+            "engine": "lucene",
+            "parameters": {"m": 16, "ef_construction": 128}
+          }
+        }
+      }
+    }
+  }
+}
