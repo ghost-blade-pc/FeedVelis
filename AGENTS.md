@@ -1,26 +1,39 @@
-# AGENTS.md
+# Repository Guidelines
 
-## 项目导航
+## 项目结构与模块组织
 
-- [README](README.md)：当前功能、开发现状、启动与验证方式。
-- [Velis Roadmap](<Velis Roadmap.md>)：唯一项目目标、技术决策、实施顺序与完成标准；实现前读取对应阶段，未决细节在 change 中定稿。
-- `backend/api/openapi/velis.yaml`、`backend/migrations/`：当前 API 与数据库契约，随实现更新。
-- `openspec/`：当前 Spec 与 change 工作区；后续提案、实施、同步与归档均使用 OpenSpec。
-- `code_copilot/`：只读历史证据；不再创建或推进 change，不把旧 change 的范围当成当前全项目目标。
+- `backend/cmd/` 包含 API、Worker、迁移和管理 CLI；`backend/internal/` 按 Domain、Application、Infrastructure、Interfaces 四层组织，`bootstrap/` 负责装配。
+- `backend/migrations/` 保存版本化 PostgreSQL 迁移，`backend/api/openapi/velis.yaml` 是 HTTP 契约，`backend/test/` 放真实依赖与端到端测试。
+- `web/src/` 是 Vue 3 + TypeScript 应用，测试与实现就近放置；`compose.yaml` 和 `deploy/` 提供本地基础设施。
+- `openspec/` 是当前规划与长期规格入口；`code_copilot/` 仅作只读历史证据。实现前查阅 `README.md` 与 `Velis Roadmap.md`。
 
-## 开发约束
+## 构建、测试与本地开发
 
-- 后端 module 位于 `backend/`，路径为 `github.com/ghost-blade-pc/Velis_Feed/backend`；工具版本与命令以 `backend/go.mod`、`web/package.json`、根 Makefile 和 CI 为准。
-- 保留 Domain、Application、Infrastructure、Interfaces 四层及 bootstrap 装配。Domain 仅依赖 Domain；Application 依赖 Application/Domain；Infrastructure 依赖 Infrastructure/Application/Domain；Interfaces 依赖 Interfaces/Application/Domain。bootstrap 与 architecture 豁免。
-- `backend/internal/architecture/dependencies_test.go` 检查层级 import；模块之间通过应用接口或事件协作，不直接修改对方数据。业务规则应能在无 DB、网络和框架的测试中验证。
-- SQL、HTTP 状态、Redis Key、AMQP Routing Key、第三方 SDK 类型与协议 JSON 映射不进入领域模型；适配器留在 Infrastructure/Interfaces。不要把目标约束描述成现有代码已全部满足。
-- HTTP 中间件顺序保持 RequestID → Recovery → AccessLog；Handler 校验、鉴权、调用用例、统一错误响应；契约细节见 Roadmap 与 OpenAPI。
-- 配置优先级为默认值 < YAML < 环境变量；真实凭据不提交、不写日志。当前敏感配置入口为 `VELIS_*`，真实外部账户与生产操作需有明确授权。
-- 仓库文档、代码注释、日志与错误消息默认简体中文。保留当前 Vue/TypeScript 前端，不为目录形式重建框架。
-- 采用版本化 SQL 迁移，不改写已执行迁移。下迁移/force、生产数据修复及删除数据前明确目标、备份与回滚；`docker compose down -v` 会删除持久卷。
-- `make check` 会执行 gofmt 并修改文件；CI 还执行 go vet。真实 PostgreSQL 测试使用专用 `_test` 库并清表；跳过不等于通过。具体命令和验证限制见 README。
-- 不自动 commit、push、merge、发布、部署、采购或操作生产。用户已有明确授权的同一动作不重复请求许可。
-- 仓库暂无开源许可证，默认保留全部权利。
+- `make check`：执行 gofmt、Go 单测/race/build，以及 Web lint、Vitest 和构建；会改写 Go 格式。
+- `make compose-up` / `make compose-down`：构建、启动或停止完整本地环境。`docker compose down -v` 会删除持久卷，谨慎使用。
+- `make migrate-up`：对示例配置指向的 PostgreSQL 执行迁移。
+- `cd web && npm ci && npm run dev`：启动 Vite 开发服务器。
+- `make integration-all`：运行 PostgreSQL、RabbitMQ、OpenSearch 真实依赖测试；先设置对应的 `VELIS_TEST_*`，数据库必须是专用 `_test` 库。
+
+## 编码风格与架构约束
+
+Go 代码以 `gofmt` 为准，包名小写；Vue 组件使用 PascalCase，TypeScript/Vue 延续现有两空格缩进并通过 ESLint。仓库文档、注释、日志和错误消息默认使用简体中文。
+
+保持四层依赖方向：Domain 仅依赖 Domain；Application 依赖 Domain；Infrastructure 和 Interfaces 通过应用端口协作。SQL、HTTP 状态、Redis/AMQP 键及第三方 SDK 类型不得进入领域模型。不要改写已执行迁移；新变更添加递增编号的 `.up.sql`/`.down.sql`。
+
+## 测试规范
+
+Go 使用标准 `testing`，文件命名为 `*_test.go`；Web 使用 Vitest，文件命名为 `*.test.ts`。仓库暂无固定覆盖率阈值，但每项行为变更必须包含成功、失败和边界回归测试。架构改动需运行 `backend/internal/architecture/` 测试；真实依赖测试的 skip 不等于通过。
+
+## Commit 与 Pull Request
+
+近期提交采用 Conventional Commits 风格及简洁中文主题，例如 `feat: 实现OpenSearch`、`fix: 修复默认周期`、`docs: 归档Spec`。一个提交聚焦一个逻辑变化。
+
+PR 应说明范围、风险、关联 issue/OpenSpec change，以及已运行命令和结果；Web 视觉变更附截图。若修改 API、数据库或配置，同时更新 OpenAPI、迁移、示例配置和相关文档。Review 前重新运行 `make check`。不得自动提交、推送、合并、发布或操作生产。
+
+## 安全与配置
+
+配置优先级为默认值 < YAML < 环境变量。真实凭据仅通过 `VELIS_*` 注入，不提交、不写日志；涉及外部账户、生产数据、降级迁移或删除操作时，先明确备份与回滚方案。
 
 <!-- openspec:start -->
 ## OpenSpec 协作入口
