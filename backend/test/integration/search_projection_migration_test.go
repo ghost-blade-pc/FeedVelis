@@ -21,7 +21,8 @@ func TestSearchProjectionMigrationUpgradeConstraintsAndSafeDown(t *testing.T) {
 		}
 	}()
 
-	if err := runner.Steps(-1); err != nil {
+	// 固定目标版本；后续新增迁移不应改变本测试验证的 v8 → v9 路径。
+	if err := runner.Migrate(8); err != nil {
 		t.Fatalf("退回 v8: %v", err)
 	}
 	seedSearchProjectionArticles(t, env)
