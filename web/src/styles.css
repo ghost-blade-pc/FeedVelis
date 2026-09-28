@@ -57,6 +57,9 @@ h1 { margin: 0.5rem 0 1rem; font-size: clamp(2.5rem, 8vw, 5.5rem); line-height: 
 .origin-link { margin-left: auto; color: #176b43; font-weight: 600; white-space: nowrap; }
 .origin-link:hover { text-decoration: underline; }
 .article-time { display: flex; flex-wrap: wrap; gap: 0 0.75rem; }
+.feedback-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; }
+.feedback-actions button { background: #edf3ee; color: #1d3a2b; padding: 0.45rem 0.8rem; font-size: 0.88rem; }
+.feedback-actions button[aria-pressed="true"] { background: #176b43; color: #fff; }
 
 .article-detail { display: grid; gap: 1.5rem; }
 .article-detail > .eyebrow { margin: 0; }

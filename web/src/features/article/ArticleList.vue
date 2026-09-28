@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { listArticles } from '../../api/client'
 import type { ArticleItem } from '../../types/article'
 import ArticleCard from './ArticleCard.vue'
+import { useArticleFeedback } from './useArticleFeedback'
 
 const items = ref<ArticleItem[]>([])
 const cursor = ref<string | null>(null)
 const hasMore = ref(false)
 const state = ref<'loading' | 'ready' | 'error'>('loading')
+const feedback = useArticleFeedback(computed(() => items.value.map((item) => item.id)))
 let request: AbortController | undefined
 
 async function load(reset = false) {
@@ -48,7 +50,8 @@ onBeforeUnmount(() => request?.abort())
     <p v-else-if="items.length === 0" class="state-card">还没有公开文章。</p>
 
     <div v-else class="article-list">
-      <ArticleCard v-for="item in items" :key="item.id" :item="item" />
+      <p v-if="feedback.error.value" role="alert">{{ feedback.error.value }} <button type="button" @click="feedback.load(true)">重试反馈状态</button></p>
+      <ArticleCard v-for="item in items" :key="item.id" :item="item" :feedback="feedback.states.value[item.id]" :feedback-busy="feedback.busy.value[item.id] || Boolean(feedback.error.value)" @feedback-toggle="feedback.toggle" />
       <button v-if="hasMore" class="load-more" type="button" @click="load(false)">加载更多</button>
     </div>
   </section>

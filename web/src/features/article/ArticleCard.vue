@@ -2,9 +2,12 @@
 import { RouterLink } from 'vue-router'
 
 import type { ArticleItem } from '../../types/article'
+import type { ArticleFeedbackState } from '../../types/feedback'
 import { articleOriginLabel, articleOriginURL, articleSummary, articleTime, formatTime } from './model'
+import FeedbackButtons from './FeedbackButtons.vue'
 
-defineProps<{ item: ArticleItem }>()
+defineProps<{ item: ArticleItem; feedback?: ArticleFeedbackState; feedbackBusy?: boolean }>()
+const emit = defineEmits<{ feedbackToggle: [id: number, kind: 'favorite' | 'notInterested'] }>()
 </script>
 
 <template>
@@ -26,5 +29,6 @@ defineProps<{ item: ArticleItem }>()
       <span>{{ articleTime(item).label }} {{ formatTime(articleTime(item).value) }}</span>
       <a v-if="articleOriginURL(item)" class="origin-link" :href="articleOriginURL(item)" target="_blank" rel="noopener noreferrer">原文 ↗</a>
     </p>
+    <FeedbackButtons :article-id="item.id" :state="feedback" :busy="feedbackBusy" @toggle="(id, kind) => emit('feedbackToggle', id, kind)" />
   </article>
 </template>

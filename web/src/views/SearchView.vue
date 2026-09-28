@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ArticleCard from '../features/article/ArticleCard.vue'
 import { normalizeSearchForm, searchRouteQuery } from '../features/article/search'
 import { useArticleSearch } from '../features/article/useArticleSearch'
+import { useArticleFeedback } from '../features/article/useArticleFeedback'
 import type { ArticleSearchQuery } from '../types/article'
 
 const route = useRoute()
@@ -16,6 +17,7 @@ const form = reactive({
   sourceID: typeof route.query.source_id === 'string' ? route.query.source_id : '',
 })
 const { items, hasMore, state, start, loadMore, retry, cancelAndClear } = useArticleSearch()
+const feedback = useArticleFeedback(computed(() => items.value.map((item) => item.id)))
 const validationMessage = ref('')
 let submitted: ArticleSearchQuery | undefined
 let watching = false
@@ -74,7 +76,8 @@ onBeforeUnmount(cancelAndClear)
     <p v-else-if="state === 'empty'" class="state-card">没有匹配的公开文章，请调整搜索条件。</p>
 
     <div v-if="items.length" class="article-list" aria-live="polite">
-      <ArticleCard v-for="item in items" :key="item.id" :item="item" />
+      <p v-if="feedback.error.value" role="alert">{{ feedback.error.value }} <button type="button" @click="feedback.load(true)">重试反馈状态</button></p>
+      <ArticleCard v-for="item in items" :key="item.id" :item="item" :feedback="feedback.states.value[item.id]" :feedback-busy="feedback.busy.value[item.id] || Boolean(feedback.error.value)" @feedback-toggle="feedback.toggle" />
       <button v-if="hasMore" class="load-more" type="button" :disabled="state === 'loading-more'" @click="loadMore">
         {{ state === 'loading-more' ? '正在加载…' : '加载更多' }}
       </button>

@@ -65,6 +65,21 @@ func buildWorkerComponents(cfg config.Config, pool *pgxpool.Pool, logger *slog.L
 	asyncMetrics := observability.NewAsyncMetrics(registry)
 	searchMetrics := observability.NewSearchMetrics(registry)
 	components := []WorkerComponent{instrumentWorkerComponent("feed", false, asyncMetrics, scheduler.New(feed.sources, logger, owner, cfg.Worker.HeartbeatInterval).Run)}
+	feedbackRepository := postgres.NewArticleFeedbackRepository(pool)
+	components = append(components, instrumentWorkerComponent("article-feedback-cleanup", false, asyncMetrics, func(ctx context.Context) error {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			if _, err := feedbackRepository.CleanupExpired(ctx, time.Now().UTC(), 500); err != nil {
+				return err
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+			}
+		}
+	}))
 	cleanup, err := buildCleanupScheduler(cfg, pool, logger)
 	if err != nil {
 		return nil, err

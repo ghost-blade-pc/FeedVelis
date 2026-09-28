@@ -1,9 +1,14 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import { RouterLink, RouterView } from 'vue-router'
 
+import { readCsrfToken } from './features/auth/browser'
 import { useSession } from './features/auth/useSession'
 
-const { session } = useSession()
+const { session, manager } = useSession()
+onMounted(() => {
+  if (readCsrfToken(document.cookie)) void manager.restore()
+})
 </script>
 
 <template>

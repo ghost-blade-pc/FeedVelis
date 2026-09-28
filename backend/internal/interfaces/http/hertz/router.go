@@ -49,6 +49,8 @@ type AuthOptions struct {
 	Assets handler.AssetService
 	// AdminSources 为 nil 时不注册管理员 Source 路由。
 	AdminSources handler.AdminSourceService
+	// Feedback 为 nil 时不注册反馈路由。
+	Feedback handler.ArticleFeedbackService
 }
 
 func NewServer(options Options) *server.Hertz {
@@ -120,6 +122,21 @@ func registerAuthRoutes(h *server.Hertz, options *AuthOptions, logger *slog.Logg
 	if options.AdminSources != nil {
 		registerAdminSourceRoutes(h, options, logger)
 	}
+	if options.Feedback != nil {
+		registerArticleFeedbackRoutes(h, options)
+	}
+}
+
+func registerArticleFeedbackRoutes(h *server.Hertz, options *AuthOptions) {
+	feedbackHandler := handler.NewArticleFeedback(options.Feedback)
+	authenticated := middleware.Authenticate(options.Service)
+	h.GET("/api/v1/me/article-feedback", authenticated, feedbackHandler.States)
+	articles := h.Group("/api/v1/me/articles")
+	articles.POST("/:article_id/reads", authenticated, feedbackHandler.Read)
+	articles.PUT("/:article_id/favorite", authenticated, feedbackHandler.FavoritePut)
+	articles.DELETE("/:article_id/favorite", authenticated, feedbackHandler.FavoriteDelete)
+	articles.PUT("/:article_id/not-interested", authenticated, feedbackHandler.NotInterestedPut)
+	articles.DELETE("/:article_id/not-interested", authenticated, feedbackHandler.NotInterestedDelete)
 }
 
 // registerAdminSourceRoutes 装配管理员 Source 管理端点：

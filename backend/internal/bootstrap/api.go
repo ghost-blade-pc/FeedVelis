@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 
+	feedbackApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlefeedback"
 	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
 	sourceApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/source"
@@ -67,6 +68,7 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			MyArticles:     content.myArticles,
 			AdminArticles:  content.adminArticles,
 			Assets:         content.assets,
+			Feedback:       feedbackApp.NewService(postgres.NewArticleFeedbackRepository(pool), clock.System{}),
 		}
 	}
 	// 启动自检只报告存储状态，不阻止启动：资产能力按请求降级，readyz 仍以 PostgreSQL 为准。

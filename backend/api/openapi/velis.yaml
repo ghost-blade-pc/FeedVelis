@@ -6,6 +6,129 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /me/article-feedback:
+    get:
+      operationId: getMyArticleFeedback
+      summary: 批量读取本人对当前公开文章的反馈状态
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: article_ids
+          in: query
+          required: true
+          description: 逗号分隔的 1 至 50 个互异正整数文章 ID；下架或不存在的文章从结果省略，顺序与请求一致。
+          schema:
+            type: string
+            pattern: '^[1-9][0-9]*(,[1-9][0-9]*){0,49}$'
+      responses:
+        "200":
+          description: 本人反馈状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArticleFeedbackPage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /me/articles/{article_id}/reads:
+    post:
+      operationId: recordMyArticleRead
+      summary: 记录本人对当前公开文章的站内详情阅读
+      description: 无请求正文；服务端按 UTC 固定半小时窗口合并重复阅读。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+      responses:
+        "204":
+          description: 已记录或已在同一窗口记录
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /me/articles/{article_id}/favorite:
+    put:
+      operationId: setMyArticleFavorite
+      summary: 收藏当前公开文章
+      description: 无请求正文；重复设置不会增加权重。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+      responses:
+        "204":
+          description: 已收藏
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: clearMyArticleFavorite
+      summary: 取消本人收藏
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+      responses:
+        "204":
+          description: 已取消或原本未收藏
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /me/articles/{article_id}/not-interested:
+    put:
+      operationId: setMyArticleNotInterested
+      summary: 标记当前公开文章为不感兴趣
+      description: 无请求正文；首次设置有效 180 天，有效期内重复设置不续期。
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+      responses:
+        "204":
+          description: 已标记
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: clearMyArticleNotInterested
+      summary: 撤销本人不感兴趣标记
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArticleID"
+      responses:
+        "204":
+          description: 已撤销或原本未标记
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
   /ping:
     get:
       operationId: ping
@@ -1017,6 +1140,32 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    ArticleFeedbackPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArticleFeedbackState"
+    ArticleFeedbackState:
+      type: object
+      additionalProperties: false
+      required: [article_id, favorited, not_interested, not_interested_expires_at]
+      properties:
+        article_id:
+          type: integer
+          format: int64
+          minimum: 1
+        favorited:
+          type: boolean
+        not_interested:
+          type: boolean
+        not_interested_expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: 未标记或已过期时为 null。
     ArticlePage:
       type: object
       required: [items, next_cursor, has_more]

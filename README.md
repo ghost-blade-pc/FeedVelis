@@ -19,9 +19,10 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
 | AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索；recommend 尚未实现 |
 | 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；recommend 尚未实现；索引是可丢弃派生状态，不是事实源 |
-| Web | latest/详情、搜索与加载更多、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无互动、recommend 或 Agent 界面 |
+| 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；后端提供有界推荐画像读取端口 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；画像尚未用于公开 Feed 排序 |
+| Web | latest/详情、搜索与加载更多、文章反馈操作、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无 recommend 或 Agent 界面 |
 
-推荐信号、recommend Feed、Redis 业务缓存、对话 Agent 与定时 Agent 均未实现。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+recommend Feed、Redis 业务缓存、对话 Agent 与定时 Agent 均未实现。文章反馈事实仅依赖 PostgreSQL；阅读按 UTC 固定 30 分钟窗口去重，画像按 UTC 日最多计一次、单文章最多计三次，过期事实即使清理 Worker 暂停也不会参与画像。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 

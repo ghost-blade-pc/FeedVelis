@@ -1,20 +1,26 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { getArticle } from '../api/client'
 import { articleOriginLabel, articleOriginURL, articleTime, formatTime } from '../features/article/model'
+import FeedbackButtons from '../features/article/FeedbackButtons.vue'
+import { useArticleFeedback } from '../features/article/useArticleFeedback'
+import { useArticleRead } from '../features/article/useArticleRead'
 import type { ArticleDetail } from '../types/article'
 
 const route = useRoute()
 const detail = ref<ArticleDetail | null>(null)
 const state = ref<'loading' | 'ready' | 'error'>('loading')
+const feedback = useArticleFeedback(computed(() => detail.value ? [detail.value.id] : []))
+const read = useArticleRead(computed(() => detail.value?.id ?? null), computed(() => state.value === 'ready'))
 let request: AbortController | undefined
 
 async function load() {
   request?.abort()
   request = new AbortController()
   state.value = 'loading'
+  detail.value = null
   try {
     const articleId = Number(route.params.id)
     if (!Number.isInteger(articleId) || articleId <= 0) throw new Error('bad id')
@@ -24,6 +30,8 @@ async function load() {
     if (!(error instanceof DOMException && error.name === 'AbortError')) state.value = 'error'
   }
 }
+
+watch(() => route.params.id, () => { void load() })
 
 onMounted(load)
 onBeforeUnmount(() => request?.abort())
@@ -53,6 +61,9 @@ onBeforeUnmount(() => request?.abort())
           rel="noopener noreferrer"
         >查看原文 ↗</a>
       </p>
+      <FeedbackButtons :article-id="detail.id" :state="feedback.states.value[detail.id]" :busy="feedback.busy.value[detail.id] || Boolean(feedback.error.value)" @toggle="feedback.toggle" />
+      <p v-if="feedback.error.value" role="alert">{{ feedback.error.value }} <button type="button" @click="feedback.load(true)">重试反馈状态</button></p>
+      <p v-if="read.error.value" role="status">{{ read.error.value }}</p>
       <aside v-if="detail.enhancement" class="ai-enhancement detail-enhancement" aria-label="AI 内容摘要">
         <span class="ai-badge">AI 生成</span>
         <p class="article-excerpt">{{ detail.enhancement.summary }}</p>

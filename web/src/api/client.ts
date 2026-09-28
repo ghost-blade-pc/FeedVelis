@@ -17,7 +17,7 @@ export class ApiError extends Error {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'HEAD'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'
   body?: unknown
   signal?: AbortSignal
   accessToken?: string | null
