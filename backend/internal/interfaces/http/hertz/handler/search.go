@@ -49,7 +49,7 @@ func (h *Search) Articles(ctx context.Context, c *app.RequestContext) {
 		}
 		request.Limit = value
 	}
-	page, err := h.service.Search(ctx, request)
+	page, err := h.service.Search(searchApp.WithRequestID(ctx, middleware.RequestIDFrom(c)), request)
 	if err != nil {
 		presenter.WriteMapping(c, presenter.MapSearchError(err), middleware.RequestIDFrom(c))
 		return

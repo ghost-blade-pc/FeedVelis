@@ -18,10 +18,10 @@ func TestServiceKeepsHitOrderAndLookaheadCursor(t *testing.T) {
 	index := &fakeIndex{}
 	index.search = func(request IndexRequest) (CandidateBatch, error) {
 		if request.After == nil {
-			return CandidateBatch{PITID: "pit-new", Candidates: []Candidate{{1, positions[1]}, {2, positions[2]}, {3, positions[3]}}, Exhausted: true}, nil
+			return CandidateBatch{PITID: "pit-new", Candidates: []Candidate{{ArticleID: 1, Position: positions[1]}, {ArticleID: 2, Position: positions[2]}, {ArticleID: 3, Position: positions[3]}}, Exhausted: true}, nil
 		}
 		if request.After.ArticleID == 2 {
-			return CandidateBatch{PITID: "pit-final", Candidates: []Candidate{{3, positions[3]}}, Exhausted: true}, nil
+			return CandidateBatch{PITID: "pit-final", Candidates: []Candidate{{ArticleID: 3, Position: positions[3]}}, Exhausted: true}, nil
 		}
 		t.Fatalf("意外 search_after: %+v", request.After)
 		return CandidateBatch{}, nil
@@ -52,9 +52,9 @@ func TestServiceScansInBatchesAndAdvancesShortPageAtLimit(t *testing.T) {
 	index := &fakeIndex{}
 	index.search = func(request IndexRequest) (CandidateBatch, error) {
 		if request.After == nil {
-			return CandidateBatch{PITID: "pit-2", Candidates: []Candidate{{1, position(1)}, {2, position(2)}}}, nil
+			return CandidateBatch{PITID: "pit-2", Candidates: []Candidate{{ArticleID: 1, Position: position(1)}, {ArticleID: 2, Position: position(2)}}}, nil
 		}
-		return CandidateBatch{PITID: "pit-3", Candidates: []Candidate{{3, position(3)}, {4, position(4)}}}, nil
+		return CandidateBatch{PITID: "pit-3", Candidates: []Candidate{{ArticleID: 3, Position: position(3)}, {ArticleID: 4, Position: position(4)}}}, nil
 	}
 	reader := &fakeReader{items: map[int64]articleDomain.ListItem{4: {ID: 4, Title: "current revision"}}}
 	service := testService(t, index, reader, Config{PITKeepAlive: 2 * time.Minute, CandidateBatchSize: 2, MaxCandidatesPerRequest: 4})
@@ -74,7 +74,7 @@ func TestServiceScansInBatchesAndAdvancesShortPageAtLimit(t *testing.T) {
 func TestServiceFailuresReturnNoPartialPageAndClosePIT(t *testing.T) {
 	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
 	index := &fakeIndex{search: func(IndexRequest) (CandidateBatch, error) {
-		return CandidateBatch{PITID: "pit-latest", Candidates: []Candidate{{1, SortPosition{Score: 1, PublishedAt: base, ArticleID: 1}}}}, nil
+		return CandidateBatch{PITID: "pit-latest", Candidates: []Candidate{{ArticleID: 1, Position: SortPosition{Score: 1, PublishedAt: base, ArticleID: 1}}}}, nil
 	}, closeErr: errors.New("close failed")}
 	reader := &fakeReader{err: errors.New("database down")}
 	service := testService(t, index, reader, Config{PITKeepAlive: time.Minute, CandidateBatchSize: 10, MaxCandidatesPerRequest: 20})
@@ -103,7 +103,7 @@ func TestServiceRetriesSuccessfullyAfterIndexRecoveryInSameProcess(t *testing.T)
 		if attempt == 1 {
 			return CandidateBatch{}, errors.New("opensearch down")
 		}
-		return CandidateBatch{PITID: "pit-recovered", Candidates: []Candidate{{1, SortPosition{Score: 1, PublishedAt: base, ArticleID: 1}}}, Exhausted: true}, nil
+		return CandidateBatch{PITID: "pit-recovered", Candidates: []Candidate{{ArticleID: 1, Position: SortPosition{Score: 1, PublishedAt: base, ArticleID: 1}}}, Exhausted: true}, nil
 	}}
 	reader := &fakeReader{items: map[int64]articleDomain.ListItem{1: {ID: 1, Title: "恢复结果"}}}
 	service := testService(t, index, reader, Config{PITKeepAlive: time.Minute, CandidateBatchSize: 10, MaxCandidatesPerRequest: 20})

@@ -15,16 +15,16 @@ import (
 	projectionApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/searchprojection"
 )
 
-//go:embed templates/articles.v1.json
+//go:embed templates/articles.v*.json
 var templates embed.FS
 
 // templateAsset 返回 schema 版本对应的版本化模板资产。
 // 新增 schema 版本必须新增资产文件并递增 search.schema_version，不得原地修改既有模板语义。
 func templateAsset(schemaVersion int) (string, error) {
-	if schemaVersion != 1 {
+	if schemaVersion != 1 && schemaVersion != 2 {
 		return "", fmt.Errorf("%w: 未注册的 schema 版本 %d", projectionApp.ErrSchemaMismatch, schemaVersion)
 	}
-	return "templates/articles.v1.json", nil
+	return fmt.Sprintf("templates/articles.v%d.json", schemaVersion), nil
 }
 
 // RenderTemplate 渲染模板：只替换维度与 schema 身份，字段语义由资产文件本身固定。

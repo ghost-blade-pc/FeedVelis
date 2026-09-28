@@ -31,7 +31,7 @@ func (c *Client) CreatePIT(ctx context.Context, keepAlive time.Duration) (string
 	if err := c.performJSON(ctx, http.MethodPost, path, nil, &response, false); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(response.PITID) == "" || response.Shards.Failed != 0 || response.Shards.Successful != response.Shards.Total {
+	if strings.TrimSpace(response.PITID) == "" || response.Shards.Failed != 0 || len(response.Shards.Failures) != 0 || response.Shards.Successful != response.Shards.Total {
 		return "", articlesearch.ErrInvalidIndexResponse
 	}
 	return response.PITID, nil
@@ -126,14 +126,15 @@ type searchResponse struct {
 	Shards   shardResponse `json:"_shards"`
 	Hits     struct {
 		Hits []struct {
-			ID   string            `json:"_id"`
-			Sort []json.RawMessage `json:"sort"`
+			ID     string            `json:"_id"`
+			Source json.RawMessage   `json:"_source"`
+			Sort   []json.RawMessage `json:"sort"`
 		} `json:"hits"`
 	} `json:"hits"`
 }
 
 func parseSearchResponse(response searchResponse, requested int) (articlesearch.CandidateBatch, error) {
-	if response.TimedOut || strings.TrimSpace(response.PITID) == "" || response.Shards.Failed != 0 ||
+	if response.TimedOut || strings.TrimSpace(response.PITID) == "" || response.Shards.Failed != 0 || len(response.Shards.Failures) != 0 ||
 		response.Shards.Successful != response.Shards.Total || len(response.Hits.Hits) > requested {
 		return articlesearch.CandidateBatch{}, articlesearch.ErrInvalidIndexResponse
 	}

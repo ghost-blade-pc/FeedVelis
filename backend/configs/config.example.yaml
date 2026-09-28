@@ -199,7 +199,13 @@ search:
   connect_timeout: 5s
   request_timeout: 30s
   query:
-    timeout: 3s
+    timeout: 5s
+    hybrid:
+      enabled: false
+      bm25_candidates: 100
+      knn_candidates: 100
+      embedding_timeout: 1s
+      knn_timeout: 1s
     pit_keep_alive: 2m
     candidate_batch_size: 100
     max_candidates_per_request: 500

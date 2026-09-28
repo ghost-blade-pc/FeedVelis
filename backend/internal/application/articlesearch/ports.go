@@ -31,6 +31,9 @@ const (
 type Stage string
 
 const (
+	StageEmbedding  Stage = "embedding"
+	StageKNN        Stage = "knn"
+	StageRRF        Stage = "rrf"
 	StageTotal      Stage = "total"
 	StageOpenSearch Stage = "opensearch"
 	StagePostgres   Stage = "postgres"

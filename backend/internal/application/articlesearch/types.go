@@ -43,6 +43,7 @@ func (p SortPosition) Valid() bool {
 }
 
 type Candidate struct {
+	Identity  VectorIdentity
 	ArticleID int64
 	Position  SortPosition
 }
@@ -68,6 +69,8 @@ type CandidateBatch struct {
 }
 
 type Config struct {
+	Hybrid                  HybridConfig
+	Timeout                 time.Duration
 	PITKeepAlive            time.Duration
 	CandidateBatchSize      int
 	MaxCandidatesPerRequest int

@@ -116,3 +116,18 @@ func TestDocumentTombstoneKeepsIdentityAndDropsSearchableContent(t *testing.T) {
 		t.Fatalf("tombstone 必须保留完整身份与版本: %+v", tombstone)
 	}
 }
+
+func TestDocumentProfileFingerprintIsVersioned(t *testing.T) {
+	document := Document{ArticleID: 1, SchemaVersion: 1, EmbeddingProfileVersion: "old", Vector: []float64{1, 0}}
+	old := DocumentFingerprint(document)
+	document.EmbeddingProfileVersion = "new"
+	if DocumentFingerprint(document) != old {
+		t.Fatal("profile 改变了 v1 编码指纹")
+	}
+	document.SchemaVersion = 2
+	first := DocumentFingerprint(document)
+	document.EmbeddingProfileVersion = "old"
+	if DocumentFingerprint(document) == first {
+		t.Fatal("v2 指纹遗漏实际 profile")
+	}
+}

@@ -78,28 +78,29 @@ func (o DeliveryOutcome) Failure() *projectionDomain.Failure {
 // Document 是投影到 OpenSearch 的严格映射载荷。
 // 它只承载检索与过滤需要的字段：不含 Markdown、清洗 HTML、模型审计或内部错误。
 type Document struct {
-	ArticleID          int64
-	Generation         int64
-	LockVersion        int64
-	RevisionID         int64
-	SchemaVersion      int
-	Visible            bool
-	InvisibleReason    string
-	OriginType         string
-	SourceID           *int64
-	SourceTitle        string
-	AuthorUserID       string
-	AuthorName         string
-	PublishedAt        *time.Time
-	Title              string
-	PlainText          string
-	Excerpt            string
-	Summary            string
-	Keywords           []string
-	Topics             []string
-	GenerationResultID string
-	EmbeddingResultID  string
-	Vector             []float64
+	ArticleID               int64
+	Generation              int64
+	LockVersion             int64
+	RevisionID              int64
+	SchemaVersion           int
+	Visible                 bool
+	InvisibleReason         string
+	OriginType              string
+	SourceID                *int64
+	SourceTitle             string
+	AuthorUserID            string
+	AuthorName              string
+	PublishedAt             *time.Time
+	Title                   string
+	PlainText               string
+	Excerpt                 string
+	Summary                 string
+	Keywords                []string
+	Topics                  []string
+	GenerationResultID      string
+	EmbeddingProfileVersion string
+	EmbeddingResultID       string
+	Vector                  []float64
 	// ContentHash 是投影内容指纹：重建校验用它在不相邻的环境中比对待发布文档。
 	ContentHash string
 }

@@ -143,7 +143,8 @@ func Default() Config {
 			ConnectRaw:          "5s",
 			RequestRaw:          "30s",
 			Query: SearchQueryConfig{
-				TimeoutRaw: "3s", PITKeepAliveRaw: "2m", CandidateBatchSize: 100, MaxCandidatesPerRequest: 500,
+				Hybrid:     SearchHybridConfig{BM25Candidates: 100, KNNCandidates: 100, EmbeddingTimeoutRaw: "1s", KNNTimeoutRaw: "1s"},
+				TimeoutRaw: "5s", PITKeepAliveRaw: "2m", CandidateBatchSize: 100, MaxCandidatesPerRequest: 500,
 			},
 			BulkMaxItems:         500,
 			BulkMaxBytes:         5 * 1024 * 1024,

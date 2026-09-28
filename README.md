@@ -1,6 +1,6 @@
 # Velis Feed
 
-Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发布与用户 Markdown 图文投稿的统一内容池、稳定 latest、BM25 文章搜索、站内阅读、私有图片资产、AI 内容增强、管理员 Source 管理，以及账户与会话闭环。后端采用 Go + CloudWeGo Hertz/Eino + PostgreSQL，前端采用 Vue 3 + TypeScript。
+Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发布与用户 Markdown 图文投稿的统一内容池、稳定 latest、可选 BM25/KNN 混合文章搜索、站内阅读、私有图片资产、AI 内容增强、管理员 Source 管理，以及账户与会话闭环。后端采用 Go + CloudWeGo Hertz/Eino + PostgreSQL，前端采用 Vue 3 + TypeScript。
 
 本文只描述当前功能、开发现状和运行方式。项目目标、技术决策、开发顺序与验收标准统一见 [Velis Roadmap](<Velis Roadmap.md>)。目录占位、依赖声明和 Compose 服务不代表业务能力已实现。
 
@@ -17,11 +17,11 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
-| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量仅持久化，尚无检索 API |
-| 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25 搜索、精确筛选、PIT 游标与 PostgreSQL 可见性复核 | 默认未配置；没有 KNN、查询 Embedding、RRF 或 recommend；索引是可丢弃派生状态，不是事实源 |
+| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索；recommend 尚未实现 |
+| 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；recommend 尚未实现；索引是可丢弃派生状态，不是事实源 |
 | Web | latest/详情、搜索与加载更多、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无互动、recommend 或 Agent 界面 |
 
-推荐信号、recommend Feed、Redis 业务缓存、向量检索、对话 Agent 与定时 Agent 均未实现。当前搜索只提供 BM25 与关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+推荐信号、recommend Feed、Redis 业务缓存、对话 Agent 与定时 Agent 均未实现。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 
@@ -43,7 +43,7 @@ code_copilot/          迁移前 Spec Copilot 历史证据（只读）
 
 后端 module：`github.com/ghost-blade-pc/Velis_Feed/backend`。实际数据访问为 pgx + 显式 SQL，迁移使用 golang-migrate。
 
-当前 Compose 仍使用 `pgvector/pgvector:pg17`，初始迁移创建 `vector` 扩展；AI Embedding 已以 PostgreSQL `real[]` 版本化持久化，但没有向量查询实现。OpenSearch 已用于可重建投影和 BM25 查询，后续 KNN/RRF 仍未实现；遗留 pgvector 的迁移清理列入 Roadmap。
+当前 Compose 仍使用 `pgvector/pgvector:pg17`，初始迁移创建 `vector` 扩展；AI Embedding 已以 PostgreSQL `real[]` 版本化持久化，但没有向量查询实现。OpenSearch 已用于可重建投影和 BM25 查询，默认关闭的 KNN/RRF 已实现；遗留 pgvector 的迁移清理列入 Roadmap。
 
 ## 本地启动
 
@@ -164,7 +164,7 @@ Compose 部署中执行：`docker compose exec postgres psql -U velis -d velis -
 | `GET /readyz` | 当前依赖就绪状态 |
 | `GET /api/v1/ping` | 基础连通 |
 | `GET /api/v1/articles?limit=20&cursor=...` | 匿名已发布文章列表；limit 为 1–50 |
-| `GET /api/v1/search/articles?q=...&limit=20&cursor=...` | 匿名 BM25 搜索；支持关键词、主题、来源精确筛选与 PIT 分页 |
+| `GET /api/v1/search/articles?q=...&limit=20&cursor=...` | 匿名 BM25/可选混合搜索；支持精确筛选与版本化游标分页 |
 | `GET /api/v1/articles/{article_id}` | 匿名已发布文章详情，含 content_html |
 | `GET/POST /api/v1/me/articles` | 本人文章列表；创建草稿或直接发布 |
 | `GET/PATCH/DELETE /api/v1/me/articles/{article_id}` | 本人私有详情、编辑与软删除 |
@@ -181,7 +181,7 @@ Compose 部署中执行：`docker compose exec postgres psql -U velis -d velis -
 | `GET /api/v1/account/me` | 读取本人账户 |
 | `PATCH /api/v1/account/me` | 修改本人昵称 |
 
-列表返回 `items`、`next_cursor`、`has_more`；latest 只读取 `published`，按 `(effective_published_at,id)` 倒序，其中 RSS 优先使用 `source_published_at`、缺失时回退固定站内 `published_at`，站内投稿使用固定站内 `published_at`。文章来源由 `origin.type=rss|user` 判别。latest 游标为版本 2 且有格式校验，旧排序语义生成的版本 1 游标返回 `INVALID_CURSOR`，调用方应从第一页重新获取；latest 游标尚无 HMAC 签名。搜索游标绑定规范化查询、筛选条件、PIT、排序位置和过期时间，并使用 HMAC-SHA256 防篡改；查询或筛选变化时必须从第一页重新搜索。响应携带 `X-Request-ID`，错误使用统一 `error` 信封（`code`/`message`/`request_id`，无 `details`）。
+列表返回 `items`、`next_cursor`、`has_more`；latest 只读取 `published`，按 `(effective_published_at,id)` 倒序，其中 RSS 优先使用 `source_published_at`、缺失时回退固定站内 `published_at`，站内投稿使用固定站内 `published_at`。文章来源由 `origin.type=rss|user` 判别。latest 游标为版本 2 且有格式校验，旧排序语义生成的版本 1 游标返回 `INVALID_CURSOR`，调用方应从第一页重新获取；latest 游标尚无 HMAC 签名。默认 BM25 的 v1 搜索游标绑定规范化查询、筛选条件、PIT、排序位置和过期时间，并使用 HMAC-SHA256 防篡改；混合开启首查使用下述认证加密 v2 冻结游标；查询或筛选变化时必须从第一页重新搜索。响应携带 `X-Request-ID`，错误使用统一 `error` 信封（`code`/`message`/`request_id`，无 `details`）。
 
 I2 内容、资产和 Source 写接口要求 `Idempotency-Key`，修改既有资源还要求强 `If-Match: "<lock_version>"`；成功结果默认保留 24 小时。浏览器在同一用户动作的认证刷新或结果不明重试中复用原键，用户明确再次提交才生成新键。保留期结束后不承诺响应重放，但数据库唯一约束和状态机仍保护数据一致性。版本冲突返回 409，Web 保留本地 Markdown，不自动合并或换键覆盖。
 
@@ -201,6 +201,12 @@ I2 内容、资产和 Source 写接口要求 `Idempotency-Key`，修改既有资
 | 认证开启、MinIO 未配置或故障 | 可用 | 无图片引用时可用 | Source 与文章文本操作可用 | `503 ASSET_UNAVAILABLE` | 不仅因 MinIO 故障失败 |
 
 MinIO Bucket 必须私有；匿名图片只能经 API 实时核对“当前公开修订引用”后流式读取。预签名 URL 仅用于 15 分钟直传，不能作为公开读取契约。对象存储的三个地址概念不可混用：`assets.endpoint`/`VELIS_ASSET_ENDPOINT` 是 API 与 Worker 使用的内部 `host:port`，`assets.upload_endpoint`/`VELIS_ASSET_UPLOAD_ENDPOINT` 是浏览器可达的完整 HTTP(S) origin，`assets.web_origin`/`VELIS_ASSET_WEB_ORIGIN` 是 Bucket CORS 允许发起上传的精确前端来源。本地 Compose 分别使用 `minio:9000`、`http://localhost:9000` 和 `http://localhost:5173`。
+
+混合搜索默认关闭（`search.query.hybrid.enabled=false` / `VELIS_SEARCH_QUERY_HYBRID_ENABLED=false`）。开启前保留 v1 索引，设置 `search.schema_version=2`，通过已有 `search rebuild start` / `search rebuild cutover` 流程在线重建并切换 v2；不要原地修改 v1 mapping。v2 的 `embedding_profile_version` 来自实际 Embedding 结果，不会把同维度旧 profile 标为当前 profile。API 与 Worker 注入相同的 `VELIS_AI_EMBEDDING_PROVIDER/BASE_URL/API_KEY/MODEL/PROFILE_VERSION/DIMENSIONS/REQUEST_DIMENSIONS`；API 只需 Embedding 配置，不依赖 generation。
+
+首查默认每路召回 100 条（可配 1–100），KNN 的 k 与其上限一致，等权 RRF 常数固定为 60；无向量文章仍可文本命中。整个搜索默认 5 秒，Embedding/KNN 各默认 1 秒（可配 100ms–2s，且小于总预算），模型只调用一次、不重试、不写结果表。模型未配置、v1 读索引、无有效向量或语义失败时保留正常 BM25 排序。混合开关开启后包括 BM25 降级都冻结有限候选，最多两路 100 条的去重并集（最多 200 条）；不能遍历全部匹配。游标为 AES-256-GCM 认证加密 v2，使用独立 HKDF 派生键，绝对 TTL 2 分钟；续页零模型/KNN 调用，当前下架或语义身份变化会跳过候选，纯文本项返回当前公开修订。最大 16 KiB 游标需要部署入口支持，访问日志不得记录 URL 查询串。旧 v1 BM25 游标继续原 PIT 计划。
+
+回滚先关闭混合开关，让客户端对失效 v2 游标从第一页重查；需要时用既有 `search rebuild rollback` 切回保留的 v1 索引，继续 BM25。关闭开关恢复原有 BM25 深分页；不删除旧索引、不重算向量，不涉及数据库降级迁移。查询计划或游标键变化也要求重新查询。
 
 搜索采用独立的局部降级边界：OpenSearch 正常且游标键有效时 `/api/v1/search/articles` 可用；端点未配置、production 缺少游标键或 OpenSearch 查询失败时，仅该接口返回带 `Retry-After` 的 `503 SEARCH_UNAVAILABLE`。latest、详情、投稿、抓取及 `/readyz` 不把搜索作为核心依赖；PostgreSQL 复核失败时搜索同样不返回部分结果。
 
@@ -290,7 +296,7 @@ Compose 已内置固定 `opensearchproject/opensearch:3.8.0` 单节点服务，�
 | schema_version | 1 | 1–100；与映射、分析器、维度和投影编码共同构成 schema 身份 |
 | embedding_dimensions | 1024 | 1–65536；启用 Embedding profile 时必须与 `ai.embedding.dimensions` 一致 |
 | connect / request timeout | 5s / 30s | 1s–1m / 1s–5m |
-| query timeout / PIT keep-alive | 3s / 2m | 100ms–30s / 30s–10m；查询超时独立于投影写入超时 |
+| query timeout / PIT keep-alive | 5s / 2m | 100ms–30s / 30s–10m；查询超时独立于投影写入超时 |
 | candidate batch / request maximum | 100 / 500 | 单批 1–500；单请求最多检查 1–5000 个候选且不得小于单批 |
 | bulk_max_items / bytes / document chars | 500 / 5 MiB / 65536 | 1–10000 / 1KiB–64MiB / 1000–4MiB；超限文档单独永久失败 |
 | worker lease / poll / batch | 2m / 1s / 20 | lease 10s–10m 且必须大于 request timeout；poll 100ms–1m；batch 1–500 |
@@ -299,7 +305,7 @@ Compose 已内置固定 `opensearchproject/opensearch:3.8.0` 单节点服务，�
 
 搜索游标签名键只能通过 `VELIS_SEARCH_CURSOR_KEY` 注入，值为 Base64，解码后至少 32 字节；YAML 中的同名字段会被忽略。development/test 未设置时会为当前进程生成临时键，重启后旧游标失效；production 未设置时搜索局部禁用。多副本部署必须为所有 API 实例配置同一个持久密钥，否则游标跨实例不可用。
 
-BM25 查询固定使用读别名和可见文档，标题、关键词、主题、摘要、正文的权重依次降低；`keyword`、`topic`、`source_id` 是精确筛选。分页通过 PIT 与 `search_after` 保持快照，PIT 过期或游标无效时返回受控错误，客户端应从第一页重试。OpenSearch 候选始终由 PostgreSQL 批量复核当前公开状态、当前修订和当前 AI 选择后才返回，因此索引延迟或迟到文档不会泄露已下架内容。查询身份只需读别名上的搜索与 PIT 权限，不应授予索引写入或管理权限；当前接口不会执行 KNN、查询 Embedding 或 RRF。
+BM25 查询固定使用读别名和可见文档，标题、关键词、主题、摘要、正文的权重依次降低；`keyword`、`topic`、`source_id` 是精确筛选。分页通过 PIT 与 `search_after` 保持快照，PIT 过期或游标无效时返回受控错误，客户端应从第一页重试。OpenSearch 候选始终由 PostgreSQL 批量复核当前公开状态、当前修订和当前 AI 选择后才返回，因此索引延迟或迟到文档不会泄露已下架内容。查询身份只需读别名上的搜索与 PIT 权限，不应授予索引写入或管理权限；开启混合搜索时还需要读取实际读索引 mapping 元数据的权限；无需授予索引写入或别名切换权限。
 
 ## 搜索投影运维
 
@@ -385,7 +391,7 @@ VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 - [I2 可复现闭环脚本](web/e2e/README.md) 会在本地/`.test` API 创建临时用户、文章和 Source，验证用户直发、RSS 抓取、联合 latest、编辑冲突和作者/管理员下架；它不是生产脚本。
 - 2026-09-22 使用专用 `_test` 数据库和真实 MinIO 完成 I2 全依赖回归：PostgreSQL 集成套件、MinIO 私有 Bucket/三种图片格式/流式读取与删除测试，以及上述 8 步 HTTP 闭环均通过；临时 API、数据库和测试对象已在验证后清理。
 - 认证相关计数与耗时继续使用结构化日志；异步投影日志使用 `trace_id`、`event_id`、`task_id`、`worker_id` 串联，错误限长并脱敏。
-- API 与 Worker 均提供独立的内部 `/metrics`；搜索指标仅使用固定 result/stage/PIT 标签，并记录请求、耗时、候选、PostgreSQL 过滤、扫描上限与 PIT 生命周期。Prometheus 同时抓取 API、Worker 与 RabbitMQ。Grafana 只有 Compose 入口，尚无正式仪表盘或告警规则。
+- API 与 Worker 均提供独立的内部 `/metrics`；搜索指标使用固定结果、阶段、PIT、检索模式、通道、降级原因与依赖错误分类标签，记录请求、分段耗时、两路/并集候选、公开事实/陈旧身份过滤、扫描上限与 PIT 生命周期。Prometheus 同时抓取 API、Worker 与 RabbitMQ。Grafana 只有 Compose 入口，尚无正式仪表盘或告警规则。
 - 浏览器 Playwright E2E、压测和完整监控告警尚未完成；可靠异步故障演练范围与证据见单独说明，不把它描述为生产级灾备验证。
 
 文档中的“已实现”依据当前代码，不代表每次文档更新都重新执行了运行验证。I1 及更早的详细 change 验证保存在只读的 `code_copilot/changes/`；后续规范与 change 统一使用 `openspec/`。

@@ -321,3 +321,30 @@ func TestBuildBulkBodyUsesExternalGteVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileEncodingPreservesStrictV1(t *testing.T) {
+	d := projectionApp.Document{SchemaVersion: 1, EmbeddingProfileVersion: "actual-old-profile", Vector: []float64{1, 0}}
+	old, err := renderDocument(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(old), "embedding_profile_version") {
+		t.Fatal("v1 strict 编码新增字段")
+	}
+	d.SchemaVersion = 2
+	body, err := renderDocument(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"embedding_profile_version":"actual-old-profile"`) {
+		t.Fatal("v2 丢失实际 profile")
+	}
+	d.Vector = nil
+	body, err = renderDocument(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "embedding_profile_version") {
+		t.Fatal("无向量不应携带 profile")
+	}
+}

@@ -263,7 +263,7 @@ func TestComposeInjectsSearchQueryIntoAPIWithoutCommittedCursorKey(t *testing.T)
 		"VELIS_HTTP_METRICS_ADDRESS: 0.0.0.0:9090",
 		"VELIS_SEARCH_ENDPOINTS: ${VELIS_SEARCH_ENDPOINTS-http://opensearch:9200}",
 		"VELIS_SEARCH_CURSOR_KEY: ${VELIS_SEARCH_CURSOR_KEY-}",
-		"VELIS_SEARCH_QUERY_TIMEOUT: ${VELIS_SEARCH_QUERY_TIMEOUT-3s}",
+		"VELIS_SEARCH_QUERY_TIMEOUT: ${VELIS_SEARCH_QUERY_TIMEOUT-5s}",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Compose 缺少 API 搜索配置 %q", required)
@@ -278,5 +278,82 @@ func TestComposeInjectsSearchQueryIntoAPIWithoutCommittedCursorKey(t *testing.T)
 	}
 	if strings.Contains(string(example), "cursor_key:") {
 		t.Fatal("YAML 示例不得提供 cursor_key 字段")
+	}
+}
+
+func TestHybridDefaultsAndBounds(t *testing.T) {
+	cfg := Default()
+	h := cfg.Search.Query.Hybrid
+	if h.Enabled || h.BM25Candidates != 100 || h.KNNCandidates != 100 || h.EmbeddingTimeoutRaw != "1s" || h.KNNTimeoutRaw != "1s" || cfg.Search.Query.TimeoutRaw != "5s" {
+		t.Fatalf("混合默认值非法: %+v", h)
+	}
+	for _, n := range []int{0, 1, 100, 101} {
+		for _, knn := range []bool{false, true} {
+			c := Default()
+			c.Search.Query.Hybrid.Enabled = true
+			if knn {
+				c.Search.Query.Hybrid.KNNCandidates = n
+			} else {
+				c.Search.Query.Hybrid.BM25Candidates = n
+			}
+			err := c.Validate()
+			if (err == nil) != (n >= 1 && n <= 100) {
+				t.Fatalf("候选 %d knn=%v: %v", n, knn, err)
+			}
+		}
+	}
+	for _, raw := range []string{"bad", "99ms", "2001ms", "5s"} {
+		c := Default()
+		c.Search.Query.Hybrid.Enabled = true
+		c.Search.Query.Hybrid.EmbeddingTimeoutRaw = raw
+		if c.Validate() == nil {
+			t.Fatalf("接受非法超时 %s", raw)
+		}
+		c = Default()
+		c.Search.Query.Hybrid.Enabled = true
+		c.Search.Query.Hybrid.KNNTimeoutRaw = raw
+		if c.Validate() == nil {
+			t.Fatalf("接受非法 KNN 超时 %s", raw)
+		}
+	}
+	c := Default()
+	c.Search.Query.Hybrid.Enabled = true
+	c.Search.Query.TimeoutRaw = "1s"
+	if c.Validate() == nil {
+		t.Fatal("子超时必须小于总预算")
+	}
+	c = Default()
+	c.Search.Query.Hybrid.Enabled = true
+	c.Search.Query.Hybrid.EmbeddingTimeoutRaw = "100ms"
+	c.Search.Query.Hybrid.KNNTimeoutRaw = "2s"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHybridYAMLAndEnvironmentPriority(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("search:\n  query:\n    hybrid:\n      enabled: true\n      bm25_candidates: 12\n      knn_candidates: 13\n      embedding_timeout: 200ms\n      knn_timeout: 300ms\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Search.Query.Hybrid.BM25Candidates != 12 || cfg.Search.Query.Hybrid.KNNTimeout != 300*time.Millisecond {
+		t.Fatal("YAML 未覆盖默认值")
+	}
+	t.Setenv("VELIS_SEARCH_QUERY_HYBRID_ENABLED", "true")
+	t.Setenv("VELIS_SEARCH_QUERY_HYBRID_BM25_CANDIDATES", "20")
+	t.Setenv("VELIS_SEARCH_QUERY_HYBRID_KNN_CANDIDATES", "21")
+	t.Setenv("VELIS_SEARCH_QUERY_HYBRID_EMBEDDING_TIMEOUT", "400ms")
+	t.Setenv("VELIS_SEARCH_QUERY_HYBRID_KNN_TIMEOUT", "500ms")
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.Search.Query.Hybrid
+	if !h.Enabled || h.BM25Candidates != 20 || h.KNNCandidates != 21 || h.EmbeddingTimeout != 400*time.Millisecond || h.KNNTimeout != 500*time.Millisecond {
+		t.Fatalf("环境覆盖失败: %+v", h)
 	}
 }

@@ -77,7 +77,7 @@ paths:
   /search/articles:
     get:
       operationId: searchArticles
-      summary: 使用 BM25 搜索当前公开文章
+      summary: 搜索当前公开文章（可选 BM25/KNN 混合召回）
       description: >-
         对现有文本投影执行 BM25，并在返回前由 PostgreSQL 复核当前公开事实。
         cursor 绑定规范化查询与短期 PIT；过期或不匹配时返回 INVALID_CURSOR。

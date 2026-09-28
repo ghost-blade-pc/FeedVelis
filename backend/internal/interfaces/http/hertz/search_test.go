@@ -4,13 +4,18 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/handler"
 
 	articleApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/article"
 	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
@@ -129,4 +134,54 @@ func searchServer(search searchApp.Searcher) *server.Hertz {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return NewServer(Options{Address: "127.0.0.1:0", ShutdownTimeout: time.Second, Logger: logger,
 		Health: health.NewService(readyChecker{}), Search: search})
+}
+
+// TestSearchLargeEncryptedCursorOverHTTP 通过真实 TCP/Hertz 入口验证最坏 200 条游标。
+func TestSearchLargeEncryptedCursorOverHTTP(t *testing.T) {
+	codec, _ := searchApp.NewCursorCodec([]byte(strings.Repeat("k", 32)))
+	plan := searchApp.HybridConfig{Enabled: true, Profile: "e-v1"}
+	query := searchApp.Query{Q: "go"}
+	state := searchApp.FrozenPage{Mode: searchApp.ModeHybrid, ExpiresAt: time.Now().Add(searchApp.HybridTTL)}
+	identity := searchApp.VectorIdentity{RevisionID: 9223372036854775807, GenerationID: "ffffffff-ffff-ffff-ffff-ffffffffffff", EmbeddingID: "ffffffff-ffff-ffff-ffff-ffffffffffff", Profile: plan.Profile}
+	for id := int64(1); id <= 200; id++ {
+		state.Candidates = append(state.Candidates, searchApp.FrozenCandidate{ArticleID: id, Identity: identity, Semantic: true})
+	}
+	token, err := codec.EncodeFrozen(query, plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &searcherFake{page: searchApp.Page{Items: []articleDomain.ListItem{}}}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := server.New(server.WithListener(listener), server.WithHostPorts(listener.Addr().String()))
+	received := make(chan searchApp.Request, 1)
+	endpoint := handler.NewSearch(fake)
+	h.GET("/api/v1/search/articles", func(ctx context.Context, c *app.RequestContext) { endpoint.Articles(ctx, c); received <- fake.request })
+	done := make(chan error, 1)
+	go func() { done <- h.Run() }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = h.Shutdown(ctx)
+		select {
+		case <-done:
+		case <-ctx.Done():
+			t.Error("Hertz 未停止")
+		}
+	}()
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get("http://" + listener.Addr().String() + "/api/v1/search/articles?q=go&cursor=" + url.QueryEscape(token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	bound := <-received
+	if response.StatusCode != 200 || bound.Cursor != token {
+		t.Fatalf("大游标未通过 HTTP: status=%d bytes=%d", response.StatusCode, len(token))
+	}
+	if _, err = codec.DecodeFrozen(query, plan, bound.Cursor, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -145,7 +145,7 @@ func (s *RebuildService) Start(ctx context.Context) (RebuildState, error) {
 	if err != nil {
 		return RebuildState{}, err
 	}
-	if state.SchemaVersion != s.policy.SchemaVersion || state.SchemaIdentity != s.policy.SchemaIdentity {
+	if state.SchemaVersion != current.SchemaVersion || state.SchemaIdentity != current.SchemaIdentity {
 		return RebuildState{}, fmt.Errorf("%w: 当前索引 %s 的身份为 %s",
 			ErrSchemaMismatch, current.CurrentIndex, state.SchemaIdentity)
 	}
@@ -634,6 +634,10 @@ func (s *RebuildService) Rollback(ctx context.Context, id string) (RebuildState,
 	if current.RollbackDeadline != nil && now.After(*current.RollbackDeadline) {
 		return RebuildState{}, fmt.Errorf("%w: 回滚窗口已于 %s 结束", ErrUnsafeIndexTarget, current.RollbackDeadline.UTC().Format(time.RFC3339))
 	}
+	rollback, err := s.index.Inspect(ctx, current.RollbackIndex)
+	if err != nil {
+		return RebuildState{}, err
+	}
 	if err := s.index.SwitchAliases(ctx, AliasSwitch{
 		ReadAlias: current.ReadAlias, WriteAlias: current.WriteAlias,
 		Index: current.RollbackIndex, DetachIndex: state.CandidateIndex,
@@ -642,7 +646,7 @@ func (s *RebuildService) Rollback(ctx context.Context, id string) (RebuildState,
 	}
 	if err := s.store.SetState(ctx, IndexStateRow{
 		ReadAlias: current.ReadAlias, WriteAlias: current.WriteAlias, CurrentIndex: current.RollbackIndex,
-		SchemaVersion: current.SchemaVersion, SchemaIdentity: current.SchemaIdentity,
+		SchemaVersion: rollback.SchemaVersion, SchemaIdentity: rollback.SchemaIdentity,
 	}, now); err != nil {
 		return RebuildState{}, err
 	}

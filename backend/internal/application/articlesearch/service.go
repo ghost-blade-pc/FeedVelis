@@ -3,6 +3,7 @@ package articlesearch
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	articleDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/article"
@@ -13,12 +14,14 @@ type Searcher interface {
 }
 
 type Service struct {
-	index    QueryIndex
-	reader   PublicArticleReader
-	codec    *CursorCodec
-	observer Observer
-	config   Config
-	now      func() time.Time
+	embedder      QueryEmbedder
+	currentReader CurrentArticleReader
+	index         QueryIndex
+	reader        PublicArticleReader
+	codec         *CursorCodec
+	observer      Observer
+	config        Config
+	now           func() time.Time
 }
 
 func NewService(index QueryIndex, reader PublicArticleReader, codec *CursorCodec, observer Observer, config Config) *Service {
@@ -43,6 +46,25 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 		return Page{}, controlled(CodeSearchUnavailable, ErrIndexUnavailable)
 	}
 
+	if s.config.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.config.Timeout)
+		defer cancel()
+	}
+	if strings.HasPrefix(query.Cursor, "2.") || (query.Cursor == "" && s.config.Hybrid.Enabled) {
+		page, err := s.searchHybrid(ctx, query)
+		if err != nil {
+			switch CodeOf(err) {
+			case CodeInvalidCursor:
+				result = ResultInvalidCursor
+			case CodeDependencyUnavailable:
+				result = ResultDependencyUnavailable
+			default:
+				result = ResultSearchUnavailable
+			}
+		}
+		return page, err
+	}
 	pitID := ""
 	var after *SortPosition
 	if query.Cursor != "" {
@@ -162,6 +184,7 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 	if page.HasMore {
 		closeOnReturn = false
 	}
+	s.mode(ctx, ModeBM25, "disabled")
 	return page, nil
 }
 

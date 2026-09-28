@@ -10,6 +10,7 @@ import (
 	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
 	sourceApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/source"
+	einoAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/ai/eino"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/clock"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/config"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/fetcher/httpfeed"
@@ -33,7 +34,7 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
 	registry := prometheus.NewRegistry()
 	queryMetrics := observability.NewArticleSearchMetrics(registry)
-	search, searchClient := buildArticleSearch(cfg, pool, observability.NewArticleSearchObserver(queryMetrics), logger)
+	search, searchClient := buildArticleSearch(cfg, pool, observability.NewArticleSearchObserver(queryMetrics).WithLogger(logger), logger)
 	if searchClient != nil {
 		defer searchClient.Close()
 	}
@@ -145,6 +146,58 @@ func buildArticleSearch(cfg config.Config, pool *pgxpool.Pool, observer searchAp
 	service := searchApp.NewService(client, postgres.NewArticleRepository(pool), codec, observer, searchApp.Config{
 		PITKeepAlive: cfg.Search.Query.PITKeepAlive, CandidateBatchSize: cfg.Search.Query.CandidateBatchSize,
 		MaxCandidatesPerRequest: cfg.Search.Query.MaxCandidatesPerRequest,
+		Timeout:                 cfg.Search.Query.Timeout,
+		Hybrid: searchApp.HybridConfig{Enabled: cfg.Search.Query.Hybrid.Enabled, BM25Candidates: cfg.Search.Query.Hybrid.BM25Candidates, KNNCandidates: cfg.Search.Query.Hybrid.KNNCandidates,
+			EmbeddingTimeout: cfg.Search.Query.Hybrid.EmbeddingTimeout, KNNTimeout: cfg.Search.Query.Hybrid.KNNTimeout, Provider: cfg.AI.Embedding.Profile.Provider, Model: cfg.AI.Embedding.Profile.Model, Profile: cfg.AI.Embedding.Profile.ProfileVersion, Dimensions: cfg.AI.Embedding.Dimensions},
 	})
-	return service, client
+	modelCtx, cancelModel := context.WithCancel(context.Background())
+	var queryEmbedder searchApp.QueryEmbedder
+	var modelCloser io.Closer
+	if cfg.Search.Query.Hybrid.Enabled && cfg.AI.Embedding.Profile.Enabled() {
+		adapter, err := einoAdapter.NewOpenAIQueryEmbedder(modelCtx, cfg.AI.Embedding, cfg.Search.Query.Hybrid.EmbeddingTimeout)
+		if err == nil {
+			queryEmbedder = adapter
+			modelCloser = adapter
+		} else if logger != nil {
+			logger.Warn("查询 Embedding 装配失败，降级为 BM25")
+		}
+	}
+	service.WithHybrid(cancellableQueryEmbedder(queryEmbedder, modelCtx), postgres.NewArticleRepository(pool))
+	return service, &searchCloser{client: client, cancel: cancelModel, model: modelCloser}
+}
+
+type searchCloser struct {
+	client io.Closer
+	model  io.Closer
+	cancel context.CancelFunc
+}
+
+func (c *searchCloser) Close() error {
+	c.cancel()
+	if c.model != nil {
+		_ = c.model.Close()
+	}
+	return c.client.Close()
+}
+
+type lifecycleQueryEmbedder struct {
+	embedder searchApp.QueryEmbedder
+	ctx      context.Context
+}
+
+func cancellableQueryEmbedder(embedder searchApp.QueryEmbedder, ctx context.Context) searchApp.QueryEmbedder {
+	if embedder == nil {
+		return nil
+	}
+	return lifecycleQueryEmbedder{embedder, ctx}
+}
+func (e lifecycleQueryEmbedder) EmbedQuery(ctx context.Context, q string) ([]float64, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(e.ctx, cancel)
+	defer stop()
+	if e.ctx.Err() != nil {
+		cancel()
+	}
+	return e.embedder.EmbedQuery(ctx, q)
 }

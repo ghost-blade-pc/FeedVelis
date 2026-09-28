@@ -46,15 +46,26 @@ func (s SecretBytes) Bytes() []byte                   { return append([]byte(nil
 func (s SecretBytes) IsSet() bool                     { return len(s) != 0 }
 
 // SearchQueryConfig 描述 API 查询侧的独立资源边界。CursorKey 永不从 YAML 读取。
+type SearchHybridConfig struct {
+	Enabled             bool          `yaml:"enabled"`
+	BM25Candidates      int           `yaml:"bm25_candidates"`
+	KNNCandidates       int           `yaml:"knn_candidates"`
+	EmbeddingTimeoutRaw string        `yaml:"embedding_timeout"`
+	EmbeddingTimeout    time.Duration `yaml:"-"`
+	KNNTimeoutRaw       string        `yaml:"knn_timeout"`
+	KNNTimeout          time.Duration `yaml:"-"`
+}
+
 type SearchQueryConfig struct {
-	TimeoutRaw              string        `yaml:"timeout"`
-	Timeout                 time.Duration `yaml:"-"`
-	PITKeepAliveRaw         string        `yaml:"pit_keep_alive"`
-	PITKeepAlive            time.Duration `yaml:"-"`
-	CandidateBatchSize      int           `yaml:"candidate_batch_size"`
-	MaxCandidatesPerRequest int           `yaml:"max_candidates_per_request"`
-	CursorKey               SecretBytes   `yaml:"-"`
-	CursorKeyEphemeral      bool          `yaml:"-"`
+	Hybrid                  SearchHybridConfig `yaml:"hybrid"`
+	TimeoutRaw              string             `yaml:"timeout"`
+	Timeout                 time.Duration      `yaml:"-"`
+	PITKeepAliveRaw         string             `yaml:"pit_keep_alive"`
+	PITKeepAlive            time.Duration      `yaml:"-"`
+	CandidateBatchSize      int                `yaml:"candidate_batch_size"`
+	MaxCandidatesPerRequest int                `yaml:"max_candidates_per_request"`
+	CursorKey               SecretBytes        `yaml:"-"`
+	CursorKeyEphemeral      bool               `yaml:"-"`
 }
 
 // QueryEnabled 表示查询端点可装配真实搜索服务；投影启用状态仍由 Enabled 独立决定。
@@ -98,11 +109,18 @@ func (c SearchConfig) WriteAlias() string { return c.IndexPrefix + "-write" }
 // 它与索引 _meta 中记录的值必须一致：任何一项不同都必须建立新物理索引而不是原地修改。
 func (c SearchConfig) SchemaIdentity() string {
 	return fmt.Sprintf("mapping-v%d|analyzer-%s|dims-%d|encoding-v%d",
-		c.SchemaVersion, analyzerFor(c.SchemaVersion), c.EmbeddingDimensions, ProjectionEncodingVersion)
+		c.SchemaVersion, analyzerFor(c.SchemaVersion), c.EmbeddingDimensions, ProjectionEncodingFor(c.SchemaVersion))
 }
 
 // ProjectionEncodingVersion 是文档字段编码的版本；改变字段语义时必须递增。
 const ProjectionEncodingVersion = 1
+
+func ProjectionEncodingFor(schemaVersion int) int {
+	if schemaVersion == 2 {
+		return 2
+	}
+	return ProjectionEncodingVersion
+}
 
 // regexpIndexPrefix 限定索引前缀：OpenSearch 索引名必须是小写且不含通配字符。
 var regexpIndexPrefix = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,63}$`)
@@ -120,23 +138,27 @@ func applySearchEnvironment(cfg *Config) error {
 		search.Endpoints = splitList(value)
 	}
 	for target, key := range map[*string]string{
-		&search.Username:               "VELIS_SEARCH_USERNAME",
-		&search.Password:               "VELIS_SEARCH_PASSWORD",
-		&search.CAFile:                 "VELIS_SEARCH_CA_FILE",
-		&search.IndexPrefix:            "VELIS_SEARCH_INDEX_PREFIX",
-		&search.ConnectRaw:             "VELIS_SEARCH_CONNECT_TIMEOUT",
-		&search.RequestRaw:             "VELIS_SEARCH_REQUEST_TIMEOUT",
-		&search.Query.TimeoutRaw:       "VELIS_SEARCH_QUERY_TIMEOUT",
-		&search.Query.PITKeepAliveRaw:  "VELIS_SEARCH_QUERY_PIT_KEEP_ALIVE",
-		&search.Worker.LeaseRaw:        "VELIS_SEARCH_WORKER_LEASE",
-		&search.Worker.PollRaw:         "VELIS_SEARCH_WORKER_POLL_INTERVAL",
-		&search.Worker.BackoffMin:      "VELIS_SEARCH_WORKER_BACKOFF_MIN",
-		&search.Worker.BackoffMax:      "VELIS_SEARCH_WORKER_BACKOFF_MAX",
-		&search.Rebuild.RollbackWindow: "VELIS_SEARCH_REBUILD_ROLLBACK_WINDOW",
+		&search.Username:                         "VELIS_SEARCH_USERNAME",
+		&search.Password:                         "VELIS_SEARCH_PASSWORD",
+		&search.CAFile:                           "VELIS_SEARCH_CA_FILE",
+		&search.IndexPrefix:                      "VELIS_SEARCH_INDEX_PREFIX",
+		&search.ConnectRaw:                       "VELIS_SEARCH_CONNECT_TIMEOUT",
+		&search.RequestRaw:                       "VELIS_SEARCH_REQUEST_TIMEOUT",
+		&search.Query.Hybrid.EmbeddingTimeoutRaw: "VELIS_SEARCH_QUERY_HYBRID_EMBEDDING_TIMEOUT",
+		&search.Query.Hybrid.KNNTimeoutRaw:       "VELIS_SEARCH_QUERY_HYBRID_KNN_TIMEOUT",
+		&search.Query.TimeoutRaw:                 "VELIS_SEARCH_QUERY_TIMEOUT",
+		&search.Query.PITKeepAliveRaw:            "VELIS_SEARCH_QUERY_PIT_KEEP_ALIVE",
+		&search.Worker.LeaseRaw:                  "VELIS_SEARCH_WORKER_LEASE",
+		&search.Worker.PollRaw:                   "VELIS_SEARCH_WORKER_POLL_INTERVAL",
+		&search.Worker.BackoffMin:                "VELIS_SEARCH_WORKER_BACKOFF_MIN",
+		&search.Worker.BackoffMax:                "VELIS_SEARCH_WORKER_BACKOFF_MAX",
+		&search.Rebuild.RollbackWindow:           "VELIS_SEARCH_REBUILD_ROLLBACK_WINDOW",
 	} {
 		setString(target, key)
 	}
 	for target, key := range map[*int]string{
+		&search.Query.Hybrid.BM25Candidates:   "VELIS_SEARCH_QUERY_HYBRID_BM25_CANDIDATES",
+		&search.Query.Hybrid.KNNCandidates:    "VELIS_SEARCH_QUERY_HYBRID_KNN_CANDIDATES",
 		&search.SchemaVersion:                 "VELIS_SEARCH_SCHEMA_VERSION",
 		&search.EmbeddingDimensions:           "VELIS_SEARCH_EMBEDDING_DIMENSIONS",
 		&search.BulkMaxItems:                  "VELIS_SEARCH_BULK_MAX_ITEMS",
@@ -152,6 +174,9 @@ func applySearchEnvironment(cfg *Config) error {
 		if err := setInt(target, key); err != nil {
 			return err
 		}
+	}
+	if err := setBool(&search.Query.Hybrid.Enabled, "VELIS_SEARCH_QUERY_HYBRID_ENABLED"); err != nil {
+		return err
 	}
 	if err := setBool(&search.InsecureSkipVerify, "VELIS_SEARCH_INSECURE_SKIP_VERIFY"); err != nil {
 		return err
@@ -169,6 +194,9 @@ func applySearchEnvironment(cfg *Config) error {
 // validateSearchConfig 校验连接边界，并核对向量维度与启用的 Embedding profile 一致。
 // 维度写入映射后不可变，不一致必须通过新索引解决，不能截断、填充或静默丢弃向量。
 func validateSearchConfig(search *SearchConfig, ai *AIConfig, environment string) error {
+	if err := validateSearchHybrid(&search.Query); err != nil {
+		return err
+	}
 	if !search.Enabled() {
 		return nil
 	}
@@ -303,4 +331,29 @@ func RedactedSearchEndpoints(endpoints []string) []string {
 		redacted = append(redacted, parsed.Scheme+"://"+parsed.Host)
 	}
 	return redacted
+}
+
+// validateSearchHybrid 即使连接未配置也拒绝明确启用的非法计划。
+func validateSearchHybrid(query *SearchQueryConfig) error {
+	if !query.Hybrid.Enabled {
+		return nil
+	}
+	h := &query.Hybrid
+	if h.BM25Candidates < 1 || h.BM25Candidates > 100 || h.KNNCandidates < 1 || h.KNNCandidates > 100 {
+		return errors.New("search.query.hybrid 每路候选必须介于 1 和 100")
+	}
+	var err error
+	if query.Timeout, err = durationWithin("search.query.timeout", query.TimeoutRaw, 100*time.Millisecond, 30*time.Second); err != nil {
+		return err
+	}
+	if h.EmbeddingTimeout, err = durationWithin("search.query.hybrid.embedding_timeout", h.EmbeddingTimeoutRaw, 100*time.Millisecond, 2*time.Second); err != nil {
+		return err
+	}
+	if h.KNNTimeout, err = durationWithin("search.query.hybrid.knn_timeout", h.KNNTimeoutRaw, 100*time.Millisecond, 2*time.Second); err != nil {
+		return err
+	}
+	if h.EmbeddingTimeout >= query.Timeout || h.KNNTimeout >= query.Timeout {
+		return errors.New("search.query.hybrid 子超时必须小于搜索总预算")
+	}
+	return nil
 }

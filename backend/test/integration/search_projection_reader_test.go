@@ -285,3 +285,67 @@ func TestSearchProjectionSnapshotWatermarkAndIncrementalScan(t *testing.T) {
 		t.Fatalf("增量扫描必须返回最新 generation: %+v vs %d", job, tail.Jobs[0].Generation)
 	}
 }
+
+func TestHybridIdentityAndActualProfile(t *testing.T) {
+	env := newTestEnv(t)
+	env.resetArticles(t)
+	env.resetAccounts(t)
+	seedAIUpgradeTasks(t, env)
+	ctx := context.Background()
+	g, e := testGenerationID, testEmbeddingID
+	insertGenerationResult(t, env, g, "p1", 7101, 7111)
+	insertEmbeddingResult(t, env, e, g, 7101, 7111)
+	setCurrentSelection(t, env, 7101, 7111, &g, &e)
+	repo := postgres.NewArticleRepository(env.pool)
+	check := func(profile string, valid bool) {
+		t.Helper()
+		items, err := repo.ListPublishedWithIdentity(ctx, []int64{7102, 7101, 999999})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, item := range items {
+			if item.Item.ID == 7101 {
+				found = true
+				if item.Identity.Profile != profile || (item.Identity.EmbeddingID != "") != valid {
+					t.Fatalf("向量身份错误: %+v", item.Identity)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("缺少公开文章")
+		}
+	}
+	check("e-v1", true)
+	if _, err := env.pool.Exec(ctx, `UPDATE velis.ai_embedding_results SET profile_version='old-same-dim' WHERE id=$1`, e); err != nil {
+		t.Fatal(err)
+	}
+	check("old-same-dim", true)
+	if p := readOneProjection(t, env, 7101); p.Document.EmbeddingProfileVersion != "old-same-dim" {
+		t.Fatal("实际 profile 被配置或选择标识替代")
+	}
+	newer := testSupersededID
+	insertGenerationResult(t, env, newer, "p2", 7101, 7111)
+	setCurrentSelection(t, env, 7101, 7111, &newer, &e)
+	check("", false)
+	p := readOneProjection(t, env, 7101)
+	if p.Document.EmbeddingProfileVersion != "" || len(p.Document.Vector) != 0 {
+		t.Fatal("失配 generation 保留向量")
+	}
+	if _, err := env.pool.Exec(ctx, `INSERT INTO velis.article_versions (id,article_id,revision_no,title,plain_text,excerpt,language,content_hash,sanitizer_version,created_at) OVERRIDING SYSTEM VALUE SELECT 7199,article_id,revision_no+1,title,plain_text,excerpt,language,content_hash,sanitizer_version,created_at FROM velis.article_versions WHERE id=7111`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.pool.Exec(ctx, `UPDATE velis.articles SET current_revision_id=7199 WHERE id=7101`); err != nil {
+		t.Fatal(err)
+	}
+	check("", false)
+	if items, err := repo.ListPublishedWithIdentity(ctx, nil); err != nil || len(items) != 0 {
+		t.Fatalf("空批次: %v", err)
+	}
+	if _, err := env.pool.Exec(ctx, `UPDATE velis.articles SET status='offline',offline_reason='admin',offline_at=now() WHERE id=7101`); err != nil {
+		t.Fatal(err)
+	}
+	if items, err := repo.ListPublishedWithIdentity(ctx, []int64{7101}); err != nil || len(items) != 0 {
+		t.Fatalf("下架仍可读取: %v %v", items, err)
+	}
+}

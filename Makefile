@@ -43,7 +43,7 @@ integration-opensearch:
 integration-search:
 	@test -n "$(VELIS_TEST_DATABASE_URL)" || (echo "未设置 VELIS_TEST_DATABASE_URL（必须指向 _test 数据库）" && exit 2)
 	@test -n "$(VELIS_TEST_OPENSEARCH_URL)" || (echo "未设置 VELIS_TEST_OPENSEARCH_URL（必须指向可用的 OpenSearch 3.x）" && exit 2)
-	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run 'TestSearchProjection|TestSearchIndexRebuild|TestSearchRebuild|TestArticleSearch' ./test/integration
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run 'TestSearchProjection|TestSearchIndexRebuild|TestSearchRebuild|TestArticleSearch|TestHybrid' ./test/integration
 
 integration-async: integration-postgres integration-rabbitmq
 

@@ -1,7 +1,9 @@
 package observability
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +26,15 @@ func TestArticleSearchMetricsUseOnlyFixedLabels(t *testing.T) {
 	for _, operation := range []searchApp.PITOperation{searchApp.PITCreate, searchApp.PITDelete, searchApp.PITFailure} {
 		observer.ObservePIT(ctx, operation)
 	}
+	observer.ObserveMode(ctx, searchApp.ModeBM25, "embedding_timeout")
+	observer.ObserveMode(ctx, searchApp.ModeHybrid, "private query")
+	observer.AddRecall(ctx, "bm25", 100)
+	observer.AddRecall(ctx, "knn", 100)
+	observer.AddRecall(ctx, "union", 200)
+	observer.AddRecall(ctx, "private query", 1)
+	observer.AddStale(ctx, 2)
+	observer.ObserveDependencyFailure(ctx, "embedding", "rate_limited")
+	observer.ObserveDependencyFailure(ctx, "embedding", "private query")
 	observer.AddCandidates(ctx, 4)
 	observer.AddFiltered(ctx, 2)
 	observer.ObserveScanLimit(ctx)
@@ -52,10 +63,29 @@ func TestArticleSearchMetricsUseOnlyFixedLabels(t *testing.T) {
 	for _, family := range families {
 		for _, metric := range family.Metric {
 			for _, label := range metric.Label {
-				if label.GetName() != "result" && label.GetName() != "stage" && label.GetName() != "operation" {
+				if label.GetName() != "result" && label.GetName() != "stage" && label.GetName() != "operation" && label.GetName() != "mode" && label.GetName() != "reason" && label.GetName() != "path" && label.GetName() != "dependency" && label.GetName() != "class" {
 					t.Fatalf("出现动态标签 %s=%s", label.GetName(), label.GetValue())
 				}
 			}
+		}
+	}
+}
+
+func TestArticleSearchLogsOnlyControlledDiagnosticFields(t *testing.T) {
+	var output bytes.Buffer
+	observer := NewArticleSearchObserver(NewArticleSearchMetrics(prometheus.NewRegistry())).WithLogger(slog.New(slog.NewJSONHandler(&output, nil)))
+	ctx := searchApp.WithRequestID(context.Background(), "request-123")
+	observer.ObserveMode(ctx, searchApp.ModeBM25, "private query")
+	observer.ObserveDependencyFailure(ctx, "embedding", "secret-vector-cursor-key")
+	text := output.String()
+	for _, value := range []string{"request-123", "bm25", "embedding_failed", "internal"} {
+		if !strings.Contains(text, value) {
+			t.Fatalf("缺少关联诊断 %s", value)
+		}
+	}
+	for _, value := range []string{"private query", "secret-vector-cursor-key"} {
+		if strings.Contains(text, value) {
+			t.Fatal("日志泄露原始输入")
 		}
 	}
 }

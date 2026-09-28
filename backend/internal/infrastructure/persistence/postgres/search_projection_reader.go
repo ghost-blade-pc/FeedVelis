@@ -22,7 +22,7 @@ a.source_id,s.title,a.author_user_id::text,a.author_name,a.published_at,a.source
 v.title,v.plain_text,v.excerpt,
 cs.generation_result_id::text,cs.embedding_result_id::text,
 g.summary,g.keywords,g.topics,
-e.vector,(cs.embedding_result_id IS NOT NULL AND e.id IS NULL)
+e.vector,e.profile_version,(cs.embedding_result_id IS NOT NULL AND e.id IS NULL)
 FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id
 LEFT JOIN velis.sources s ON s.id=a.source_id
@@ -148,10 +148,11 @@ func scanProjection(row rowScanner) (projectionApp.CurrentProjection, error) {
 	var keywords, topics []string
 	var vector []float32
 	var vectorInconsistent bool
+	var embeddingProfile *string
 	err := row.Scan(&document.ArticleID, &document.LockVersion, &document.RevisionID, &status, &originType,
 		&sourceID, &sourceTitle, &authorUserID, &authorName, &publishedAt, &sourcePublishedAt,
 		&revisionTitle, &plainText, &excerpt, &generationResultID, &embeddingResultID,
-		&summary, &keywords, &topics, &vector, &vectorInconsistent)
+		&summary, &keywords, &topics, &vector, &embeddingProfile, &vectorInconsistent)
 	if err != nil {
 		return projectionApp.CurrentProjection{}, err
 	}
@@ -189,6 +190,7 @@ func scanProjection(row rowScanner) (projectionApp.CurrentProjection, error) {
 			document.Topics = topics
 		}
 		if len(vector) > 0 && !vectorInconsistent {
+			document.EmbeddingProfileVersion = valueOrEmpty(embeddingProfile)
 			document.Vector = make([]float64, len(vector))
 			for index, value := range vector {
 				document.Vector[index] = float64(value)

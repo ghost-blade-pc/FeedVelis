@@ -87,8 +87,9 @@ func TestParseSearchResponseRejectsUnsafeShapes(t *testing.T) {
 	valid := searchResponse{PITID: "pit"}
 	valid.Shards.Total, valid.Shards.Successful = 1, 1
 	valid.Hits.Hits = append(valid.Hits.Hits, struct {
-		ID   string            `json:"_id"`
-		Sort []json.RawMessage `json:"sort"`
+		ID     string            `json:"_id"`
+		Source json.RawMessage   `json:"_source"`
+		Sort   []json.RawMessage `json:"sort"`
 	}{ID: "1", Sort: []json.RawMessage{json.RawMessage(`1.2`), json.RawMessage(`"2026-09-25T01:02:03Z"`), json.RawMessage(`1`)}})
 	mutations := []func(*searchResponse){
 		func(r *searchResponse) { r.TimedOut = true },
@@ -102,8 +103,9 @@ func TestParseSearchResponseRejectsUnsafeShapes(t *testing.T) {
 	for index, mutate := range mutations {
 		copyValue := valid
 		copyValue.Hits.Hits = append([]struct {
-			ID   string            `json:"_id"`
-			Sort []json.RawMessage `json:"sort"`
+			ID     string            `json:"_id"`
+			Source json.RawMessage   `json:"_source"`
+			Sort   []json.RawMessage `json:"sort"`
 		}{}, valid.Hits.Hits...)
 		copyValue.Hits.Hits[0].Sort = append([]json.RawMessage(nil), valid.Hits.Hits[0].Sort...)
 		mutate(&copyValue)

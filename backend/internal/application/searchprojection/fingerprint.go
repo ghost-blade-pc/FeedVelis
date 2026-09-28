@@ -10,28 +10,29 @@ import (
 // fingerprintPayload 是投影内容指纹的稳定输入：字段顺序由结构体固定，
 // 可选字段用空值参与，保证同一事实在不同进程与索引间得到同一指纹。
 type fingerprintPayload struct {
-	ArticleID          int64  `json:"article_id"`
-	Generation         int64  `json:"projection_generation"`
-	LockVersion        int64  `json:"lock_version"`
-	RevisionID         int64  `json:"revision_id"`
-	SchemaVersion      int    `json:"schema_version"`
-	Visible            bool   `json:"visible"`
-	InvisibleReason    string `json:"invisible_reason"`
-	OriginType         string `json:"origin_type"`
-	SourceID           int64  `json:"source_id"`
-	AuthorUserID       string `json:"author_user_id"`
-	PublishedAt        string `json:"published_at"`
-	SourceTitle        string `json:"source_title"`
-	AuthorName         string `json:"author_name"`
-	Title              string `json:"title"`
-	PlainText          string `json:"plain_text"`
-	Excerpt            string `json:"excerpt"`
-	Summary            string `json:"summary"`
-	Keywords           string `json:"keywords"`
-	Topics             string `json:"topics"`
-	GenerationResultID string `json:"generation_result_id"`
-	EmbeddingResultID  string `json:"embedding_result_id"`
-	Vector             string `json:"vector"`
+	ArticleID               int64  `json:"article_id"`
+	Generation              int64  `json:"projection_generation"`
+	LockVersion             int64  `json:"lock_version"`
+	RevisionID              int64  `json:"revision_id"`
+	SchemaVersion           int    `json:"schema_version"`
+	Visible                 bool   `json:"visible"`
+	InvisibleReason         string `json:"invisible_reason"`
+	OriginType              string `json:"origin_type"`
+	SourceID                int64  `json:"source_id"`
+	AuthorUserID            string `json:"author_user_id"`
+	PublishedAt             string `json:"published_at"`
+	SourceTitle             string `json:"source_title"`
+	AuthorName              string `json:"author_name"`
+	Title                   string `json:"title"`
+	PlainText               string `json:"plain_text"`
+	Excerpt                 string `json:"excerpt"`
+	Summary                 string `json:"summary"`
+	Keywords                string `json:"keywords"`
+	Topics                  string `json:"topics"`
+	GenerationResultID      string `json:"generation_result_id"`
+	EmbeddingResultID       string `json:"embedding_result_id"`
+	Vector                  string `json:"vector"`
+	EmbeddingProfileVersion string `json:"embedding_profile_version,omitempty"`
 }
 
 // DocumentFingerprint 计算投影内容指纹，供重建校验比对身份与内容。
@@ -55,6 +56,9 @@ func DocumentFingerprint(document Document) string {
 		Keywords: canonicalList(document.Keywords), Topics: canonicalList(document.Topics),
 		GenerationResultID: document.GenerationResultID, EmbeddingResultID: document.EmbeddingResultID,
 		Vector: canonicalVector(document.Vector),
+	}
+	if document.SchemaVersion == 2 {
+		payload.EmbeddingProfileVersion = document.EmbeddingProfileVersion
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

@@ -17,34 +17,40 @@ import (
 
 // documentBody 是严格映射的文档载荷：字段与模板一一对应，未列出的字段一律不发送。
 type documentBody struct {
-	ArticleID             int64      `json:"article_id"`
-	ProjectionGeneration  int64      `json:"projection_generation"`
-	LockVersion           int64      `json:"lock_version"`
-	RevisionID            int64      `json:"revision_id"`
-	SchemaVersion         int        `json:"schema_version"`
-	Visible               bool       `json:"visible"`
-	InvisibleReason       string     `json:"invisible_reason,omitempty"`
-	OriginType            string     `json:"origin_type"`
-	SourceID              *int64     `json:"source_id,omitempty"`
-	AuthorUserID          string     `json:"author_user_id,omitempty"`
-	PublishedAt           *time.Time `json:"published_at,omitempty"`
-	SourceTitle           string     `json:"source_title,omitempty"`
-	AuthorName            string     `json:"author_name,omitempty"`
-	Title                 string     `json:"title,omitempty"`
-	PlainText             string     `json:"plain_text,omitempty"`
-	Excerpt               string     `json:"excerpt,omitempty"`
-	Summary               string     `json:"summary,omitempty"`
-	Keywords              []string   `json:"keywords,omitempty"`
-	Topics                []string   `json:"topics,omitempty"`
-	GenerationResultID    string     `json:"generation_result_id,omitempty"`
-	EmbeddingResultID     string     `json:"embedding_result_id,omitempty"`
-	ProjectionContentHash string     `json:"projection_content_hash,omitempty"`
-	Vector                []float64  `json:"vector,omitempty"`
+	ArticleID               int64      `json:"article_id"`
+	ProjectionGeneration    int64      `json:"projection_generation"`
+	LockVersion             int64      `json:"lock_version"`
+	RevisionID              int64      `json:"revision_id"`
+	SchemaVersion           int        `json:"schema_version"`
+	Visible                 bool       `json:"visible"`
+	InvisibleReason         string     `json:"invisible_reason,omitempty"`
+	OriginType              string     `json:"origin_type"`
+	SourceID                *int64     `json:"source_id,omitempty"`
+	AuthorUserID            string     `json:"author_user_id,omitempty"`
+	PublishedAt             *time.Time `json:"published_at,omitempty"`
+	SourceTitle             string     `json:"source_title,omitempty"`
+	AuthorName              string     `json:"author_name,omitempty"`
+	Title                   string     `json:"title,omitempty"`
+	PlainText               string     `json:"plain_text,omitempty"`
+	Excerpt                 string     `json:"excerpt,omitempty"`
+	Summary                 string     `json:"summary,omitempty"`
+	Keywords                []string   `json:"keywords,omitempty"`
+	Topics                  []string   `json:"topics,omitempty"`
+	GenerationResultID      string     `json:"generation_result_id,omitempty"`
+	EmbeddingResultID       string     `json:"embedding_result_id,omitempty"`
+	ProjectionContentHash   string     `json:"projection_content_hash,omitempty"`
+	EmbeddingProfileVersion string     `json:"embedding_profile_version,omitempty"`
+	Vector                  []float64  `json:"vector,omitempty"`
 }
 
 func renderDocument(document projectionApp.Document) ([]byte, error) {
+	profile := ""
+	if document.SchemaVersion == 2 && len(document.Vector) > 0 {
+		profile = document.EmbeddingProfileVersion
+	}
 	return json.Marshal(documentBody{
-		ArticleID: document.ArticleID, ProjectionGeneration: document.Generation,
+		EmbeddingProfileVersion: profile,
+		ArticleID:               document.ArticleID, ProjectionGeneration: document.Generation,
 		LockVersion: document.LockVersion, RevisionID: document.RevisionID,
 		SchemaVersion: document.SchemaVersion, Visible: document.Visible,
 		InvisibleReason: document.InvisibleReason, OriginType: document.OriginType,
@@ -69,6 +75,22 @@ type bulkBatch struct {
 // 返回的分类与 items 按下标一一对应：连接结果未知与限流都是可重试分类，
 // 只有严格映射失败、超大文档或非法响应才是永久失败。
 func (c *Client) Bulk(ctx context.Context, items []projectionApp.BulkItem) ([]projectionApp.DeliveryOutcome, error) {
+	// 同时投递旧当前索引与新重建索引时，按受管理物理索引名选择编码。
+	// 重算该版指纹，避免 v2 profile 字段进入 strict v1 或污染 v1 重建校验。
+	items = append([]projectionApp.BulkItem(nil), items...)
+	for i := range items {
+		suffix := strings.TrimPrefix(items[i].PhysicalIndex, c.cfg.IndexPrefix+"-v")
+		if suffix != items[i].PhysicalIndex {
+			version, _, ok := strings.Cut(suffix, "-")
+			if ok && (version == "1" || version == "2") {
+				schema, _ := strconv.Atoi(version)
+				if items[i].Document.SchemaVersion != schema {
+					items[i].Document.SchemaVersion = schema
+					items[i].Document.ContentHash = projectionApp.DocumentFingerprint(items[i].Document)
+				}
+			}
+		}
+	}
 	outcomes := make([]projectionApp.DeliveryOutcome, len(items))
 	pending := make([]int, 0, len(items))
 	for index, item := range items {
