@@ -173,6 +173,45 @@ paths:
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
+  /articles/recommend:
+    get:
+      operationId: recommendArticles
+      summary: 读取匿名或本人个性化的公开推荐 Feed
+      description: >-
+        limit 默认 20，范围 1–50；重复参数返回 VALIDATION_FAILED。无凭证为匿名，
+        携带失效凭证返回既有认证错误。无有效正向画像按 PostgreSQL latest 冷启动；
+        有画像时每路最多召回 100 条、冻结去重后最多 200 条。OpenSearch 整体故障回退 latest，
+        候选不足时以 latest 补位；无 Redis 缓存。推荐游标与搜索游标隔离，绝对有效期默认 2 分钟，
+        续页继续冻结候选顺序但每页复核当前公开状态和本人有效负反馈；游标失效返回 INVALID_CURSOR。
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          description: 服务端生成的推荐专用不透明游标；切换身份或过期后须从第一页重试。
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: 公开推荐页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArticleRecommendPage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
   /articles/{article_id}:
     get:
       operationId: getArticle
@@ -1191,6 +1230,33 @@ components:
           type: [string, "null"]
         has_more:
           type: boolean
+    ArticleRecommendPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor, has_more, mode, degraded]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArticleRecommendItem"
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
+        mode:
+          type: string
+          enum: [personalized, cold_start, latest_fallback]
+        degraded:
+          type: boolean
+    ArticleRecommendItem:
+      allOf:
+        - $ref: "#/components/schemas/ArticleItem"
+        - type: object
+          required: [recommendation_reason]
+          properties:
+            recommendation_reason:
+              type: string
+              enum: [keyword_match, topic_match, similar_content, recent, latest_fallback]
     ArticleItem:
       type: object
       required: [id, title, excerpt, published_at, origin, enhancement]

@@ -47,6 +47,21 @@ export interface ArticlePage {
 
 export type ArticleSearchPage = ArticlePage
 
+export type RecommendationReason = 'keyword_match' | 'topic_match' | 'similar_content' | 'recent' | 'latest_fallback'
+export type RecommendationMode = 'personalized' | 'cold_start' | 'latest_fallback'
+
+export interface RecommendedArticleItem extends ArticleItem {
+  recommendation_reason: RecommendationReason
+}
+
+export interface ArticleRecommendPage {
+  items: RecommendedArticleItem[]
+  next_cursor: string | null
+  has_more: boolean
+  mode: RecommendationMode
+  degraded: boolean
+}
+
 export interface ArticleSearchQuery {
   q: string
   keyword?: string

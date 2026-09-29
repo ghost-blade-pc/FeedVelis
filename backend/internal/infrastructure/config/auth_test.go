@@ -18,6 +18,7 @@ func secret(fill byte, size int) string {
 func enabledConfig() Config {
 	cfg := Default()
 	cfg.App.Environment = "production"
+	cfg.Recommend.CursorKey = SecretBytes([]byte("0123456789abcdef0123456789abcdef"))
 	cfg.Auth.Enabled = true
 	cfg.Auth.JWTActiveKID = "k1"
 	cfg.Auth.JWTActiveKey = secret(1, 32)
@@ -219,6 +220,7 @@ func TestAuthEnvironmentOverrides(t *testing.T) {
 	t.Setenv("VELIS_AUTH_TRUSTED_PROXY_CIDRS", "172.18.0.0/16, 10.1.0.0/16")
 	t.Setenv("VELIS_AUTH_ARGON2_MEMORY_KIB", "32768")
 	t.Setenv("VELIS_APP_ENVIRONMENT", "production")
+	t.Setenv("VELIS_RECOMMEND_CURSOR_KEY", secret(9, 32))
 
 	cfg, err := Load("")
 	if err != nil {

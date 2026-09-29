@@ -25,8 +25,8 @@ func (r fakeProfileRepository) Samples(context.Context, string, time.Time) ([]Sa
 func TestProfileBoundsAndNegativePriority(t *testing.T) {
 	source := int64(3)
 	repo := fakeProfileRepository{excluded: []int64{1}, samples: []Sample{
-		{ArticleID: 1, ReadDays: 30, Favorited: true, NotInterested: true, Topics: []string{"go", "go"}, SourceID: &source},
-		{ArticleID: 2, ReadDays: 30, Favorited: true, Topics: []string{"go"}, SourceID: &source},
+		{ArticleID: 1, ReadDays: 30, Favorited: true, NotInterested: true, Keywords: []string{"go", "go"}, Topics: []string{"go", "go"}, SourceID: &source},
+		{ArticleID: 2, ReadDays: 30, Favorited: true, Keywords: []string{"go"}, Topics: []string{"go"}, SourceID: &source},
 		{ArticleID: 3, ReadDays: 1, Topics: []string{""}},
 	}}
 	service := NewProfileService(repo, fixedClock{time.Now()})
@@ -39,6 +39,9 @@ func TestProfileBoundsAndNegativePriority(t *testing.T) {
 	}
 	if item := profile.Topics["go"]; item.Weight != 5 || item.PositiveArticles != 1 || item.NegativeArticles != 1 {
 		t.Fatalf("主题证据错误: %+v", item)
+	}
+	if item := profile.Keywords["go"]; item.Weight != 5 || item.PositiveWeight != 6 || item.NegativeWeight != 1 || item.PositiveArticles != 1 || item.NegativeArticles != 1 {
+		t.Fatalf("关键词证据错误: %+v", item)
 	}
 	if item := profile.Sources[source]; item.Weight != 5 {
 		t.Fatalf("来源证据错误: %+v", item)
@@ -56,11 +59,11 @@ func TestProfileBoundsAndNegativePriority(t *testing.T) {
 func TestProfileEvidenceClamps(t *testing.T) {
 	samples := make([]Sample, 501)
 	for i := range samples {
-		samples[i] = Sample{ArticleID: int64(i + 1), ReadDays: 99, Favorited: true, Topics: []string{"go"}}
+		samples[i] = Sample{ArticleID: int64(i + 1), ReadDays: 99, Favorited: true, Keywords: []string{"go"}, Topics: []string{"go"}}
 	}
 	service := NewProfileService(fakeProfileRepository{excluded: []int64{999}, samples: samples}, fixedClock{time.Now()})
 	profile, err := service.Profile(context.Background(), "72000000-0000-0000-0000-000000000001", []int64{999})
-	if err != nil || profile.Topics["go"].Weight != 20 || profile.Topics["go"].PositiveArticles != 500 || profile.Excluded[999] != recommendation.NotInterestedArticle {
+	if err != nil || profile.Topics["go"].Weight != 20 || profile.Keywords["go"].Weight != 20 || profile.Keywords["go"].PositiveArticles != 500 || profile.Excluded[999] != recommendation.NotInterestedArticle {
 		t.Fatalf("证据上限错误: %+v %v", profile, err)
 	}
 }
@@ -68,7 +71,7 @@ func TestProfileEvidenceClamps(t *testing.T) {
 func TestProfileEvidenceClampsAfterSumming(t *testing.T) {
 	samples := make([]Sample, 50)
 	for index := range samples {
-		samples[index] = Sample{ArticleID: int64(index + 1), Topics: []string{"go"}}
+		samples[index] = Sample{ArticleID: int64(index + 1), Keywords: []string{"go"}, Topics: []string{"go"}}
 		if index < 25 {
 			samples[index].ReadDays = 1
 		} else {
@@ -77,7 +80,16 @@ func TestProfileEvidenceClampsAfterSumming(t *testing.T) {
 	}
 	service := NewProfileService(fakeProfileRepository{samples: samples}, fixedClock{time.Now()})
 	profile, err := service.Profile(context.Background(), "72000000-0000-0000-0000-000000000001", nil)
-	if err != nil || profile.Topics["go"].Weight != 0 || profile.Topics["go"].PositiveArticles != 25 || profile.Topics["go"].NegativeArticles != 25 {
+	if err != nil || profile.Topics["go"].Weight != 0 || profile.Keywords["go"].Weight != 0 || profile.Topics["go"].PositiveArticles != 25 || profile.Topics["go"].NegativeArticles != 25 {
 		t.Fatalf("正负证据未先合计再限幅: %+v %v", profile, err)
+	}
+}
+
+func TestProfileDuplicateSampleDoesNotIncreaseEvidence(t *testing.T) {
+	sample := Sample{ArticleID: 1, ReadDays: 1, Keywords: []string{"go", "go"}}
+	service := NewProfileService(fakeProfileRepository{samples: []Sample{sample, sample}}, fixedClock{time.Now()})
+	profile, err := service.Profile(context.Background(), "72000000-0000-0000-0000-000000000001", nil)
+	if err != nil || profile.Keywords["go"].Weight != 1 || profile.Keywords["go"].PositiveArticles != 1 {
+		t.Fatalf("重复样本放大关键词证据: %+v %v", profile, err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	feedbackApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlefeedback"
 	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/recommendation"
 	sourceApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/source"
 	einoAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/ai/eino"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/clock"
@@ -39,6 +40,14 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if searchClient != nil {
 		defer searchClient.Close()
 	}
+	recommend, recommendCloser, err := buildRecommendation(cfg, pool, logger)
+	if err != nil {
+		return err
+	}
+	if recommendCloser != nil {
+		defer recommendCloser.Close()
+	}
+	recommend.WithObserver(observability.NewRecommendObserver(observability.NewRecommendMetrics(registry), logger))
 	options := hertzhttp.Options{
 		Address:         cfg.HTTP.Address,
 		ShutdownTimeout: cfg.HTTP.ShutdownTimeout,
@@ -46,6 +55,7 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Health:          healthService,
 		Articles:        feed.articles,
 		Search:          search,
+		Recommend:       recommend,
 		Assets:          content.assets,
 	}
 	if cfg.Auth.Enabled {
@@ -102,6 +112,7 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		"database_max_connections", cfg.Database.MaxConnections,
 		"auth_enabled", cfg.Auth.Enabled,
 		"registration_enabled", cfg.Auth.RegistrationEnabled,
+		"recommend_cursor_key_ephemeral", cfg.Recommend.CursorKeyEphemeral,
 		// 记录实际生效的网段而不是数量：配错可信代理会让 IP 维度限流退化为全局共享，
 		// 只有把取值本身打出来，运维才能从启动日志发现「配了但配错」。
 		"trusted_proxy_cidrs", cfg.Auth.TrustedProxyCIDRs,
@@ -124,6 +135,57 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		}
 		return nil
 	}
+}
+
+func buildRecommendation(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*recommendation.Service, io.Closer, error) {
+	if cfg.App.Environment != "development" && !cfg.Recommend.CursorKey.IsSet() {
+		return nil, nil, errors.New("生产 API 必须配置 VELIS_RECOMMEND_CURSOR_KEY")
+	}
+	codec, err := recommendation.NewCursorCodec(cfg.Recommend.CursorKey.Bytes())
+	if err != nil {
+		return nil, nil, err
+	}
+	var index recommendation.CandidateIndex
+	var client io.Closer
+	if cfg.Search.Enabled() {
+		adapter, openErr := searchAdapter.New(searchClientConfig(cfg))
+		if openErr == nil {
+			index, client = adapter, adapter
+		} else if logger != nil {
+			logger.Warn("推荐候选客户端装配失败，按 latest 降级")
+		}
+	}
+	var embed recommendation.QueryEmbedder
+	var modelCloser io.Closer
+	if cfg.Search.Query.Hybrid.Enabled && cfg.AI.Embedding.Profile.Enabled() {
+		adapter, openErr := einoAdapter.NewOpenAIQueryEmbedder(context.Background(), cfg.AI.Embedding, cfg.Search.Query.Hybrid.EmbeddingTimeout)
+		if openErr == nil {
+			embed, modelCloser = adapter, adapter
+		} else if logger != nil {
+			logger.Warn("推荐查询 Embedding 装配失败，保留词项候选")
+		}
+	}
+	reader := postgres.NewArticleRepository(pool)
+	profile := feedbackApp.NewProfileService(postgres.NewArticleFeedbackRepository(pool), clock.System{})
+	service := recommendation.NewService(profile, index, reader, codec, embed, recommendation.Config{
+		FirstQueryTimeout: cfg.Recommend.FirstQueryTimeout, BM25Candidates: cfg.Recommend.BM25Candidates, KNNCandidates: cfg.Recommend.KNNCandidates,
+		CursorTTL: cfg.Recommend.CursorTTL, EmbeddingTimeout: cfg.Search.Query.Hybrid.EmbeddingTimeout, KNNTimeout: cfg.Search.Query.Hybrid.KNNTimeout,
+		EmbeddingProfile: cfg.AI.Embedding.Profile.ProfileVersion, Dimensions: cfg.AI.Embedding.Dimensions,
+		SemanticEnabled: cfg.Search.Query.Hybrid.Enabled,
+	}, nil)
+	return service, &recommendCloser{index: client, model: modelCloser}, nil
+}
+
+type recommendCloser struct{ index, model io.Closer }
+
+func (c *recommendCloser) Close() error {
+	if c.model != nil {
+		_ = c.model.Close()
+	}
+	if c.index != nil {
+		return c.index.Close()
+	}
+	return nil
 }
 
 func buildArticleSearch(cfg config.Config, pool *pgxpool.Pool, observer searchApp.Observer, logger *slog.Logger) (searchApp.Searcher, io.Closer) {

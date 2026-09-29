@@ -15,6 +15,7 @@ type Sample struct {
 	ReadDays      int
 	Favorited     bool
 	NotInterested bool
+	Keywords      []string
 	Topics        []string
 	SourceID      *int64
 }
@@ -33,8 +34,31 @@ func NewProfileService(repository ProfileRepository, clock Clock) *ProfileServic
 	return &ProfileService{repository: repository, clock: clock}
 }
 
+// Exclusions 独立重查当前有效文章级负反馈，不重新读取或冻结偏好样本。
+func (s *ProfileService) Exclusions(ctx context.Context, userID string, candidates []int64) (map[int64]string, error) {
+	result := map[int64]string{}
+	if uuid.Validate(userID) != nil || len(candidates) > 200 {
+		return nil, feedback.ErrInvalidInput
+	}
+	seen := map[int64]bool{}
+	for _, id := range candidates {
+		if id <= 0 || seen[id] {
+			return nil, feedback.ErrInvalidInput
+		}
+		seen[id] = true
+	}
+	ids, err := s.repository.Excluded(ctx, userID, candidates, s.clock.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		result[id] = recommendation.NotInterestedArticle
+	}
+	return result, nil
+}
+
 func (s *ProfileService) Profile(ctx context.Context, userID string, candidates []int64) (recommendation.Profile, error) {
-	result := recommendation.Profile{Excluded: map[int64]string{}, Topics: map[string]recommendation.Evidence{}, Sources: map[int64]recommendation.Evidence{}}
+	result := recommendation.Profile{Excluded: map[int64]string{}, Keywords: map[string]recommendation.Evidence{}, Topics: map[string]recommendation.Evidence{}, Sources: map[int64]recommendation.Evidence{}}
 	if uuid.Validate(userID) != nil || len(candidates) > 200 {
 		return result, feedback.ErrInvalidInput
 	}
@@ -63,7 +87,12 @@ func (s *ProfileService) Profile(ctx context.Context, userID string, candidates 
 	if len(samples) > 500 {
 		samples = samples[:500]
 	}
+	seenSamples := make(map[int64]struct{}, len(samples))
 	for _, sample := range samples {
+		if _, exists := seenSamples[sample.ArticleID]; exists {
+			continue
+		}
+		seenSamples[sample.ArticleID] = struct{}{}
 		positive := sample.ReadDays
 		if positive > 3 {
 			positive = 3
@@ -73,6 +102,17 @@ func (s *ProfileService) Profile(ctx context.Context, userID string, candidates 
 		}
 		if sample.NotInterested {
 			positive = 0
+		}
+		seenKeywords := make(map[string]struct{}, len(sample.Keywords))
+		for _, keyword := range sample.Keywords {
+			if keyword == "" {
+				continue
+			}
+			if _, exists := seenKeywords[keyword]; exists {
+				continue
+			}
+			seenKeywords[keyword] = struct{}{}
+			result.Keywords[keyword] = addEvidence(result.Keywords[keyword], positive, sample.NotInterested)
 		}
 		seenTopics := make(map[string]struct{}, len(sample.Topics))
 		for _, topic := range sample.Topics {
@@ -93,12 +133,22 @@ func (s *ProfileService) Profile(ctx context.Context, userID string, candidates 
 			result.Sources[*sample.SourceID] = item
 		}
 	}
+	for key, item := range result.Keywords {
+		item.Weight = clampWeight(item.Weight)
+		item.PositiveWeight = clampWeight(item.PositiveWeight)
+		item.NegativeWeight = clampWeight(item.NegativeWeight)
+		result.Keywords[key] = item
+	}
 	for key, item := range result.Topics {
 		item.Weight = clampWeight(item.Weight)
+		item.PositiveWeight = clampWeight(item.PositiveWeight)
+		item.NegativeWeight = clampWeight(item.NegativeWeight)
 		result.Topics[key] = item
 	}
 	for key, item := range result.Sources {
 		item.Weight = clampWeight(item.Weight)
+		item.PositiveWeight = clampWeight(item.PositiveWeight)
+		item.NegativeWeight = clampWeight(item.NegativeWeight)
 		result.Sources[key] = item
 	}
 	return result, nil
@@ -107,10 +157,12 @@ func (s *ProfileService) Profile(ctx context.Context, userID string, candidates 
 func addEvidence(item recommendation.Evidence, positive int, negative bool) recommendation.Evidence {
 	if positive > 0 {
 		item.PositiveArticles++
+		item.PositiveWeight += positive
 		item.Weight += positive
 	}
 	if negative {
 		item.NegativeArticles++
+		item.NegativeWeight++
 		item.Weight--
 	}
 	return item

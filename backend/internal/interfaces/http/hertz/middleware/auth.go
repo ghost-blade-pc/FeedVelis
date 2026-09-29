@@ -55,6 +55,31 @@ func AuthenticateOptional(resolver IdentityResolver) app.HandlerFunc {
 	}
 }
 
+// AuthenticateOptionalStrict 允许无凭证请求；携带任何无效凭证都按认证错误拒绝。
+func AuthenticateOptionalStrict(resolver IdentityResolver) app.HandlerFunc {
+	return func(c context.Context, ctx *app.RequestContext) {
+		header := string(ctx.Request.Header.Peek("Authorization"))
+		if header == "" {
+			ctx.Next(c)
+			return
+		}
+		token := bearerToken(header)
+		if token == "" {
+			presenter.WriteError(ctx, consts.StatusUnauthorized, presenter.CodeSessionInvalid, "访问令牌无效", RequestIDFrom(ctx))
+			ctx.Abort()
+			return
+		}
+		identity, err := resolver.Authenticate(c, token)
+		if err != nil {
+			presenter.WriteMapping(ctx, presenter.MapAuthError(err), RequestIDFrom(ctx))
+			ctx.Abort()
+			return
+		}
+		ctx.Set(identityKey, identity)
+		ctx.Next(c)
+	}
+}
+
 // RequireAdmin 在已认证身份上追加当前数据库角色检查：普通用户一律拒绝。
 // 用例内部仍会依据数据库角色再次校验，本中间件只负责入口收窄。
 func RequireAdmin() app.HandlerFunc {

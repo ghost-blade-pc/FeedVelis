@@ -224,3 +224,12 @@ search:
     snapshot_batch: 500
     rollback_window: 24h
     validation_sample_size: 200
+
+# recommend 始终可匿名访问；无有效正向画像时按 PostgreSQL latest 冷启动。
+# 生产所有 API 实例须注入相同的 VELIS_RECOMMEND_CURSOR_KEY（Base64，至少 32 字节）。
+# 开发环境未配置时自动生成进程级密钥，重启后旧游标失效。
+recommend:
+  first_query_timeout: 5s
+  bm25_candidates: 100
+  knn_candidates: 100
+  cursor_ttl: 2m

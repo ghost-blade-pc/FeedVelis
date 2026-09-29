@@ -153,7 +153,7 @@ func (r *ArticleFeedbackRepository) Samples(ctx context.Context, userID string, 
  WHERE a.status='published' AND (r.article_id IS NOT NULL OR f.article_id IS NOT NULL OR n.article_id IS NOT NULL)
  ORDER BY latest DESC,a.id DESC LIMIT 500
 )
-SELECT s.id,s.days,s.favorited,s.negative,s.source_id,COALESCE(g.topics,ARRAY[]::text[])
+SELECT s.id,s.days,s.favorited,s.negative,s.source_id,COALESCE(g.keywords,ARRAY[]::text[]),COALESCE(g.topics,ARRAY[]::text[])
 FROM selected s
 LEFT JOIN velis.ai_current_selections cs ON cs.article_id=s.id AND cs.revision_id=s.current_revision_id
 LEFT JOIN velis.ai_generation_results g ON g.id=cs.generation_result_id
@@ -165,7 +165,7 @@ ORDER BY s.latest DESC,s.id DESC`, userID, now.Add(-feedback.ReadRetention), now
 	samples := make([]feedbackApp.Sample, 0, 500)
 	for rows.Next() {
 		var item feedbackApp.Sample
-		if err := rows.Scan(&item.ArticleID, &item.ReadDays, &item.Favorited, &item.NotInterested, &item.SourceID, &item.Topics); err != nil {
+		if err := rows.Scan(&item.ArticleID, &item.ReadDays, &item.Favorited, &item.NotInterested, &item.SourceID, &item.Keywords, &item.Topics); err != nil {
 			return nil, err
 		}
 		samples = append(samples, item)

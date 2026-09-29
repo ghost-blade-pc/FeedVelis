@@ -24,6 +24,7 @@ type projectionE2E struct {
 	repository *postgres.SearchProjectionRepository
 	executor   *projectionApp.Executor
 	index      string
+	prefix     string
 }
 
 func newProjectionE2E(t *testing.T, env *testEnv, dimensions int) *projectionE2E {
@@ -55,7 +56,7 @@ func newProjectionE2E(t *testing.T, env *testEnv, dimensions int) *projectionE2E
 	if err != nil {
 		t.Fatal(err)
 	}
-	stack := &projectionE2E{env: env, client: client, writer: client, repository: repository, index: state.CurrentIndex}
+	stack := &projectionE2E{env: env, client: client, writer: client, repository: repository, index: state.CurrentIndex, prefix: prefix}
 	stack.executor = projectionApp.NewExecutor(repository, repository, repository, client, projectionApp.ExecutorPolicy{
 		Lease: time.Minute, BatchSize: 20, MaxAttempts: 3, BackoffMin: time.Second, BackoffMax: time.Minute,
 		SchemaVersion: 1, Owner: "e2e-worker"}, nil, nil)

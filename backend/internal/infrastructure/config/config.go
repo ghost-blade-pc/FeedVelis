@@ -31,6 +31,7 @@ type Config struct {
 	Outbox      OutboxConfig      `yaml:"outbox"`
 	AI          AIConfig          `yaml:"ai"`
 	Search      SearchConfig      `yaml:"search"`
+	Recommend   RecommendConfig   `yaml:"recommend"`
 }
 
 type AppConfig struct {
@@ -155,6 +156,7 @@ func Default() Config {
 			},
 			Rebuild: SearchRebuildConfig{SnapshotBatch: 500, RollbackWindow: "24h", SampleSize: 200},
 		},
+		Recommend: RecommendConfig{FirstQueryRaw: "5s", BM25Candidates: 100, KNNCandidates: 100, CursorTTLRaw: "2m"},
 		Assets: AssetConfig{
 			Bucket:            "velis-article-assets",
 			UploadRaw:         "15m",
@@ -258,6 +260,9 @@ func applyEnvironment(cfg *Config) error {
 		return err
 	}
 	if err := applySearchEnvironment(cfg); err != nil {
+		return err
+	}
+	if err := applyRecommendEnvironment(cfg); err != nil {
 		return err
 	}
 
@@ -506,6 +511,9 @@ func (cfg *Config) Validate() error {
 		return err
 	}
 	if err := validateSearchConfig(&cfg.Search, &cfg.AI, cfg.App.Environment); err != nil {
+		return err
+	}
+	if err := validateRecommendConfig(&cfg.Recommend, cfg.App.Environment); err != nil {
 		return err
 	}
 	return validateAuth(&cfg.Auth, cfg.App.Environment)

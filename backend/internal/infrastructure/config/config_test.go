@@ -104,6 +104,7 @@ func TestContentConfigPriorityAndEnvironmentOverrides(t *testing.T) {
 	t.Setenv("VELIS_IDEMPOTENCY_RETENTION", "48h")
 	t.Setenv("VELIS_FEED_PROXY_URL", "http://proxy-user:proxy-pass@proxy.internal:3128")
 	t.Setenv("VELIS_APP_ENVIRONMENT", "production")
+	t.Setenv("VELIS_RECOMMEND_CURSOR_KEY", secret(9, 32))
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

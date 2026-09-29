@@ -1,6 +1,6 @@
 # Velis Feed
 
-Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发布与用户 Markdown 图文投稿的统一内容池、稳定 latest、可选 BM25/KNN 混合文章搜索、站内阅读、私有图片资产、AI 内容增强、管理员 Source 管理，以及账户与会话闭环。后端采用 Go + CloudWeGo Hertz/Eino + PostgreSQL，前端采用 Vue 3 + TypeScript。
+Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发布与用户 Markdown 图文投稿的统一内容池、稳定 latest、匿名/登录推荐 Feed、可选 BM25/KNN 混合文章搜索、站内阅读、私有图片资产、AI 内容增强、管理员 Source 管理，以及账户与会话闭环。后端采用 Go + CloudWeGo Hertz/Eino + PostgreSQL，前端采用 Vue 3 + TypeScript。
 
 本文只描述当前功能、开发现状和运行方式。项目目标、技术决策、开发顺序与验收标准统一见 [Velis Roadmap](<Velis Roadmap.md>)。目录占位、依赖声明和 Compose 服务不代表业务能力已实现。
 
@@ -17,16 +17,17 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
-| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索；recommend 尚未实现 |
-| 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；recommend 尚未实现；索引是可丢弃派生状态，不是事实源 |
-| 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；后端提供有界推荐画像读取端口 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；画像尚未用于公开 Feed 排序 |
-| Web | latest/详情、搜索与加载更多、文章反馈操作、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无 recommend 或 Agent 界面 |
+| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索与推荐 |
+| 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；索引是可丢弃派生状态，不是事实源 |
+| 推荐 Feed | 匿名 latest 冷启动、登录后关键词/主题与可选语义召回、反馈排序、文章级负反馈排除、来源打散、加密冻结游标、latest 补位及搜索故障回退 | 无 Redis 缓存；每路最多 100 候选、冻结最多 200 条；每页复核公开状态与负反馈 |
+| 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；有界画像向推荐提供当前修订关键词/主题/来源证据 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；latest 与搜索排序不使用画像 |
+| Web | latest/recommend 切换、推荐原因与降级提示、详情、搜索与加载更多、文章反馈操作、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无 Agent 界面 |
 
-recommend Feed、Redis 业务缓存、对话 Agent 与定时 Agent 均未实现。文章反馈事实仅依赖 PostgreSQL；阅读按 UTC 固定 30 分钟窗口去重，画像按 UTC 日最多计一次、单文章最多计三次，过期事实即使清理 Worker 暂停也不会参与画像。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+Redis 业务缓存、对话 Agent 与定时 Agent 均未实现。文章反馈事实仅依赖 PostgreSQL；阅读按 UTC 固定 30 分钟窗口去重，画像按 UTC 日最多计一次、单文章最多计三次，过期事实即使清理 Worker 暂停也不会参与画像。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 
-核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。OpenSearch 未配置或故障时仅搜索返回明确的 `503 SEARCH_UNAVAILABLE`，不会影响这些核心接口或 readiness。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；模型未配置或故障时 `enhancement` 为 null，Web 回退到原始 excerpt。
+核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。OpenSearch 未配置或故障时搜索返回明确的 `503 SEARCH_UNAVAILABLE`，推荐按 latest 降级；这些故障不会影响 latest、详情或 readiness。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；模型未配置或故障时 `enhancement` 为 null，Web 回退到原始 excerpt。
 
 ## 目录与技术现状
 
@@ -307,6 +308,19 @@ Compose 已内置固定 `opensearchproject/opensearch:3.8.0` 单节点服务，�
 搜索游标签名键只能通过 `VELIS_SEARCH_CURSOR_KEY` 注入，值为 Base64，解码后至少 32 字节；YAML 中的同名字段会被忽略。development/test 未设置时会为当前进程生成临时键，重启后旧游标失效；production 未设置时搜索局部禁用。多副本部署必须为所有 API 实例配置同一个持久密钥，否则游标跨实例不可用。
 
 BM25 查询固定使用读别名和可见文档，标题、关键词、主题、摘要、正文的权重依次降低；`keyword`、`topic`、`source_id` 是精确筛选。分页通过 PIT 与 `search_after` 保持快照，PIT 过期或游标无效时返回受控错误，客户端应从第一页重试。OpenSearch 候选始终由 PostgreSQL 批量复核当前公开状态、当前修订和当前 AI 选择后才返回，因此索引延迟或迟到文档不会泄露已下架内容。查询身份只需读别名上的搜索与 PIT 权限，不应授予索引写入或管理权限；开启混合搜索时还需要读取实际读索引 mapping 元数据的权限；无需授予索引写入或别名切换权限。
+
+### 推荐 Feed 配置与边界
+
+`GET /api/v1/articles/recommend` 默认每页 20 条（1–50），匿名及没有有效正向关键词/主题画像的用户按 PostgreSQL latest 冷启动，返回 `mode=cold_start`、`degraded=false`。登录用户的当前修订关键词/主题、去重阅读和收藏影响排序；有效“不感兴趣”仅硬排除对应文章。每路最多召回 100 条，去重后冻结最多 200 条；候选不足用 latest 补位，OpenSearch 整体故障时 `mode=latest_fallback`。响应的 `degraded` 标记降级，文章只返回 `keyword_match`、`topic_match`、`similar_content`、`recent`、`latest_fallback` 之一作为原因。Web 默认 latest，可切换推荐并在游标失效时从第一页重试。
+
+| 配置 | 默认值 | 硬边界/说明 |
+| --- | --- | --- |
+| `recommend.first_query_timeout` | 5s | 500ms–30s；仅限制推荐首查 |
+| `recommend.bm25_candidates` / `knn_candidates` | 各 100 | 各 1–100；最多冻结 200 条 |
+| `recommend.cursor_ttl` | 2m | 30s–10m；绝对到期，不因翻页续期 |
+| `VELIS_RECOMMEND_CURSOR_KEY` | 开发进程临时生成 | 独立于搜索密钥，仅从环境读取；Base64 解码后至少 32 字节；production 必填且各 API 实例相同 |
+
+推荐游标是独立的认证加密 v1 格式，绑定匿名/登录身份与排序版本；续页不重新召回或生成向量，但仍复核公开状态和本人有效负反馈。推荐不使用 Redis 或持久结果缓存；PostgreSQL 读取失败返回 `503 DEPENDENCY_UNAVAILABLE`，不会直接返回搜索投影。新的公开文章只进入新首查；已有 latest 补位按键集继续。
 
 ## 搜索投影运维
 

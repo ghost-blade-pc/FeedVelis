@@ -28,6 +28,7 @@ type Options struct {
 	Health          *health.Service
 	Articles        *articleApp.Service
 	Search          searchApp.Searcher
+	Recommend       handler.RecommendService
 	// Assets 提供图片字节读取；为 nil 时不注册资产端点。匿名与作者共用同一路径。
 	Assets handler.AssetService
 	// Auth 为 nil 时不注册认证路由，保持原有匿名行为。
@@ -72,7 +73,16 @@ func NewServer(options Options) *server.Hertz {
 	if options.Articles != nil {
 		articleHandler := handler.NewArticle(options.Articles)
 		h.GET("/api/v1/articles", articleHandler.List)
-		h.GET("/api/v1/articles/:id", articleHandler.Get)
+	}
+	if options.Recommend != nil {
+		optional := func(c context.Context, ctx *app.RequestContext) { ctx.Next(c) }
+		if options.Auth != nil {
+			optional = middleware.AuthenticateOptionalStrict(options.Auth.Service)
+		}
+		h.GET("/api/v1/articles/recommend", optional, handler.NewRecommend(options.Recommend).Articles)
+	}
+	if options.Articles != nil {
+		h.GET("/api/v1/articles/:id", handler.NewArticle(options.Articles).Get)
 	}
 	// 搜索路由始终存在；未配置 OpenSearch 时 handler 使用稳定的 unavailable service。
 	searchHandler := handler.NewSearch(options.Search)

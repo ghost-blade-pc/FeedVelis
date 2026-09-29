@@ -86,6 +86,7 @@ func TestSearchQueryCursorKeyAvailabilityByEnvironment(t *testing.T) {
 
 	production := Default()
 	production.App.Environment = "production"
+	production.Recommend.CursorKey = SecretBytes([]byte("0123456789abcdef0123456789abcdef"))
 	production.Search.Endpoints = []string{"https://search.internal:9200"}
 	production.Search.Username, production.Search.Password = "reader", "secret"
 	if err := production.Validate(); err != nil {
