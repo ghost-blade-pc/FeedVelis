@@ -24,15 +24,18 @@ type QueryEmbedder interface {
 }
 
 type Config struct {
-	FirstQueryTimeout time.Duration
-	BM25Candidates    int
-	KNNCandidates     int
-	CursorTTL         time.Duration
-	EmbeddingTimeout  time.Duration
-	KNNTimeout        time.Duration
-	EmbeddingProfile  string
-	Dimensions        int
-	SemanticEnabled   bool
+	FirstQueryTimeout     time.Duration
+	BM25Candidates        int
+	KNNCandidates         int
+	CursorTTL             time.Duration
+	EmbeddingTimeout      time.Duration
+	KNNTimeout            time.Duration
+	EmbeddingProfile      string
+	Dimensions            int
+	SemanticEnabled       bool
+	Provider              string
+	Model                 string
+	EmbeddingInputVersion string
 }
 
 type Item struct {
@@ -50,14 +53,16 @@ type Page struct {
 }
 
 type Service struct {
-	profile  ProfileReader
-	index    CandidateIndex
-	reader   Reader
-	codec    *CursorCodec
-	embedder QueryEmbedder
-	config   Config
-	now      func() time.Time
-	observer Observer
+	profile      ProfileReader
+	index        CandidateIndex
+	reader       Reader
+	codec        *CursorCodec
+	embedder     QueryEmbedder
+	config       Config
+	now          func() time.Time
+	observer     Observer
+	cache        PlanCache
+	planFallback func(context.Context)
 }
 
 func NewService(profile ProfileReader, index CandidateIndex, reader Reader, codec *CursorCodec, embedder QueryEmbedder, config Config, now func() time.Time) *Service {
@@ -75,6 +80,14 @@ func (s *Service) WithObserver(observer Observer) *Service {
 }
 
 func (s *Service) Get(ctx context.Context, userID string, limit int, token string) (page Page, err error) {
+	if s.cache != nil {
+		ctx = s.cache.NewRequest(ctx)
+	}
+	if scope, ok := s.reader.(interface {
+		NewRequest(context.Context) context.Context
+	}); ok {
+		ctx = scope.NewRequest(ctx)
+	}
 	started := time.Now()
 	defer func() {
 		result := "success"
@@ -127,15 +140,15 @@ func (s *Service) get(ctx context.Context, userID string, limit int, token strin
 			if s.index == nil {
 				state.Mode, state.Degraded, state.LatestOn, state.DegradeReason = "latest_fallback", true, true, "search_unavailable"
 			} else {
-				items, degraded, err := s.plan(firstCtx, userID, terms, profile, now)
+				plan, err := s.cachedPlan(firstCtx, userID, terms, profile, now)
 				if err != nil {
 					if errors.Is(err, ErrDependencyUnavailable) {
 						return Page{}, err
 					}
 					state.Mode, state.Degraded, state.LatestOn, state.DegradeReason = "latest_fallback", true, true, "search_unavailable"
 				} else {
-					state.Items, state.Degraded = Freeze(items), degraded
-					if degraded {
+					state.Items, state.Degraded, state.DegradeReason = append([]FrozenItem{}, plan.Items...), plan.Degraded, plan.DegradeReason
+					if plan.Degraded {
 						state.DegradeReason = "semantic_unavailable"
 					}
 				}
@@ -168,7 +181,7 @@ func topPositive(evidence map[string]Evidence) []string {
 	return values
 }
 
-func (s *Service) plan(ctx context.Context, userID string, terms Terms, profile Profile, now time.Time) ([]RankedItem, bool, error) {
+func (s *Service) plan(ctx context.Context, userID string, terms Terms, profile Profile, now time.Time) (CachedPlan, error) {
 	var bm, knn []articlesearch.Candidate
 	degraded := false
 	calledHybrid := false
@@ -201,7 +214,7 @@ func (s *Service) plan(ctx context.Context, userID string, terms Terms, profile 
 		bm, err = s.index.Recall(ctx, terms, s.config.BM25Candidates, time.Minute)
 	}
 	if err != nil {
-		return nil, true, err
+		return CachedPlan{}, err
 	}
 	s.observer.AddRecall(ctx, "bm25", len(bm))
 	s.observer.AddRecall(ctx, "knn", len(knn))
@@ -215,9 +228,12 @@ func (s *Service) plan(ctx context.Context, userID string, terms Terms, profile 
 			}
 		}
 	}
+	if len(ids) > maxFrozenCandidates {
+		return CachedPlan{}, ErrDependencyUnavailable
+	}
 	currentItems, err := s.reader.ListPublishedWithIdentity(ctx, ids)
 	if err != nil {
-		return nil, false, ErrDependencyUnavailable
+		return CachedPlan{}, ErrDependencyUnavailable
 	}
 	current := make(map[int64]articlesearch.CurrentArticle, len(currentItems))
 	for _, item := range currentItems {
@@ -225,13 +241,17 @@ func (s *Service) plan(ctx context.Context, userID string, terms Terms, profile 
 	}
 	excluded, err := s.profile.Exclusions(ctx, userID, ids)
 	if err != nil {
-		return nil, false, ErrDependencyUnavailable
+		return CachedPlan{}, ErrDependencyUnavailable
 	}
 	profile.Excluded = excluded
 	ordered := RankV1(FuseCurrent(bm, knn, current, s.config.EmbeddingProfile), current, profile, now)
 	s.observer.AddRecall(ctx, "union", len(ordered))
 	s.observer.AddFiltered(ctx, len(ids)-len(ordered))
-	return ordered, degraded, nil
+	reason := ""
+	if degraded {
+		reason = "semantic_unavailable"
+	}
+	return CachedPlan{Items: Freeze(ordered), OriginalIDs: ids, ExclusionHash: ExclusionFingerprint(ids, excluded), RankingVersion: RankingVersion, VectorProfile: s.config.EmbeddingProfile, Degraded: degraded, DegradeReason: reason}, nil
 }
 
 func (s *Service) page(ctx context.Context, userID string, limit int, state CursorState) (Page, error) {

@@ -98,7 +98,10 @@ onBeforeUnmount(() => { request?.abort(); unsubscribe() })
       <p>{{ cursorInvalid ? '推荐页已过期，请从第一页重新加载。' : '暂时无法加载文章。' }}</p>
       <button type="button" @click="load(true)">{{ cursorInvalid ? '从第一页重试' : '重试' }}</button>
     </div>
-    <p v-else-if="items.length === 0" class="state-card">还没有公开文章。</p>
+    <div v-else-if="items.length === 0" class="state-card">
+      <p>{{ hasMore ? '这一页暂无可显示的文章，可以继续加载。' : '还没有公开文章。' }}</p>
+      <button v-if="hasMore" class="load-more" type="button" @click="load(false)">加载更多</button>
+    </div>
 
     <div v-else class="article-list">
       <p v-if="feedback.error.value" role="alert">{{ feedback.error.value }} <button type="button" @click="feedback.load(true)">重试反馈状态</button></p>

@@ -32,6 +32,7 @@ type Config struct {
 	AI          AIConfig          `yaml:"ai"`
 	Search      SearchConfig      `yaml:"search"`
 	Recommend   RecommendConfig   `yaml:"recommend"`
+	Cache       CacheConfig       `yaml:"cache"`
 }
 
 type AppConfig struct {
@@ -101,6 +102,7 @@ type OutboxConfig struct {
 // Default 返回适合本地开发的非敏感默认配置。
 func Default() Config {
 	return Config{
+		Cache: defaultCacheConfig(),
 		App: AppConfig{
 			Name:        "velis",
 			Environment: "development",
@@ -263,6 +265,9 @@ func applyEnvironment(cfg *Config) error {
 		return err
 	}
 	if err := applyRecommendEnvironment(cfg); err != nil {
+		return err
+	}
+	if err := applyCacheEnvironment(cfg); err != nil {
 		return err
 	}
 
@@ -514,6 +519,9 @@ func (cfg *Config) Validate() error {
 		return err
 	}
 	if err := validateRecommendConfig(&cfg.Recommend, cfg.App.Environment); err != nil {
+		return err
+	}
+	if err := ValidateCache(&cfg.Cache, cfg.App.Environment); err != nil {
 		return err
 	}
 	return validateAuth(&cfg.Auth, cfg.App.Environment)

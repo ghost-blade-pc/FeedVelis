@@ -98,7 +98,8 @@ func TestHybridArticleSearchHTTPRebuildAndRollback(t *testing.T) {
 	}
 	codec, _ := searchApp.NewCursorCodec([]byte(strings.Repeat("k", 32)))
 	policy := searchApp.Config{Timeout: 5 * time.Second, PITKeepAlive: time.Minute, CandidateBatchSize: 100, MaxCandidatesPerRequest: 500, Hybrid: searchApp.HybridConfig{Enabled: true, BM25Candidates: 100, KNNCandidates: 100, EmbeddingTimeout: time.Second, KNNTimeout: time.Second, Dimensions: 3, Profile: "e-v1"}}
-	reader := postgres.NewArticleRepository(env.pool)
+	var cacheFault func(bool)
+	reader := sharedIntegrationReader(t, env, &cacheFault)
 	makeService := func(index searchApp.QueryIndex) *searchApp.Service {
 		return searchApp.NewService(index, reader, codec, nil, policy).WithHybrid(embed, reader)
 	}
@@ -208,6 +209,8 @@ func TestHybridArticleSearchHTTPRebuildAndRollback(t *testing.T) {
 		t.Fatalf("KNN 故障 HTTP 失败: %d", failedHTTP.Code)
 	}
 	// 相同固定集合重复首查产生相同次序。
+	cacheFault(true)
+	defer cacheFault(false)
 	a, b := request("", 50), request("", 50)
 	if len(a.Items) != 2 || len(b.Items) != 2 || a.Items[0].ID != b.Items[0].ID || a.Items[1].ID != b.Items[1].ID {
 		t.Fatalf("重复查询不稳定: %+v %+v", a, b)

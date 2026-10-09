@@ -1,4 +1,4 @@
-.PHONY: help backend-fmt backend-test backend-race backend-build integration-postgres integration-rabbitmq integration-opensearch integration-search integration-async integration-all web-install web-lint web-test web-build check compose-up compose-down migrate-up migrate-down
+.PHONY: help backend-fmt backend-test backend-race backend-build integration-postgres integration-rabbitmq integration-opensearch integration-search integration-redis integration-cache-reads integration-async integration-all web-install web-lint web-test web-build check compose-up compose-down migrate-up migrate-down
 
 GOCACHE_DIR ?= /tmp/feedvelis-go-cache
 
@@ -12,6 +12,8 @@ help:
 	@echo "make integration-opensearch 运行 OpenSearch 模板/Bulk/别名及 BM25/PIT 真实依赖测试"
 	@echo "make integration-search 运行投影重建及搜索事实源复核测试（同时需要 PostgreSQL 与 OpenSearch）"
 	@echo "make integration-async 运行 PostgreSQL + RabbitMQ 可靠异步真实依赖测试"
+	@echo "make integration-redis 运行 Redis 适配器及故障代理真实依赖测试"
+	@echo "make integration-cache-reads 运行 PostgreSQL/Redis/OpenSearch 读取联合验收（含推荐）"
 	@echo "make integration-all  运行全部真实依赖测试"
 
 backend-fmt:
@@ -47,7 +49,19 @@ integration-search:
 
 integration-async: integration-postgres integration-rabbitmq
 
-integration-all: integration-postgres integration-rabbitmq integration-opensearch integration-search
+integration-redis:
+	@test -n "$(VELIS_TEST_REDIS_ADDRESS)" || (echo "未设置 VELIS_TEST_REDIS_ADDRESS（host:port）" && exit 2)
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v ./test/testkit/redistest ./internal/infrastructure/cache/redis
+
+# 包含推荐真实用例，不能用 integration-search 的筛选替代。
+integration-cache-reads:
+	@test -n "$(VELIS_TEST_DATABASE_URL)" || (echo "未设置 VELIS_TEST_DATABASE_URL（必须指向 _test 数据库）" && exit 2)
+	@test -n "$(VELIS_TEST_REDIS_ADDRESS)" || (echo "未设置 VELIS_TEST_REDIS_ADDRESS（host:port）" && exit 2)
+	@test -n "$(VELIS_TEST_OPENSEARCH_URL)" || (echo "未设置 VELIS_TEST_OPENSEARCH_URL" && exit 2)
+	$(MAKE) integration-redis
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run 'TestCacheRead|TestArticleRecommendationPostgresOpenSearch|TestArticleSearch|TestHybrid' ./test/integration
+
+integration-all: integration-postgres integration-rabbitmq integration-opensearch integration-search integration-cache-reads
 
 web-install:
 	cd web && npm ci

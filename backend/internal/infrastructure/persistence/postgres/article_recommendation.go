@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlecache"
 	articleDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/article"
 )
 
@@ -50,4 +51,39 @@ AND ($2::uuid IS NULL OR NOT EXISTS (
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// ListRecommendationCandidates 保留本人有效排除、冻结候选排除及站内首次发布时间水位。
+func (r *ArticleRepository) ListRecommendationCandidates(ctx context.Context, cursor *articleDomain.Cursor, limit int, skip []int64, userID string, now, startedAt time.Time) ([]articlecache.Candidate, error) {
+	if limit < 1 || limit > 51 || len(skip) > 200 {
+		return nil, articleDomain.ErrInvalidArgument
+	}
+	query := `SELECT a.id,COALESCE(a.source_published_at,a.published_at) FROM velis.articles a
+WHERE a.status='published' AND a.published_at<=$4 AND NOT(a.id=ANY($1::bigint[]))
+AND ($2::uuid IS NULL OR NOT EXISTS(SELECT 1 FROM velis.article_not_interested n
+ WHERE n.article_id=a.id AND n.user_id=$2::uuid AND n.expires_at>$3))`
+	args := []any{skip, nil, now, startedAt}
+	if userID != "" {
+		args[1] = userID
+	}
+	if cursor != nil {
+		query += ` AND (COALESCE(a.source_published_at,a.published_at),a.id)<($5,$6)`
+		args = append(args, cursor.SortAt, cursor.ArticleID)
+	}
+	query += ` ORDER BY COALESCE(a.source_published_at,a.published_at) DESC,a.id DESC LIMIT $` + strconv.Itoa(len(args)+1)
+	args = append(args, limit)
+	rows, err := querier(ctx, r.pool).Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []articlecache.Candidate{}
+	for rows.Next() {
+		var candidate articlecache.Candidate
+		if err := rows.Scan(&candidate.ArticleID, &candidate.SortAt); err != nil {
+			return nil, err
+		}
+		result = append(result, candidate)
+	}
+	return result, rows.Err()
 }

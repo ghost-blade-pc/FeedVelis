@@ -32,6 +32,11 @@ func NewService(index QueryIndex, reader PublicArticleReader, codec *CursorCodec
 }
 
 func (s *Service) Search(ctx context.Context, request Request) (page Page, returnedErr error) {
+	if scope, ok := s.reader.(interface {
+		NewRequest(context.Context) context.Context
+	}); ok {
+		ctx = scope.NewRequest(ctx)
+	}
 	started := s.now()
 	result := ResultSuccess
 	defer func() { s.observer.ObserveRequest(ctx, result, s.now().Sub(started)) }()

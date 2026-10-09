@@ -2,6 +2,7 @@ package hertz
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -194,4 +195,60 @@ func newTestServer(checkErr error) *server.Hertz {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	service := health.NewService(readyChecker{err: checkErr})
 	return NewServer(Options{Address: "127.0.0.1:0", ShutdownTimeout: time.Second, Logger: logger, Health: service})
+}
+
+type advancingLatestReader struct {
+	calls    int
+	position *articleDomain.Cursor
+}
+
+func (r *advancingLatestReader) ListLatest(_ context.Context, position *articleDomain.Cursor, limit int) ([]articleDomain.ListItem, *articleDomain.Cursor, bool, error) {
+	r.calls++
+	r.position = position
+	if limit != 2 {
+		return nil, nil, false, articleDomain.ErrInvalidArgument
+	}
+	if position != nil {
+		return []articleDomain.ListItem{}, nil, false, nil
+	}
+	return []articleDomain.ListItem{}, &articleDomain.Cursor{ArticleID: 501, SortAt: time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)}, true, nil
+}
+func TestLatestEmptyAdvancingPageKeepsHTTPAndV2CursorContract(t *testing.T) {
+	reader := &advancingLatestReader{}
+	service := articleApp.NewService(&listRepository{}, noOpSanitizer{}, testClock{}).WithLatestReader(reader)
+	h := NewServer(Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Articles: service})
+	response := ut.PerformRequest(h.Engine, "GET", "/api/v1/articles?limit=2", nil)
+	var page struct {
+		Items   []json.RawMessage `json:"items"`
+		Next    *string           `json:"next_cursor"`
+		HasMore bool              `json:"has_more"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &page) != nil || page.Items == nil || len(page.Items) != 0 || !page.HasMore || page.Next == nil {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(*page.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Version   int       `json:"v"`
+		ArticleID int64     `json:"article_id"`
+		SortAt    time.Time `json:"sort_at"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil || payload.Version != 2 || payload.ArticleID != 501 || payload.SortAt.IsZero() {
+		t.Fatal("旧 v2 格式改变", string(raw), err)
+	}
+	response = ut.PerformRequest(h.Engine, "GET", "/api/v1/articles?limit=2&cursor="+*page.Next, nil)
+	if response.Code != 200 || reader.position == nil || reader.position.ArticleID != 501 || !strings.Contains(response.Body.String(), `"has_more":false`) {
+		t.Fatal("空页未按游标继续", response.Body.String())
+	}
+	before := reader.calls
+	response = ut.PerformRequest(h.Engine, "GET", "/api/v1/articles?limit=51", nil)
+	if response.Code != 400 || reader.calls != before {
+		t.Fatal("非法参数进入候选读取")
+	}
+	response = ut.PerformRequest(h.Engine, "GET", "/api/v1/articles?limit=2&cursor=bad", nil)
+	if response.Code != 400 || reader.calls != before {
+		t.Fatal("非法游标进入候选读取")
+	}
 }

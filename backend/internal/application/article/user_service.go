@@ -39,6 +39,7 @@ type UserService struct {
 	clock       ports.Clock
 	assetPolicy AssetPolicy
 	outbox      ports.Outbox
+	invalidator ports.PublicReadInvalidator
 }
 
 func NewUserServiceWithOutbox(repository UserArticleRepository, renderer ports.UserContentRenderer, assets ports.ArticleAssets,
@@ -147,6 +148,9 @@ func (s *UserService) Create(ctx context.Context, command CreateUserArticleComma
 		}
 		if bindErr := s.bindAssets(txContext, command.AuthorUserID, stored.ID, stored.RevisionID, rendered.AssetIDs, now); bindErr != nil {
 			return nil, "", "", bindErr
+		}
+		if invalidateErr := schedulePublicTransition(txContext, s.invalidator, nil, stored, true); invalidateErr != nil {
+			return nil, "", "", invalidateErr
 		}
 		if eventErr := appendArticleTransition(txContext, s.outbox, nil, stored, true, now); eventErr != nil {
 			return nil, "", "", eventErr
@@ -345,6 +349,9 @@ func (s *UserService) Update(ctx context.Context, command UpdateUserArticleComma
 				return nil, "", "", bindErr
 			}
 		}
+		if invalidateErr := schedulePublicTransition(txContext, s.invalidator, &current, stored, changed); invalidateErr != nil {
+			return nil, "", "", invalidateErr
+		}
 		if eventErr := appendArticleTransition(txContext, s.outbox, &current, stored, changed, now); eventErr != nil {
 			return nil, "", "", eventErr
 		}
@@ -425,6 +432,9 @@ func (s *UserService) changeState(ctx context.Context, operation string, command
 		if changeErr != nil {
 			return nil, "", "", changeErr
 		}
+		if invalidateErr := schedulePublicTransition(txContext, s.invalidator, &current, stored, false); invalidateErr != nil {
+			return nil, "", "", invalidateErr
+		}
 		if eventErr := appendArticleTransition(txContext, s.outbox, &current, stored, false, now); eventErr != nil {
 			return nil, "", "", eventErr
 		}
@@ -451,4 +461,21 @@ func decodeUserArticleOutcome(outcome idempotencyApp.Outcome) (UserArticleResult
 func jsonNumber(value int64) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+func (s *UserService) WithPublicReadInvalidator(invalidator ports.PublicReadInvalidator) *UserService {
+	s.invalidator = invalidator
+	return s
+}
+
+func schedulePublicTransition(ctx context.Context, invalidator ports.PublicReadInvalidator, before *articleDomain.StoredArticle, after articleDomain.StoredArticle, changed bool) error {
+	if invalidator == nil {
+		return nil
+	}
+	publicBefore := before != nil && before.Status == articleDomain.StatusPublished
+	publicAfter := after.Status == articleDomain.StatusPublished
+	if (publicBefore != publicAfter) || (publicAfter && changed) {
+		return invalidator.ScheduleLatestInvalidation(ctx)
+	}
+	return nil
 }

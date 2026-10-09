@@ -36,13 +36,17 @@ func TestArticleSearchEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := searchApp.NewService(stack.client, postgres.NewArticleRepository(env.pool), codec, nil,
+	var cacheFault func(bool)
+	reader := sharedIntegrationReader(t, env, &cacheFault)
+	service := searchApp.NewService(stack.client, reader, codec, nil,
 		searchApp.Config{PITKeepAlive: time.Minute, CandidateBatchSize: 2, MaxCandidatesPerRequest: 10})
 
 	first, err := service.Search(ctx, searchApp.Request{Q: "投影文章", Limit: 1})
 	if err != nil || len(first.Items) != 1 || !first.HasMore || first.NextCursor == nil {
 		t.Fatalf("搜索第一页失败: page=%+v err=%v", first, err)
 	}
+	cacheFault(true)
+	defer cacheFault(false)
 	second, err := service.Search(ctx, searchApp.Request{Q: "投影文章", Limit: 1, Cursor: *first.NextCursor})
 	if err != nil || len(second.Items) != 1 || second.Items[0].ID == first.Items[0].ID {
 		t.Fatalf("PIT 下一页必须稳定推进: first=%+v second=%+v err=%v", first, second, err)

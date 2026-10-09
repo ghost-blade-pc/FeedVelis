@@ -149,6 +149,12 @@ paths:
     get:
       operationId: listArticles
       summary: 按有效发布时间倒序读取文章
+      description: >-
+        按有效发布时间和文章 ID 倒序，使用既有 v2 不透明键集游标。
+        启用 Redis 时 latest ID 候选正常情况下约 5 秒收敛；实际返回卡片的公开状态、
+        当前修订及 AI 选择仍由 PostgreSQL 复核，详情直接读取当前公开修订。
+        每次最多检查 500 个候选；达到上限可能返回短页或空页且 has_more=true，
+        客户端必须依 next_cursor 推进，不以 items 数量判断结束。有效 lookahead 不被消费。
       parameters:
         - name: cursor
           in: query
@@ -181,7 +187,12 @@ paths:
         limit 默认 20，范围 1–50；重复参数返回 VALIDATION_FAILED。无凭证为匿名，
         携带失效凭证返回既有认证错误。无有效正向画像按 PostgreSQL latest 冷启动；
         有画像时每路最多召回 100 条、冻结去重后最多 200 条。OpenSearch 整体故障回退 latest，
-        候选不足时以 latest 补位；无 Redis 缓存。推荐游标与搜索游标隔离，绝对有效期默认 2 分钟，
+        候选不足时以 latest 补位；启用 Redis 时推荐首查排序计划按服务端认证的真实用户身份隔离，
+        正常约 30 秒候选排序窗口，命中不续期；每次首查有独立时间/消费状态，
+        仍复核当前公开/语义身份及本人有效排除，排除签名变化重算。
+        匿名/无画像不使用计划缓存，latest_fallback 与依赖失败不缓存；
+        Redis 故障不单独改变 mode/degraded，清缓存不影响有效游标续页。
+        当前卡片使用共享读取缓存。推荐游标与搜索游标隔离，绝对有效期默认 2 分钟，
         续页继续冻结候选顺序但每页复核当前公开状态和本人有效负反馈；游标失效返回 INVALID_CURSOR。
       security:
         - {}
@@ -1215,8 +1226,10 @@ components:
             $ref: "#/components/schemas/ArticleItem"
         next_cursor:
           type: [string, "null"]
+          description: has_more=true 时使用此游标继续；包含已检查位置，空页也可推进。
         has_more:
           type: boolean
+          description: 是否仍有候选可检查；不保证下一页非空。
     ArticleSearchPage:
       type: object
       additionalProperties: false

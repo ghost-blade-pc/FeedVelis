@@ -233,3 +233,19 @@ recommend:
   bm25_candidates: 100
   knn_candidates: 100
   cursor_ttl: 2m
+cache:
+  enabled: false
+  redis:
+    address: "localhost:6379"
+    database: 0
+    tls: false
+  # 留空时按 app.environment 派生 velis:<environment>；API/Worker 必须一致。
+  namespace: ""
+  card_ttl: 5m
+  latest_ttl: 5s
+  # 仅首查候选排序计划；当前公开/语义身份及本人有效排除仍实时复核。
+  recommend_ttl: 30s
+  operation_timeout: 50ms
+  request_budget: 100ms
+  pool_size: 10
+  batch_size: 100

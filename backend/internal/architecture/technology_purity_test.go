@@ -20,6 +20,7 @@ var forbiddenDependencies = []string{
 	"github.com/jackc/pgx",
 	"github.com/golang-migrate",
 	"github.com/rabbitmq",
+	"github.com/redis",
 	"github.com/minio",
 	"github.com/prometheus",
 	"github.com/opensearch-project",

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	accountApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/account"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articleread"
 	assetApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asset"
 	asyncApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/asynctask"
 	enrichmentApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/enrichment"
@@ -41,7 +42,13 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	defer pool.Close()
 
 	owner := workerOwner()
-	components, err := buildWorkerComponents(cfg, pool, logger, owner)
+	registry := prometheus.NewRegistry()
+	resources, err := buildReadCache(cfg, registry, logger)
+	if err != nil {
+		return err
+	}
+	defer resources.Close()
+	components, err := buildWorkerComponentsWithCache(ctx, cfg, pool, logger, owner, registry, resources)
 	if err != nil {
 		return err
 	}
@@ -60,8 +67,25 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 }
 
 func buildWorkerComponents(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, owner string) ([]WorkerComponent, error) {
-	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
 	registry := prometheus.NewRegistry()
+	// 兼容组件构造入口由生命周期组件关闭资源；进程入口在 RunWorker 持有资源。
+	resources, err := buildReadCache(cfg, registry, logger)
+	if err != nil {
+		return nil, err
+	}
+	components, err := buildWorkerComponentsWithCache(context.Background(), cfg, pool, logger, owner, registry, resources)
+	if err != nil {
+		resources.Close()
+		return nil, err
+	}
+	components = append(components, WorkerComponent{Name: "read-cache", Run: func(ctx context.Context) error { defer resources.Close(); <-ctx.Done(); return nil }})
+	return components, nil
+}
+func buildWorkerComponentsWithCache(lifecycle context.Context, cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, owner string, registry *prometheus.Registry, resources *readCacheResources) ([]WorkerComponent, error) {
+	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
+	if cfg.Cache.Enabled {
+		feed.articles.WithPublicReadInvalidator(articleread.NewInvalidator(postgres.NewTxManager(pool), resources.Cache, lifecycle, cfg.Cache.RequestBudget))
+	}
 	asyncMetrics := observability.NewAsyncMetrics(registry)
 	searchMetrics := observability.NewSearchMetrics(registry)
 	components := []WorkerComponent{instrumentWorkerComponent("feed", false, asyncMetrics, scheduler.New(feed.sources, logger, owner, cfg.Worker.HeartbeatInterval).Run)}

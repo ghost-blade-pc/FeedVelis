@@ -19,15 +19,15 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
 | AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、非法分块有限纠正、原文摘录降级、补录 CLI、API/Web 来源展示与指标 | 默认关闭；仅 `invalid_output` 耗尽后摘录，其他错误保持真实失败；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索与推荐 |
 | 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；索引是可丢弃派生状态，不是事实源 |
-| 推荐 Feed | 匿名 latest 冷启动、登录后关键词/主题与可选语义召回、反馈排序、文章级负反馈排除、来源打散、加密冻结游标、latest 补位及搜索故障回退 | 无 Redis 缓存；每路最多 100 候选、冻结最多 200 条；每页复核公开状态与负反馈 |
+| 推荐 Feed | 匿名 latest 冷启动、登录后关键词/主题与可选语义召回、反馈排序、文章级负反馈排除、来源打散、加密冻结游标、latest 补位及搜索故障回退 | 可选用户隔离的首查排序计划缓存（绝对 30 秒）；当前卡片使用共享缓存；每路最多 100 候选、冻结最多 200 条；每页复核公开状态与负反馈 |
 | 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；有界画像已向推荐提供当前修订关键词/主题/来源证据 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；latest 与搜索排序不使用画像 |
 | Web | latest/recommend 切换、推荐原因与降级提示、详情、搜索与加载更多、文章反馈操作、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无 Agent 界面 |
 
-Redis 业务缓存、对话 Agent 与定时 Agent 均未实现。文章反馈事实仅依赖 PostgreSQL；阅读按 UTC 固定 30 分钟窗口去重，画像按 UTC 日最多计一次、单文章最多计三次，过期事实即使清理 Worker 暂停也不会参与画像。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+可选 Redis 已接入 latest ID 候选页、搜索及推荐的当前卡片装配，并在文章写入提交后失效首页；用户推荐首查计划按真实身份隔离并有界缓存；对话 Agent 与定时 Agent 均未实现。文章反馈事实仅依赖 PostgreSQL；阅读按 UTC 固定 30 分钟窗口去重，画像按 UTC 日最多计一次、单文章最多计三次，过期事实即使清理 Worker 暂停也不会参与画像。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 
-核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。OpenSearch 未配置或故障时搜索返回明确的 `503 SEARCH_UNAVAILABLE`，有正向画像的推荐按 latest 降级；匿名或无正向画像仍按冷启动读取，不需要搜索。这些故障不会影响 latest、详情或 readiness。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；当前修订尚无成功增强结果时 `enhancement` 为 null，Web 回退到原始 excerpt。同一修订已选中的成功结果会保留至新结果成功切换；非法输出耗尽后的摘录标记为 `extractive`，不展示为模型摘要。
+核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。OpenSearch 未配置或故障时搜索返回明确的 `503 SEARCH_UNAVAILABLE`，有正向画像的推荐在需要重新召回时按 latest 降级；已有有效缓存计划可在约 30 秒窗口内继续经当前事实复核；匿名或无正向画像仍按冷启动读取，不需要搜索。这些故障不会影响 latest、详情或 readiness。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；当前修订尚无成功增强结果时 `enhancement` 为 null，Web 回退到原始 excerpt。同一修订已选中的成功结果会保留至新结果成功切换；非法输出耗尽后的摘录标记为 `extractive`，不展示为模型摘要。
 
 ## 目录与技术现状
 
@@ -322,6 +322,33 @@ Compose 已内置固定 `opensearchproject/opensearch:3.8.0` 单节点服务，�
 
 BM25 查询固定使用读别名和可见文档，标题、关键词、主题、摘要、正文的权重依次降低；`keyword`、`topic`、`source_id` 是精确筛选。分页通过 PIT 与 `search_after` 保持快照，PIT 过期或游标无效时返回受控错误，客户端应从第一页重试。OpenSearch 候选始终由 PostgreSQL 批量复核当前公开状态、当前修订和当前 AI 选择后才返回，因此索引延迟或迟到文档不会泄露已下架内容。查询身份只需读别名上的搜索与 PIT 权限，不应授予索引写入或管理权限；开启混合搜索时还需要读取实际读索引 mapping 元数据的权限；无需授予索引写入或别名切换权限。
 
+### Redis 读取缓存
+
+可选 Redis 读取缓存覆盖三类可重建对象：版本化卡片片段、latest ID 候选页、用户隔离的推荐首查排序计划。文章写入提交后尽力失效首页；推荐 latest 补位使用保留本人排除、冻结候选 skip 和首查 StartedAt 的专用 ID 查询，再共享卡片装配。没有数据库迁移或 HTTP 字段变化。
+
+每批先在短 `READ ONLY REPEATABLE READ` 快照读取当前公开状态、修订、AI 选择及实际 Embedding/profile，再批量读缓存，只批量加载缺失片段，结束快照后回填。来源、昵称和排序字段总是来自当前数据库；编辑、AI 切换及下架无需等待卡片过期。写事务中的读取复用事务视图并绕过公开缓存；PostgreSQL 失败仍返回原错误，文章详情直接读取 PostgreSQL。搜索排序及语义身份过滤保持原行为，Redis 故障只导致有界回源。
+
+latest ID 候选正常情况下约 5 秒收敛，命中不续期。发布、恢复、下架、删除及 RSS 写入在最外层提交后失效所有合法 limit 的首页；回滚不执行，故障不改变已提交结果，续页靠绝对 TTL 收敛。每次 latest 最多检查 500 个候选，水位包含已检查的下架项，但不消费有效 lookahead。达到上限可能返回短页或空页且 `has_more=true`；客户端应使用 `next_cursor` 继续，不能根据 `items` 数量判断结束；Web 空页也保留“加载更多”。该窗口不承诺自动刷新已显示页面，也不提供跨请求数据库快照。
+
+默认 `cache.enabled=false`，宿主机启用时设置 `VELIS_CACHE_ENABLED=true` 和 `VELIS_CACHE_REDIS_ADDRESS=127.0.0.1:6379`。Compose 开发示例显式启用，地址为 `redis:6379`；设置 `VELIS_CACHE_ENABLED=false` 即可关闭，不需要删除 Redis 键或业务数据。配置优先级为默认 < YAML < `VELIS_*` 环境变量，API/Worker 必须使用相同 namespace；空 namespace 按环境派生 `velis:<app.environment>`。Redis 运行时不可达不会阻止启动，readiness 仍只依赖 PostgreSQL。
+
+| 配置 / 环境变量后缀（统一加 `VELIS_CACHE_`） | 默认 | 启用时约束 |
+| --- | --- | --- |
+| `enabled` / `ENABLED` | false | 布尔值 |
+| `redis.address` / `REDIS_ADDRESS` | 需配置 | host:port，不能嵌入凭据 |
+| `redis.database` / `REDIS_DATABASE` | 0 | 非负 |
+| `redis.tls` / `REDIS_TLS` | false | TLS 最低 1.2，验证服务端证书 |
+| `namespace` / `NAMESPACE` | `velis:<environment>` | 1–96 位字母、数字、冒号、下划线、连字符 |
+| `card_ttl` / `CARD_TTL` | 5m | 1s–1h |
+| `latest_ttl` / `LATEST_TTL` | 5s | 1s–5s |
+| `recommend_ttl` / `RECOMMEND_TTL` | 30s | 1s–30s |
+| `operation_timeout` / `OPERATION_TIMEOUT` | 50ms | 5ms–100ms，不能大于总预算 |
+| `request_budget` / `REQUEST_BUDGET` | 100ms | 10ms–200ms |
+| `pool_size` / `POOL_SIZE` | 10 | 1–100 |
+| `batch_size` / `BATCH_SIZE` | 100 | 1–100 |
+
+凭据仅由 `VELIS_CACHE_REDIS_USERNAME`、`VELIS_CACHE_REDIS_PASSWORD` 注入，YAML 中的凭据字段不会生效。适配器关闭自动命令/连接重试，缓存操作共享请求剩余预算且受父 deadline 限制，传输失败后本请求直接绕过；回填/失效失败只记录受控分类。卡片最多 64KiB，计划最多 128KiB；绝对到期时间从原始读取开始计算，命中不续期。指标单位及接入约定见 [缓存可观测性](backend/test/integration/cache_observability.md)，基线及本阶段验收见 [verification.md](openspec/changes/cache-article-and-feed-reads-with-redis/verification.md)。
+
 ### 推荐 Feed 配置与边界
 
 `GET /api/v1/articles/recommend` 默认每页 20 条（1–50），匿名及没有有效正向关键词/主题画像的用户按 PostgreSQL latest 冷启动，返回 `mode=cold_start`、`degraded=false`。登录用户的当前修订关键词/主题、去重阅读和收藏影响排序；有效“不感兴趣”仅硬排除对应文章。每路最多召回 100 条，去重后冻结最多 200 条；候选不足用 latest 补位，OpenSearch 整体故障时 `mode=latest_fallback`。响应的 `degraded` 标记降级，文章只返回 `keyword_match`、`topic_match`、`similar_content`、`recent`、`latest_fallback` 之一作为原因。Web 默认 latest，可切换推荐并在游标失效时从第一页重试。
@@ -333,7 +360,7 @@ BM25 查询固定使用读别名和可见文档，标题、关键词、主题、
 | `recommend.cursor_ttl` | 2m | 30s–10m；绝对到期，不因翻页续期 |
 | `VELIS_RECOMMEND_CURSOR_KEY` | 开发进程临时生成 | 独立于搜索密钥，仅从环境读取；Base64 解码后至少 32 字节；production 必填且各 API 实例相同 |
 
-推荐游标是独立的认证加密 v1 格式，绑定匿名/登录身份与排序版本；续页不重新召回或生成向量，但仍复核公开状态和本人有效负反馈。推荐不使用 Redis 或持久结果缓存；PostgreSQL 读取失败返回 `503 DEPENDENCY_UNAVAILABLE`，不会直接返回搜索投影。新的公开文章只进入新首查；已有 latest 补位按键集继续。
+推荐游标是独立的认证加密 v1 格式，绑定匿名/登录身份与排序版本；续页不重新召回或生成向量，但仍复核公开状态和本人有效负反馈。启用 Redis 后，首查排序计划使用服务端认证的真实用户 ID、规范化当前画像指纹及排序/召回/Embedding 配置指纹隔离，默认绝对 TTL 30 秒，命中不续期。窗口只冻结候选排序；每次首查重新建立时间和消费状态，每页仍复核当前公开状态、语义身份和本人有效排除。硬排除前原候选集合的签名变化会重算，包含无标签文章负反馈撤销及自然过期。匿名/无正向画像不使用计划缓存，latest_fallback 和依赖失败不写入计划；搜索恢复后，曾故障回退的新首查可重新召回。有效计划中的真实语义降级标志可保留至该 30 秒窗口结束。Redis 故障不单独改变 mode/degraded，清缓存不影响有效客户端游标的续页。当前身份和卡片使用共享读取缓存；PostgreSQL 读取失败返回 `503 DEPENDENCY_UNAVAILABLE`，不会直接返回搜索投影。新的候选进入新首查时仍受约 30 秒排序窗口约束；已有 latest 补位按首查站内发布时间水位及键集继续。
 
 ## 搜索投影运维
 
@@ -429,7 +456,7 @@ VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 
 文档中的“已实现”依据当前代码，不代表每次文档更新都重新执行了运行验证。I1 及更早的详细 change 验证保存在只读的 `code_copilot/changes/`；后续规范与 change 统一使用 `openspec/`。
 
-推荐 Feed 与 AI 摘要可靠性 change 已于 2026-10-09 同步长期规格并归档：[推荐验收记录](openspec/changes/archive/2026-10-09-add-recommend-article-feed/tasks.md)、[摘要可靠性验收记录](openspec/changes/archive/2026-10-09-improve-ai-summary-reliability/verification.md)。记录中的 `make check` 与真实依赖测试均通过；本次归档未部署应用、执行数据库迁移或重排历史任务。Redis 业务缓存仍未实现，后续实施顺序见 Roadmap。
+推荐 Feed 与 AI 摘要可靠性 change 已于 2026-10-09 同步长期规格并归档：[推荐验收记录](openspec/changes/archive/2026-10-09-add-recommend-article-feed/tasks.md)、[摘要可靠性验收记录](openspec/changes/archive/2026-10-09-improve-ai-summary-reliability/verification.md)。记录中的 `make check` 与真实依赖测试均通过；本次归档未部署应用、执行数据库迁移或重排历史任务。Redis 卡片/latest 读取缓存已实现；用户隔离的推荐计划已接入；完整验收记录与后续顺序见 Roadmap。
 
 ## 文档分工
 

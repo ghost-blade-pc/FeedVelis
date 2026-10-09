@@ -7,3 +7,12 @@ import "context"
 type TxManager interface {
 	WithinTransaction(context.Context, func(context.Context) error) error
 }
+
+// AfterCommitRegistrar 登记到最外层事务；同 actionID 去重，回调失败不改变已提交结果。
+type AfterCommitRegistrar interface {
+	RegisterAfterCommit(context.Context, string, func(context.Context) error) error
+}
+
+type PublicReadInvalidator interface {
+	ScheduleLatestInvalidation(context.Context) error
+}

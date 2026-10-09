@@ -26,6 +26,7 @@ type AdminService struct {
 	idempotency *idempotencyApp.Service
 	clock       ports.Clock
 	outbox      ports.Outbox
+	invalidator ports.PublicReadInvalidator
 }
 
 func NewAdminServiceWithOutbox(repository AdminArticleRepository, idempotency *idempotencyApp.Service, clock ports.Clock, outbox ports.Outbox) *AdminService {
@@ -91,6 +92,11 @@ func (s *AdminService) changeState(ctx context.Context, operation string, comman
 		if setErr != nil {
 			return nil, "", "", setErr
 		}
+		if s.invalidator != nil {
+			if err := s.invalidator.ScheduleLatestInvalidation(txContext); err != nil {
+				return nil, "", "", err
+			}
+		}
 		if eventErr := appendArticleTransition(txContext, s.outbox, &current, stored, false, now); eventErr != nil {
 			return nil, "", "", eventErr
 		}
@@ -104,4 +110,9 @@ func (s *AdminService) changeState(ctx context.Context, operation string, comman
 		return UserArticleResult{}, false, err
 	}
 	return result, outcome.Replayed, nil
+}
+
+func (s *AdminService) WithPublicReadInvalidator(invalidator ports.PublicReadInvalidator) *AdminService {
+	s.invalidator = invalidator
+	return s
 }

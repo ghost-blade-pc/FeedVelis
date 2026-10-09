@@ -3,6 +3,10 @@ package integration
 import (
 	"context"
 	"fmt"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlecache"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articleread"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/test/testkit/redistest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -41,10 +45,27 @@ func TestArticleRecommendationPostgresOpenSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	codec, _ := recommendation.NewCursorCodec([]byte(strings.Repeat("r", 32)))
-	reader := postgres.NewArticleRepository(env.pool)
+	var reader *articleread.Service
+	var planCache articlecache.Cache
+	var planHarness *redistest.Harness
+	if os.Getenv("VELIS_TEST_REDIS_ADDRESS") != "" {
+		planCache, planHarness = newOwnedReadCache(t, "")
+		reader = articleread.NewService(postgres.NewArticleRepository(env.pool), postgres.NewTxManager(env.pool), planCache, nil, 100, nil)
+		t.Log("推荐首查计划已接入真实 Redis，OpenSearch 回归确实执行")
+	} else {
+		reader = sharedIntegrationReader(t, env)
+	}
+	clearPlans := func() {
+		if planHarness != nil {
+			if err := planHarness.Clear(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
 	profile := feedbackApp.NewProfileService(feedbackRepository, profileClock{time.Now().UTC()})
 	newService := func(index recommendation.CandidateIndex) *recommendation.Service {
-		return recommendation.NewService(profile, index, reader, codec, nil, recommendation.Config{FirstQueryTimeout: 5 * time.Second, BM25Candidates: 100, KNNCandidates: 100, CursorTTL: 2 * time.Minute}, time.Now)
+		return recommendation.NewService(profile, index, reader, codec, nil, recommendation.Config{FirstQueryTimeout: 5 * time.Second, BM25Candidates: 100, KNNCandidates: 100, CursorTTL: 2 * time.Minute}, time.Now).WithPlanCache(planCache)
 	}
 	service := newService(stack.client)
 	// 投影尚未追赶时 BM25 为空，推荐仍由 PostgreSQL latest 补页。
@@ -56,6 +77,8 @@ func TestArticleRecommendationPostgresOpenSearch(t *testing.T) {
 	if err := stack.client.Refresh(ctx, stack.index); err != nil {
 		t.Fatal(err)
 	}
+	// 成功空召回计划有 30 秒窗口；投影追赶后的独立回归显式清理本次缓存。
+	clearPlans()
 	firstA, err := service.Get(ctx, userA, 1, "")
 	if err != nil || len(firstA.Items) != 1 || firstA.Items[0].Article.ID != goArticle || firstA.NextCursor == nil {
 		t.Fatalf("用户 A 推荐未命中偏好: %+v %v", firstA, err)
@@ -83,7 +106,7 @@ func TestArticleRecommendationPostgresOpenSearch(t *testing.T) {
 	semantic := recommendation.NewService(profile, stack.client, reader, codec, recommendationVector{}, recommendation.Config{
 		FirstQueryTimeout: 5 * time.Second, BM25Candidates: 100, KNNCandidates: 100, CursorTTL: 2 * time.Minute,
 		SemanticEnabled: true, EmbeddingProfile: "e-v1", Dimensions: 3, EmbeddingTimeout: time.Second, KNNTimeout: time.Second,
-	}, time.Now)
+	}, time.Now).WithPlanCache(planCache)
 	noKNN, err := semantic.Get(ctx, userA, 1, "")
 	if err != nil || len(noKNN.Items) != 1 || noKNN.Items[0].Article.ID != goArticle || noKNN.Mode != "personalized" {
 		t.Fatalf("真实 v2 KNN 空集未保留 BM25: %+v %v", noKNN, err)
@@ -103,9 +126,14 @@ func TestArticleRecommendationPostgresOpenSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer badClient.Close()
+	clearPlans()
 	fallback, err := newService(badClient).Get(ctx, userA, 2, "")
 	if err != nil || fallback.Mode != "latest_fallback" || !fallback.Degraded || len(fallback.Items) == 0 || fallback.Items[0].Reason != "latest_fallback" {
 		t.Fatalf("OpenSearch 连接故障未按 latest 回退: %+v %v", fallback, err)
+	}
+	recovered, err := newService(stack.client).Get(ctx, userA, 1, "")
+	if err != nil || recovered.Mode != "personalized" {
+		t.Fatal("搜索恢复未重新召回", recovered, err)
 	}
 }
 

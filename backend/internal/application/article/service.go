@@ -16,15 +16,27 @@ import (
 )
 
 type Service struct {
-	repository articleDomain.Repository
-	sanitizer  ports.ContentSanitizer
-	clock      ports.Clock
-	txManager  ports.TxManager
-	outbox     ports.Outbox
+	repository  articleDomain.Repository
+	sanitizer   ports.ContentSanitizer
+	clock       ports.Clock
+	txManager   ports.TxManager
+	outbox      ports.Outbox
+	latest      LatestReader
+	invalidator ports.PublicReadInvalidator
 }
 
 func NewServiceWithOutbox(repository articleDomain.Repository, sanitizer ports.ContentSanitizer, clock ports.Clock, txManager ports.TxManager, outbox ports.Outbox) *Service {
 	return &Service{repository: repository, sanitizer: sanitizer, clock: clock, txManager: txManager, outbox: outbox}
+}
+
+type LatestReader interface {
+	ListLatest(context.Context, *articleDomain.Cursor, int) ([]articleDomain.ListItem, *articleDomain.Cursor, bool, error)
+}
+
+func (s *Service) WithLatestReader(reader LatestReader) *Service { s.latest = reader; return s }
+func (s *Service) WithPublicReadInvalidator(invalidator ports.PublicReadInvalidator) *Service {
+	s.invalidator = invalidator
+	return s
 }
 
 type IngestReport struct {
@@ -74,8 +86,16 @@ func (s *Service) Ingest(ctx context.Context, sourceID int64, items []ports.Pars
 			} else {
 				mutation.Result, mutation.ArticleID, writeErr = s.repository.Upsert(writeContext, candidate, now)
 			}
-			if writeErr != nil || s.outbox == nil || mutation.Result == articleDomain.UpsertUnchanged {
+			if writeErr != nil || mutation.Result == articleDomain.UpsertUnchanged {
 				return writeErr
+			}
+			if s.invalidator != nil {
+				if err := s.invalidator.ScheduleLatestInvalidation(writeContext); err != nil {
+					return err
+				}
+			}
+			if s.outbox == nil {
+				return nil
 			}
 			fact := articleevent.PublicFact{ArticleID: mutation.ArticleID, OriginType: string(mutation.Origin), RevisionID: mutation.RevisionID, RevisionNo: mutation.RevisionNo, ContentHash: mutation.ContentHash, LockVersion: mutation.LockVersion}
 			var event articleevent.Envelope
@@ -181,6 +201,18 @@ func (s *Service) List(ctx context.Context, encodedCursor string, limit int) (Pa
 			return Page{}, err
 		}
 		cursor = &decoded
+	}
+	if s.latest != nil {
+		items, next, more, err := s.latest.ListLatest(ctx, cursor, limit)
+		if err != nil {
+			return Page{}, err
+		}
+		page := Page{Items: items, HasMore: more}
+		if next != nil && more {
+			encoded := encodeCursor(*next)
+			page.NextCursor = &encoded
+		}
+		return page, nil
 	}
 	items, err := s.repository.ListPublished(ctx, cursor, limit+1)
 	if err != nil {

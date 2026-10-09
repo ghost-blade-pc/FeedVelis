@@ -105,18 +105,18 @@ Velis 是一个可自托管的图文 Feed 与智能阅读系统。平台管理�
 | API、Worker、迁移、管理 CLI、四层目录、CI、健康检查 | 已实现 | 复用并逐步增强观测和部署 |
 | Source CLI、调度租约、条件请求、失败退避、管理 API/Web 与抓取历史 | I2 已完成 | 公开文章事实已接入可靠事件投递 |
 | RSS/Atom/JSON Feed、正文清洗、源内去重与统一文章修订 | I2 已完成 | 发布和修订事件已接入 Outbox |
-| 联合 latest、recommend、站内详情、BM25 搜索、Vue 阅读/搜索与投稿页 | I2 + I4.2 + I4.5 已实现 | recommend 已有真实 PostgreSQL/OpenSearch 验收；后续补充缓存与浏览器验收 |
+| 联合 latest、recommend、站内详情、BM25 搜索、Vue 阅读/搜索与投稿页 | I2 + I4.2 + I4.5 已实现 | recommend 与 Redis 读取缓存已有真实 PostgreSQL/Redis/OpenSearch 联合验收；后续补充浏览器验收 |
 | 账户、JWT、会话轮换、RBAC、限流和管理审计 | I1 已完成 | 作为投稿、管理和 Agent 会话身份基础 |
 | 用户投稿、图片资产、幂等写入和乐观并发 | I2 已完成 | 复用为 AI、搜索和 Agent 的内容事实基础 |
 | Outbox、RabbitMQ Relay、消费幂等与文章任务槽位 | I3 已完成 | 已承载 AI 内容增强任务状态机 |
 | 最小阅读、收藏与负反馈信号 | 已实现 | 登录用户可操作；有界关键词/主题/来源画像已用于 recommend 排序与文章级排除 |
-| Redis 业务缓存 | 未实现 | I4 后续独立 change |
+| Redis 业务缓存 | I4.6 已实现（2026-10-09） | 默认关闭；卡片 5m、latest 候选 5s、用户推荐排序计划 30s；真实联合清空/故障/恢复与固定负载记录见缓存验收 |
 | Eino 内容增强 | I3 已完成；摘要可靠性增强已实现 | 非法分块有限纠正、耗尽非法输出后的原文摘录、来源展示与同 profile 模型重算 |
-| OpenSearch 投影、重建与 BM25/KNN/RRF 查询 | I4.1–I4.3 已完成 | 已供搜索与 recommend 使用；后续缓存不能绕过 PostgreSQL 可见性与负反馈复核 |
+| OpenSearch 投影、重建与 BM25/KNN/RRF 查询 | I4.1–I4.3 已完成 | 已供搜索与 recommend 使用；缓存也复核 PostgreSQL 当前公开/语义身份与有效负反馈 |
 | 对话/定时 Agent | 未实现 | I5–I6 |
 | 微服务、Kubernetes、完整可观测性、压测和 GC 报告 | 未实现 | I7–I10 |
 
-当前文章已支持互斥的 RSS/用户来源、不可变修订及 `draft/published/offline/deleted` 生命周期，MinIO 已用于私有图片资产。文章公开事实通过 Outbox、RabbitMQ Relay、消费 Inbox 收敛到版本化异步任务槽位，并由 Eino Worker 生成摘要、关键词、主题和普通浮点向量；非法输出耗尽后可保存标记为 `extractive` 的原文摘录，其他失败保留原有读取降级。OpenSearch 已承载可重建投影、BM25 查询、精确筛选和 PIT 分页，默认关闭的查询 Embedding/KNN/RRF 已实现，返回前由 PostgreSQL 复核可见性。recommend 已接入本人反馈、有界候选、稳定分页及 latest 降级；Redis 业务缓存与 Agent 仍未实现。现有 PostgreSQL `vector` 扩展和 pgvector 镜像是遗留配置，后续迁移不得改写已执行迁移或无条件级联删除扩展。
+当前文章已支持互斥的 RSS/用户来源、不可变修订及 `draft/published/offline/deleted` 生命周期，MinIO 已用于私有图片资产。文章公开事实通过 Outbox、RabbitMQ Relay、消费 Inbox 收敛到版本化异步任务槽位，并由 Eino Worker 生成摘要、关键词、主题和普通浮点向量；非法输出耗尽后可保存标记为 `extractive` 的原文摘录，其他失败保留原有读取降级。OpenSearch 已承载可重建投影、BM25 查询、精确筛选和 PIT 分页，默认关闭的查询 Embedding/KNN/RRF 已实现，返回前由 PostgreSQL 复核可见性。recommend 已接入本人反馈、有界候选、稳定分页及 latest 降级；Redis 可重建读取缓存已实现并通过真实联合验收，Agent 未实现。现有 PostgreSQL `vector` 扩展和 pgvector 镜像是遗留配置，后续迁移不得改写已执行迁移或无条件级联删除扩展。
 
 ## 6. 核心领域与数据边界
 
@@ -191,7 +191,7 @@ OpenSearch 使用版本化物理索引和读写别名，保存可从 PostgreSQL 
 - 发布、更新、AI 完成触发 upsert；下架和删除触发移除；迟到事件不能复活旧文档。
 - 查询结果返回前批量校验 PostgreSQL 可见性；OpenSearch 不反向覆盖业务事实。
 - Bulk 逐项处理错误；索引重建覆盖分页读取、增量追赶、校验、别名切换与回滚窗口。
-- OpenSearch 整体故障时搜索明确不可用，recommend 降级为 latest；无向量时退化到关键词/BM25。
+- OpenSearch 整体故障时搜索明确不可用，recommend 在需要重新召回时降级为 latest；无向量时退化到关键词/BM25。
 
 Feed 只保留：
 
@@ -200,7 +200,7 @@ Feed 只保留：
 | `latest` | PostgreSQL 已发布文章，有效发布时间（RSS 原站时间优先、固定站内时间回退）+ ID | 核心路径，不依赖 Redis、MQ、搜索或模型 |
 | `recommend` | 关键词/主题、语义召回、少量用户反馈、新鲜度与来源打散 | BM25/关键词 → latest |
 
-后续 Redis change 只保存可重建的文章卡片、Feed ID 页、短期推荐结果和必要限流状态；缓存失效或清空后必须能安全回源。用户相关键按真实身份隔离，批量读取避免 N+1；缓存命中也不能绕过当前可见性和有效文章级负反馈复核。当前尚未接入 Redis 业务缓存。
+I4.6 的 Redis 读取缓存默认关闭，保存可重建的卡片片段（5 分钟）、latest ID 页（5 秒）及用户隔离的推荐首查排序计划（30 秒），命中均不续期。卡片每批在短只读快照复核当前公开/修订/AI/语义身份并批量回源缺失片段；写事务绕过公开缓存，文章写入最外层提交后尽力失效 latest 首页。计划键包含真实身份、当前画像与配置指纹，每页仍查当前事实与本人有效排除，原候选排除签名变化重算；匿名/无画像、latest_fallback 和依赖失败不缓存。Redis 故障只触发有界回源，PostgreSQL 故障仍返回原错误，清缓存不影响有效客户端游标续页。六状态固定负载及真实联合故障/恢复证据见 [缓存验收](openspec/changes/cache-article-and-feed-reads-with-redis/verification.md)，其中也记录快照与故障增加的代价。
 
 ### 两层 Agent
 
@@ -256,7 +256,7 @@ I2–I6 保持模块化单体代码库和清晰模块接口，API 与 Worker 可
 | I1：账户与权限 | 已完成（2026-09-19） | 注册登录、JWT、会话轮换撤销、RBAC、限流、管理 CLI/审计、最小 Web | 正常/过期/撤销/轮换/重复账号/越权测试；管理员初始化可复现 |
 | I2：统一内容供给 | 已完成（2026-09-21） | 用户草稿/图片/直接发布/编辑/下架/删除；管理员 Source API/Web；RSS 与投稿统一公开读取；latest | RSS 自动发布与用户直接发布均可匿名阅读；并发、幂等、权限、资产和历史数据迁移正确；不依赖 MQ/Redis/模型 |
 | I3：可靠异步与 AI 增强 | 已完成（2026-09-23）；摘要可靠性增强于 2026-09-29 完成实现 | Outbox、RabbitMQ Relay、消费去重、租约任务状态、重投/DLQ；Eino 摘要/关键词/主题/Embedding、补录、非法分块纠正与原文摘录降级 | MQ/模型故障、重复消息、非法输出与迟到结果不破坏发布和当前修订读取；结果来源共存与迁移回滚保护已有真实 PostgreSQL 验收 |
-| I4：搜索与 recommend Feed | 部分完成（I4.1–I4.3、最小反馈信号及 I4.5 已实现；Redis 待实施） | 已交付 OpenSearch 索引同步/重建、BM25、精确筛选、PIT 分页与 PostgreSQL 可见性复核；默认关闭的 KNN/RRF、v2 profile 投影与加密冻结分页；阅读、收藏、负反馈、画像及 recommend Feed | 已验证搜索分页与下架过滤、混合召回/降级/身份与跨版本重建回滚，以及反馈隔离、保留期和有界画像；recommend 已完成真实 PostgreSQL/OpenSearch 验收，Redis 故障、恢复与清空回源留待后续 change |
+| I4：搜索与 recommend Feed | 已完成当前范围（I4.1–I4.3、最小反馈信号、I4.5 与 I4.6；2026-10-09） | 已交付 OpenSearch 索引同步/重建、BM25、精确筛选、PIT 分页与 PostgreSQL 可见性复核；默认关闭的 KNN/RRF、v2 profile 投影与加密冻结分页；阅读、收藏、负反馈、画像及 recommend Feed；默认关闭的三类 Redis 读取缓存 | 已验证搜索分页与下架过滤、混合召回/降级/身份与跨版本重建回滚，以及反馈隔离、保留期和有界画像；recommend 已完成真实 PostgreSQL/OpenSearch 验收，I4.6 已有真实三依赖清空/故障/恢复、用户隔离、当前事实复核及固定负载六状态验收 |
 | I5：对话 Agent | 待实施 | 会话/消息、只读工具、SSE、引用、有限记忆、Agent 页面与评测集 | 查询约束和引用正确；无结果、工具失败、超时、断流、取消、越权和注入场景有证据 |
 | I6：定时 Agent 与收件箱 | 待实施 | 定时任务 CRUD/调度、水位、幂等匹配、站内收件箱与已读状态 | 新文章只投递一次；暂停/恢复/错过调度/重试正确；用户重新上线可查看结果 |
 | I7：微服务演进 | 待实施 | 基于证据拆分 Content、Ingestion、Intelligence 边界；RPC/事件契约、服务级故障隔离与 Trace | 独立部署和扩缩容可演示；超时、熔断、重复事件和下游故障有测试；提交拆分前后对比报告 |
@@ -272,15 +272,14 @@ I3 的可靠异步与 AI 内容增强、I4.1 搜索投影、I4.2 BM25 文章搜�
 - 已实现的最小阅读/收藏/负反馈信号在 recommend 排序与文章级排除中的使用；
 - recommend 的候选融合、来源打散、分页稳定性，以及搜索不可用时降级到 latest。
 
-当前 OpenSearch 提供可重建投影、BM25 和默认关闭的 KNN/RRF 混合搜索。混合首查每路最多 100 候选，v2 游标冻结最多 200 条、绝对 TTL 2 分钟；查询 Embedding 只在首查调用一次，语义故障降级 BM25。v2 profile 映射以在线重建发布，支持 v1 回滚。向量事实仍保存于 PostgreSQL `real[]`。Redis 业务缓存与 Agent 尚未实现。recommend 已增加匿名冷启动、本人反馈排序、词项/可选语义候选、独立冻结游标和 latest 降级；不能把单独的 BM25 搜索描述为个性化推荐。
+当前 OpenSearch 提供可重建投影、BM25 和默认关闭的 KNN/RRF 混合搜索。混合首查每路最多 100 候选，v2 游标冻结最多 200 条、绝对 TTL 2 分钟；查询 Embedding 只在首查调用一次，语义故障降级 BM25。v2 profile 映射以在线重建发布，支持 v1 回滚。向量事实仍保存于 PostgreSQL `real[]`。Redis 业务读取缓存已实现，Agent 尚未实现。recommend 已增加匿名冷启动、本人反馈排序、词项/可选语义候选、独立冻结游标和 latest 降级；不能把单独的 BM25 搜索描述为个性化推荐。
 
-下一项开发工作是独立的 Redis 可重建缓存 change：先记录 Feed/推荐首查耗时与依赖调用基线，再确定首批缓存对象、TTL 和失效策略，验证清空回源、缓存故障降级、用户隔离及当前可见性/负反馈复核。完成 I4 缓存收尾后进入 I5 最小对话 Agent，复用搜索、推荐和详情应用端口。
+I4.6 `cache-article-and-feed-reads-with-redis` 已完成实现和真实联合验收，证据见 [任务](openspec/changes/cache-article-and-feed-reads-with-redis/tasks.md) 与 [验证记录](openspec/changes/cache-article-and-feed-reads-with-redis/verification.md)。实现完成不代表已归档、同步长期规格或部署。下一项开发进入 I5 最小对话 Agent，复用搜索、推荐和详情应用端口。
 
 后续仍需在对应 change 中决定的主要细节：
 
 | 待定项 | 最晚阶段 |
 | --- | --- |
-| Redis 首批缓存对象、TTL、失效与回源策略，以及缓存前后验证负载 | I4 收尾 |
 | Agent 会话保留、记忆预算、SSE 恢复和评测数据集 | I5 |
 | 定时任务频率限制、收件箱保留和水位语义 | I6 |
 | 微服务精确边界、RPC 方案、数据拆分与迁移路径 | I7 |

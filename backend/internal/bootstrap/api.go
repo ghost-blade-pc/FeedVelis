@@ -7,7 +7,9 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlecache"
 	feedbackApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlefeedback"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articleread"
 	searchApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlesearch"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/health"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/recommendation"
@@ -31,21 +33,38 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
-	content := buildContentServices(cfg, pool, logger)
 	healthService := health.NewService(pool)
-	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
 	registry := prometheus.NewRegistry()
+	readCache, err := buildReadCache(cfg, registry, logger)
+	if err != nil {
+		return err
+	}
+	defer readCache.Close()
+	var shared *articleread.Service
+	content := buildContentServices(cfg, pool, logger)
+	feed := buildFeedServices(pool, cfg.Feed.ProxyURL)
+	if cfg.Cache.Enabled {
+		shared = articleread.NewService(postgres.NewArticleRepository(pool), postgres.NewTxManager(pool), readCache.Cache, readCache.Observer, cfg.Cache.BatchSize, nil)
+		invalidator := articleread.NewInvalidator(postgres.NewTxManager(pool), readCache.Cache, ctx, cfg.Cache.RequestBudget)
+		content.myArticles.WithPublicReadInvalidator(invalidator)
+		content.adminArticles.WithPublicReadInvalidator(invalidator)
+		feed.articles.WithLatestReader(shared).WithPublicReadInvalidator(invalidator)
+	}
+
 	queryMetrics := observability.NewArticleSearchMetrics(registry)
-	search, searchClient := buildArticleSearch(cfg, pool, observability.NewArticleSearchObserver(queryMetrics).WithLogger(logger), logger)
+	search, searchClient := buildArticleSearch(cfg, pool, observability.NewArticleSearchObserver(queryMetrics).WithLogger(logger), logger, shared)
 	if searchClient != nil {
 		defer searchClient.Close()
 	}
-	recommend, recommendCloser, err := buildRecommendation(cfg, pool, logger)
+	recommend, recommendCloser, err := buildRecommendation(cfg, pool, logger, shared)
 	if err != nil {
 		return err
 	}
 	if recommendCloser != nil {
 		defer recommendCloser.Close()
+	}
+	if cfg.Cache.Enabled {
+		recommend.WithPlanCache(readCache.Cache, func(ctx context.Context) { readCache.Observer.Fallback(ctx, articlecache.Recommend, 1) })
 	}
 	recommend.WithObserver(observability.NewRecommendObserver(observability.NewRecommendMetrics(registry), logger))
 	options := hertzhttp.Options{
@@ -137,7 +156,7 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 }
 
-func buildRecommendation(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*recommendation.Service, io.Closer, error) {
+func buildRecommendation(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, sharedReaders ...*articleread.Service) (*recommendation.Service, io.Closer, error) {
 	if cfg.App.Environment != "development" && !cfg.Recommend.CursorKey.IsSet() {
 		return nil, nil, errors.New("生产 API 必须配置 VELIS_RECOMMEND_CURSOR_KEY")
 	}
@@ -165,13 +184,17 @@ func buildRecommendation(cfg config.Config, pool *pgxpool.Pool, logger *slog.Log
 			logger.Warn("推荐查询 Embedding 装配失败，保留词项候选")
 		}
 	}
-	reader := postgres.NewArticleRepository(pool)
+	var reader recommendation.Reader = postgres.NewArticleRepository(pool)
+	if len(sharedReaders) > 0 && sharedReaders[0] != nil {
+		reader = sharedReaders[0]
+	}
 	profile := feedbackApp.NewProfileService(postgres.NewArticleFeedbackRepository(pool), clock.System{})
 	service := recommendation.NewService(profile, index, reader, codec, embed, recommendation.Config{
 		FirstQueryTimeout: cfg.Recommend.FirstQueryTimeout, BM25Candidates: cfg.Recommend.BM25Candidates, KNNCandidates: cfg.Recommend.KNNCandidates,
 		CursorTTL: cfg.Recommend.CursorTTL, EmbeddingTimeout: cfg.Search.Query.Hybrid.EmbeddingTimeout, KNNTimeout: cfg.Search.Query.Hybrid.KNNTimeout,
 		EmbeddingProfile: cfg.AI.Embedding.Profile.ProfileVersion, Dimensions: cfg.AI.Embedding.Dimensions,
 		SemanticEnabled: cfg.Search.Query.Hybrid.Enabled,
+		Provider:        cfg.AI.Embedding.Profile.Provider, Model: cfg.AI.Embedding.Profile.Model, EmbeddingInputVersion: cfg.AI.Embedding.InputVersion,
 	}, nil)
 	return service, &recommendCloser{index: client, model: modelCloser}, nil
 }
@@ -188,7 +211,7 @@ func (c *recommendCloser) Close() error {
 	return nil
 }
 
-func buildArticleSearch(cfg config.Config, pool *pgxpool.Pool, observer searchApp.Observer, logger *slog.Logger) (searchApp.Searcher, io.Closer) {
+func buildArticleSearch(cfg config.Config, pool *pgxpool.Pool, observer searchApp.Observer, logger *slog.Logger, sharedReaders ...*articleread.Service) (searchApp.Searcher, io.Closer) {
 	if !cfg.Search.QueryEnabled() {
 		if cfg.Search.Enabled() && logger != nil {
 			logger.Warn("搜索查询未装配：缺少生产 cursor key")
@@ -207,7 +230,13 @@ func buildArticleSearch(cfg config.Config, pool *pgxpool.Pool, observer searchAp
 		_ = client.Close()
 		return searchApp.UnavailableService{}, nil
 	}
-	service := searchApp.NewService(client, postgres.NewArticleRepository(pool), codec, observer, searchApp.Config{
+	var reader searchApp.PublicArticleReader = postgres.NewArticleRepository(pool)
+	var current searchApp.CurrentArticleReader = postgres.NewArticleRepository(pool)
+	if len(sharedReaders) > 0 && sharedReaders[0] != nil {
+		reader = sharedReaders[0]
+		current = sharedReaders[0]
+	}
+	service := searchApp.NewService(client, reader, codec, observer, searchApp.Config{
 		PITKeepAlive: cfg.Search.Query.PITKeepAlive, CandidateBatchSize: cfg.Search.Query.CandidateBatchSize,
 		MaxCandidatesPerRequest: cfg.Search.Query.MaxCandidatesPerRequest,
 		Timeout:                 cfg.Search.Query.Timeout,
@@ -226,7 +255,7 @@ func buildArticleSearch(cfg config.Config, pool *pgxpool.Pool, observer searchAp
 			logger.Warn("查询 Embedding 装配失败，降级为 BM25")
 		}
 	}
-	service.WithHybrid(cancellableQueryEmbedder(queryEmbedder, modelCtx), postgres.NewArticleRepository(pool))
+	service.WithHybrid(cancellableQueryEmbedder(queryEmbedder, modelCtx), current)
 	return service, &searchCloser{client: client, cancel: cancelModel, model: modelCloser}
 }
 
