@@ -13,7 +13,7 @@ func (r *ArticleRepository) ListPublishedWithIdentity(ctx context.Context, ids [
 	}
 	rows, err := querier(ctx, r.pool).Query(ctx, `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
 v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
-g.summary,g.keywords,g.topics,g.generated_at,a.current_revision_id,g.id::text,e.id::text,e.profile_version
+g.summary,g.keywords,g.topics,g.generated_at,g.generation_method,a.current_revision_id,g.id::text,e.id::text,e.profile_version
 FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id
 LEFT JOIN velis.sources s ON s.id=a.source_id

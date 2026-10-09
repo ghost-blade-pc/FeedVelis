@@ -17,7 +17,7 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
-| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索与推荐 |
+| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；非法输出耗尽后可标记原文摘录；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索与推荐 |
 | 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；索引是可丢弃派生状态，不是事实源 |
 | 推荐 Feed | 匿名 latest 冷启动、登录后关键词/主题与可选语义召回、反馈排序、文章级负反馈排除、来源打散、加密冻结游标、latest 补位及搜索故障回退 | 无 Redis 缓存；每路最多 100 候选、冻结最多 200 条；每页复核公开状态与负反馈 |
 | 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；有界画像向推荐提供当前修订关键词/主题/来源证据 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；latest 与搜索排序不使用画像 |
@@ -140,7 +140,15 @@ go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage 
 go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -all -confirm-all
 ```
 
-`-mode missing-only` 只为没有 AI 内容增强内容的文章补齐：当前没有生成结果的文章（`stage=all` 时连同 Embedding 一起补齐），以及已有摘要、关键词和主题但缺 Embedding 的文章；已有当前 generation 与 embedding 结果的文章不会被全量命令重算；`-article-id` 与 `-limit` 只改变范围，不绕过这一判断。要推进 profile 落后的文章请改用 `-mode outdated-only`。
+`-mode missing-only` 只为没有 AI 内容增强内容的文章补齐：当前没有生成结果的文章（`stage=all` 时连同 Embedding 一起补齐），以及已有摘要、关键词和主题但缺 Embedding 的文章；已有当前 generation 与 embedding 结果的文章不会被全量命令重算；`-article-id` 与 `-limit` 只改变范围，不绕过这一判断。要推进 profile 落后或来源为 `extractive` 的文章，请改用 `-mode outdated-only`。
+
+模型连续返回非法摘要并耗尽 generation 尝试后，Worker 会保存最多 400 个字符的当前修订原文摘录；API 的 `enhancement.method` 为 `extractive`，Web 显示“原文摘录”。其他错误不会伪装为成功。升级代码和迁移后，可先对历史失败文章 366 做只读预览，再显式重排；摘录以后可用相同 profile 的 `outdated-only` 再试模型：
+
+```bash
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 366 -dry-run
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 366
+go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage generation -mode outdated-only -article-id 366 -dry-run
+```
 
 `-order oldest|newest` 只适用于 `-limit 1..1000`，默认 `oldest`。`-all` 固定命令开始时的文章 ID 快照并在内部短事务分页，只推进异步任务，不在 CLI 进程内调用模型；非 dry-run 必须带 `-confirm-all`。相同目标的 pending/running/retry_wait 任务会跳过，failed 任务可显式重推。全量执行可能产生大量模型费用，应先 dry-run，并检查 Token 预算、错误指标及 generation/Embedding 配置；`stage=all` 重新生成时会同时更新两个目标 profile。
 

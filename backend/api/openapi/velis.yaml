@@ -1278,10 +1278,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ArticleEnhancement"
             - type: "null"
-          description: 当前修订选中的 AI 增强结果；未生成、失败或仅旧修订存在结果时为 null。
+          description: 当前修订选中的内容增强结果；未生成、失败或仅旧修订存在结果时为 null。
     ArticleEnhancement:
       type: object
-      required: [summary, keywords, topics, generated_at]
+      required: [summary, keywords, topics, method, generated_at]
       additionalProperties: false
       properties:
         summary:
@@ -1306,6 +1306,10 @@ components:
             type: string
             minLength: 1
             maxLength: 64
+        method:
+          type: string
+          enum: [model, extractive]
+          description: model 为模型生成，extractive 为模型非法输出重试耗尽后的原文摘录。
         generated_at:
           type: string
           format: date-time

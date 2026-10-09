@@ -32,7 +32,7 @@ describe('getArticle', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('读取文章详情并把失败映射为 ApiError', async () => {
-    const fixture = { id: 7, title: '标题', excerpt: '摘要', published_at: '2026-09-23T00:00:00Z', origin: { type: 'user', author: { id: 'u', nickname: '作者' } }, enhancement: { summary: 'AI 摘要', keywords: ['词'], topics: ['主题'], generated_at: '2026-09-23T00:01:00Z' }, content_html: '<p>正文</p>' }
+    const fixture = { id: 7, title: '标题', excerpt: '摘要', published_at: '2026-09-23T00:00:00Z', origin: { type: 'user', author: { id: 'u', nickname: '作者' } }, enhancement: { summary: 'AI 摘要', keywords: ['词'], topics: ['主题'], method: 'model', generated_at: '2026-09-23T00:01:00Z' }, content_html: '<p>正文</p>' }
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(fixture)))
     vi.stubGlobal('fetch', fetchMock)
     await expect(getArticle(7)).resolves.toEqual(fixture)

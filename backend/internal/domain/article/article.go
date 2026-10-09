@@ -116,6 +116,7 @@ type Enhancement struct {
 	Summary     string
 	Keywords    []string
 	Topics      []string
+	Method      string
 	GeneratedAt time.Time
 }
 

@@ -64,8 +64,8 @@ onBeforeUnmount(() => request?.abort())
       <FeedbackButtons :article-id="detail.id" :state="feedback.states.value[detail.id]" :busy="feedback.busy.value[detail.id] || Boolean(feedback.error.value)" @toggle="feedback.toggle" />
       <p v-if="feedback.error.value" role="alert">{{ feedback.error.value }} <button type="button" @click="feedback.load(true)">重试反馈状态</button></p>
       <p v-if="read.error.value" role="status">{{ read.error.value }}</p>
-      <aside v-if="detail.enhancement" class="ai-enhancement detail-enhancement" aria-label="AI 内容摘要">
-        <span class="ai-badge">AI 生成</span>
+      <aside v-if="detail.enhancement" class="ai-enhancement detail-enhancement" aria-label="内容摘要">
+        <span class="ai-badge">{{ detail.enhancement.method === 'extractive' ? '原文摘录' : 'AI 生成' }}</span>
         <p class="article-excerpt">{{ detail.enhancement.summary }}</p>
         <div class="ai-labels">
           <span v-for="keyword in detail.enhancement.keywords" :key="`keyword-${keyword}`" class="ai-label keyword">关键词 · {{ keyword }}</span>

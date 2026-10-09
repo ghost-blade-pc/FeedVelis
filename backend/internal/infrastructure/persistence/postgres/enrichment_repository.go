@@ -90,12 +90,12 @@ func (r *EnrichmentRepository) CurrentGeneration(ctx context.Context, task enric
 	var result enrichment.GenerationResult
 	var keywords, topics []string
 	err := r.pool.QueryRow(ctx, `SELECT g.id::text,g.article_id,g.revision_id,g.provider,g.model,g.profile_version,g.workflow_version,g.prompt_version,
-g.generation_input_hash,g.input_truncated,g.summary,g.keywords,g.topics,g.generated_at
+g.generation_input_hash,g.input_truncated,g.summary,g.keywords,g.topics,g.generated_at,g.generation_method
 FROM velis.ai_current_selections s JOIN velis.ai_generation_results g ON g.id=s.generation_result_id
 JOIN velis.articles a ON a.id=s.article_id AND a.current_revision_id=s.revision_id
 WHERE s.article_id=$1 AND s.revision_id=$2 AND a.status='published'`, task.ArticleID, task.RevisionID).Scan(
 		&result.ID, &result.ArticleID, &result.RevisionID, &result.Profile.Provider, &result.Profile.Model, &result.Profile.ProfileVersion,
-		&result.Profile.WorkflowVersion, &result.Profile.PromptVersion, &result.InputHash, &result.InputTruncated, &result.Content.Summary, &keywords, &topics, &result.GeneratedAt)
+		&result.Profile.WorkflowVersion, &result.Profile.PromptVersion, &result.InputHash, &result.InputTruncated, &result.Content.Summary, &keywords, &topics, &result.GeneratedAt, &result.Method)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -142,18 +142,21 @@ lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=$4 WHERE id=$
 
 func insertGeneration(ctx context.Context, tx pgx.Tx, result enrichment.GenerationResult) (string, error) {
 	var id string
-	err := tx.QueryRow(ctx, `INSERT INTO velis.ai_generation_results(id,article_id,revision_id,provider,model,profile_version,workflow_version,prompt_version,generation_input_hash,input_truncated,summary,keywords,topics,generated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-ON CONFLICT(article_id,revision_id,provider,model,profile_version,workflow_version,prompt_version,generation_input_hash) DO NOTHING RETURNING id::text`,
-		result.ID, result.ArticleID, result.RevisionID, result.Profile.Provider, result.Profile.Model, result.Profile.ProfileVersion, result.Profile.WorkflowVersion, result.Profile.PromptVersion, result.InputHash, result.InputTruncated, result.Content.Summary, result.Content.Keywords, result.Content.Topics, result.GeneratedAt).Scan(&id)
+	if result.Method == "" {
+		result.Method = "model"
+	}
+	err := tx.QueryRow(ctx, `INSERT INTO velis.ai_generation_results(id,article_id,revision_id,provider,model,profile_version,workflow_version,prompt_version,generation_input_hash,input_truncated,summary,keywords,topics,generated_at,generation_method)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+ON CONFLICT(article_id,revision_id,provider,model,profile_version,workflow_version,prompt_version,generation_input_hash,generation_method) DO NOTHING RETURNING id::text`,
+		result.ID, result.ArticleID, result.RevisionID, result.Profile.Provider, result.Profile.Model, result.Profile.ProfileVersion, result.Profile.WorkflowVersion, result.Profile.PromptVersion, result.InputHash, result.InputTruncated, result.Content.Summary, result.Content.Keywords, result.Content.Topics, result.GeneratedAt, result.Method).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
 	if err != pgx.ErrNoRows {
 		return "", err
 	}
-	err = tx.QueryRow(ctx, `SELECT id::text FROM velis.ai_generation_results WHERE article_id=$1 AND revision_id=$2 AND provider=$3 AND model=$4 AND profile_version=$5 AND workflow_version=$6 AND prompt_version=$7 AND generation_input_hash=$8`,
-		result.ArticleID, result.RevisionID, result.Profile.Provider, result.Profile.Model, result.Profile.ProfileVersion, result.Profile.WorkflowVersion, result.Profile.PromptVersion, result.InputHash).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id::text FROM velis.ai_generation_results WHERE article_id=$1 AND revision_id=$2 AND provider=$3 AND model=$4 AND profile_version=$5 AND workflow_version=$6 AND prompt_version=$7 AND generation_input_hash=$8 AND generation_method=$9`,
+		result.ArticleID, result.RevisionID, result.Profile.Provider, result.Profile.Model, result.Profile.ProfileVersion, result.Profile.WorkflowVersion, result.Profile.PromptVersion, result.InputHash, result.Method).Scan(&id)
 	return id, err
 }
 

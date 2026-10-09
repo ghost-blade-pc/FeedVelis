@@ -91,7 +91,7 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 			ID: 1, Origin: articleDomain.OriginRSS, Title: "文章", CanonicalURL: "https://example.com/a",
 			Source:  articleDomain.SourceSummary{ID: 2, Title: "来源"},
 			Excerpt: "摘要", SourcePublishedAt: &published, DiscoveredAt: published, SortAt: published,
-			Enhancement: &articleDomain.Enhancement{Summary: "<b>AI 摘要</b>", Keywords: []string{"关键词"}, Topics: []string{"主题"}, GeneratedAt: published},
+			Enhancement: &articleDomain.Enhancement{Summary: "<b>原文摘录</b>", Keywords: []string{"关键词"}, Topics: []string{"主题"}, Method: "extractive", GeneratedAt: published},
 		},
 		{
 			ID: 2, Origin: articleDomain.OriginUser, Title: "投稿", Excerpt: "投稿摘要",
@@ -114,13 +114,14 @@ func TestArticleListContractAndInvalidCursor(t *testing.T) {
 				Summary  string   `json:"summary"`
 				Keywords []string `json:"keywords"`
 				Topics   []string `json:"topics"`
+				Method   string   `json:"method"`
 			} `json:"enhancement"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || len(page.Items) != 2 {
 		t.Fatalf("解析失败: %v body=%s", err, response.Body.String())
 	}
-	if page.Items[0].Enhancement == nil || page.Items[0].Enhancement.Summary != "<b>AI 摘要</b>" || page.Items[1].Enhancement != nil {
+	if page.Items[0].Enhancement == nil || page.Items[0].Enhancement.Summary != "<b>原文摘录</b>" || page.Items[0].Enhancement.Method != "extractive" || page.Items[1].Enhancement != nil {
 		t.Fatalf("enhancement 契约错误: %+v", page.Items)
 	}
 	// RSS 条目走 rss 分支：携带 Source 摘要与原文 URL，不暴露站内作者。

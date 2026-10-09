@@ -86,7 +86,7 @@ func toArticleEnhancement(value *articleDomain.Enhancement) *dto.ArticleEnhancem
 	if value == nil {
 		return nil
 	}
-	return &dto.ArticleEnhancement{Summary: value.Summary, Keywords: value.Keywords, Topics: value.Topics, GeneratedAt: value.GeneratedAt.UTC()}
+	return &dto.ArticleEnhancement{Summary: value.Summary, Keywords: value.Keywords, Topics: value.Topics, Method: value.Method, GeneratedAt: value.GeneratedAt.UTC()}
 }
 
 // toArticleOrigin 由来源类型选择判别联合分支；用户来源不携带 Source 或原文 URL。

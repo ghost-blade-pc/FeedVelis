@@ -44,6 +44,7 @@ type GenerationResult struct {
 	ID                    string
 	ArticleID, RevisionID int64
 	Profile               ActiveProfile
+	Method                string
 	InputHash             string
 	InputTruncated        bool
 	Content               GeneratedContent
@@ -212,7 +213,7 @@ func (e *Executor) runGeneration(ctx context.Context, task ClaimedTask) error {
 		return e.finishFailure(ctx, task, ErrorBudgetExceeded, false, "generation Token 审计预算已超出")
 	}
 	result := GenerationResult{ID: uuid.NewString(), ArticleID: task.ArticleID, RevisionID: task.RevisionID, Profile: *task.GenerationProfile,
-		InputHash: prepared.Hash, InputTruncated: prepared.Truncated, Content: response.Content, GeneratedAt: e.now().UTC()}
+		Method: "model", InputHash: prepared.Hash, InputTruncated: prepared.Truncated, Content: response.Content, GeneratedAt: e.now().UTC()}
 	ok, err := e.store.SaveGeneration(ctx, task, result, task.EmbeddingProfile != nil, e.now().UTC())
 	if e.observer != nil && err == nil {
 		if ok {
@@ -289,6 +290,23 @@ func (e *Executor) finishFailure(ctx context.Context, task ClaimedTask, code Err
 		maxAttempts = profile.MaxAttempts
 	}
 	retry := retryable && task.Attempt < maxAttempts
+	if task.Stage == "generation" && code == ErrorInvalidOutput && task.Attempt >= maxAttempts && task.GenerationProfile != nil {
+		if content, ok := BuildExtractiveFallback(task.Revision, e.policy.OutputLimits); ok {
+			prepared := PrepareGenerationInput(task.Revision, e.policy.ChunkChars, e.policy.MaxChunks)
+			result := GenerationResult{ID: uuid.NewString(), ArticleID: task.ArticleID, RevisionID: task.RevisionID,
+				Profile: *task.GenerationProfile, Method: "extractive", InputHash: prepared.Hash,
+				InputTruncated: prepared.Truncated, Content: content, GeneratedAt: e.now().UTC()}
+			ok, err := e.store.SaveGeneration(ctx, task, result, task.EmbeddingProfile != nil, e.now().UTC())
+			if e.observer != nil && err == nil {
+				if ok {
+					e.observer.Finished(task, "fallback", code)
+				} else {
+					e.observer.Finished(task, "stale", "")
+				}
+			}
+			return err
+		}
+	}
 	delay := minBackoff
 	if task.Attempt > 1 {
 		delay = time.Duration(float64(minBackoff) * math.Pow(2, float64(task.Attempt-1)))

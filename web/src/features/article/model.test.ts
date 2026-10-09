@@ -26,6 +26,7 @@ const user: ArticleItem = {
     summary: '<script>alert("x")</script> 是普通摘要文本',
     keywords: ['<b>关键词</b>'],
     topics: ['主题'],
+    method: 'model',
     generated_at: '2026-09-02T00:01:00Z',
   },
   origin: { type: 'user', author: { id: 'u1', nickname: '小唯' } },

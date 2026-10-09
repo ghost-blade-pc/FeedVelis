@@ -41,6 +41,7 @@ type ArticleEnhancement struct {
 	Summary     string    `json:"summary"`
 	Keywords    []string  `json:"keywords"`
 	Topics      []string  `json:"topics"`
+	Method      string    `json:"method"`
 	GeneratedAt time.Time `json:"generated_at"`
 }
 

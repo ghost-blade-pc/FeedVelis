@@ -127,7 +127,7 @@ func (w *workflowRunner) run(ctx context.Context, request enrichment.GenerationR
 	group.SetLimit(request.Concurrency)
 	for index := range request.Chunks {
 		group.Go(func() error {
-			summary, call, err := w.mapChunk(groupCtx, request, index)
+			summary, call, err := w.mapChunk(groupCtx, request, index, false)
 			calls[index] = call
 			if err != nil {
 				failures[index] = err
@@ -163,8 +163,12 @@ func (w *workflowRunner) run(ctx context.Context, request enrichment.GenerationR
 }
 
 // mapChunk 执行单个分块的 Map 调用，并按同一严格边界校验摘要；失败时不保留摘要。
-func (w *workflowRunner) mapChunk(ctx context.Context, request enrichment.GenerationRequest, index int) (string, enrichment.CallRecord, error) {
-	raw, call, err := w.call(ctx, "generation_map", mapPrompt(request, index, request.Chunks[index]))
+func (w *workflowRunner) mapChunk(ctx context.Context, request enrichment.GenerationRequest, index int, corrective bool) (string, enrichment.CallRecord, error) {
+	prompt := mapPrompt(request, index, request.Chunks[index])
+	if corrective {
+		prompt = "上次分块摘要为空或超长。直接给出一句事实摘要，不要分析过程；严格遵守长度限制。\n" + prompt
+	}
+	raw, call, err := w.call(ctx, "generation_map", prompt)
 	if err != nil {
 		return "", call, err
 	}
@@ -187,14 +191,17 @@ func (w *workflowRunner) retryFailedChunks(ctx context.Context, request enrichme
 			continue
 		}
 		code, _ := enrichment.ErrorClassification(failure)
-		if !enrichment.ImmediateRetryable(code) {
+		invalidSummary := code == enrichment.ErrorInvalidOutput &&
+			(enrichment.ErrorReason(failure) == enrichment.ReasonSummaryEmpty || enrichment.ErrorReason(failure) == enrichment.ReasonSummaryTooLong)
+		if !enrichment.ImmediateRetryable(code) && !invalidSummary {
 			continue
 		}
-		if budget <= 0 || ctx.Err() != nil || usageExceeds(calls, request.AuditTokenBudget) {
+		if budget <= 0 || ctx.Err() != nil || request.AuditTokenBudget <= request.MaxOutputTokens ||
+			usageExceeds(calls, request.AuditTokenBudget-request.MaxOutputTokens) {
 			break
 		}
 		budget--
-		summary, call, err := w.mapChunk(ctx, request, index)
+		summary, call, err := w.mapChunk(ctx, request, index, invalidSummary)
 		calls = append(calls, call)
 		if err != nil {
 			failures[index] = err

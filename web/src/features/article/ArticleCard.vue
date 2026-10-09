@@ -17,7 +17,7 @@ const emit = defineEmits<{ feedbackToggle: [id: number, kind: 'favorite' | 'notI
     </p>
     <h2><RouterLink :to="`/articles/${item.id}`">{{ item.title }}</RouterLink></h2>
     <div v-if="item.enhancement" class="ai-enhancement">
-      <span class="ai-badge">AI 生成</span>
+      <span class="ai-badge">{{ item.enhancement.method === 'extractive' ? '原文摘录' : 'AI 生成' }}</span>
       <p class="article-excerpt">{{ articleSummary(item) }}</p>
       <div class="ai-labels" aria-label="AI 关键词与主题">
         <span v-for="keyword in item.enhancement.keywords" :key="`keyword-${keyword}`" class="ai-label keyword">关键词 · {{ keyword }}</span>

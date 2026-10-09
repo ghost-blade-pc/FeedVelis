@@ -36,10 +36,11 @@ func (r *EnrichmentBackfillRepository) Candidates(ctx context.Context, request e
 	}
 	query := fmt.Sprintf(`WITH facts AS (
 SELECT a.id,a.current_revision_id,COALESCE(a.source_published_at,a.published_at) AS effective_published_at,
-($1 IN ('generation','all') AND (($2='missing-only' AND s.generation_result_id IS NULL) OR ($2='outdated-only' AND s.generation_result_id IS NOT NULL AND s.generation_profile_version<>$3))) AS need_generation,
+($1 IN ('generation','all') AND (($2='missing-only' AND s.generation_result_id IS NULL) OR ($2='outdated-only' AND s.generation_result_id IS NOT NULL AND (s.generation_profile_version<>$3 OR g.generation_method='extractive')))) AS need_generation,
 ($1 IN ('embedding','all') AND s.generation_result_id IS NOT NULL AND (($2='missing-only' AND s.embedding_result_id IS NULL) OR ($2='outdated-only' AND s.embedding_result_id IS NOT NULL AND (s.embedding_profile_version<>$4 OR NOT EXISTS(SELECT 1 FROM velis.ai_embedding_results e WHERE e.id=s.embedding_result_id AND e.generation_result_id=s.generation_result_id))))) AS need_embedding
 FROM velis.articles a
 LEFT JOIN velis.ai_current_selections s ON s.article_id=a.id AND s.revision_id=a.current_revision_id
+LEFT JOIN velis.ai_generation_results g ON g.id=s.generation_result_id
 WHERE a.status='published' AND ($5=0 OR a.id<=$5) AND ($6=0 OR a.id=$6)
 ), eligible AS (
 SELECT f.* FROM facts f WHERE (f.need_generation OR f.need_embedding) AND NOT EXISTS(
@@ -83,11 +84,13 @@ func (r *EnrichmentBackfillRepository) AdvanceCandidate(ctx context.Context, art
 	defer func() { _ = tx.Rollback(ctx) }()
 	var revisionID int64
 	var generationID, embeddingID *string
-	var generationProfile, embeddingProfile *string
+	var generationProfile, embeddingProfile, generationMethod *string
 	var embeddingMatchesGeneration bool
-	err = tx.QueryRow(ctx, `SELECT a.current_revision_id,s.generation_result_id::text,s.embedding_result_id::text,s.generation_profile_version,s.embedding_profile_version,
+	err = tx.QueryRow(ctx, `SELECT a.current_revision_id,s.generation_result_id::text,s.embedding_result_id::text,s.generation_profile_version,s.embedding_profile_version,g.generation_method,
 COALESCE(EXISTS(SELECT 1 FROM velis.ai_embedding_results e WHERE e.id=s.embedding_result_id AND e.generation_result_id=s.generation_result_id),false)
-FROM velis.articles a LEFT JOIN velis.ai_current_selections s ON s.article_id=a.id AND s.revision_id=a.current_revision_id WHERE a.id=$1 AND a.status='published' FOR UPDATE OF a`, articleID).Scan(&revisionID, &generationID, &embeddingID, &generationProfile, &embeddingProfile, &embeddingMatchesGeneration)
+FROM velis.articles a LEFT JOIN velis.ai_current_selections s ON s.article_id=a.id AND s.revision_id=a.current_revision_id
+LEFT JOIN velis.ai_generation_results g ON g.id=s.generation_result_id
+WHERE a.id=$1 AND a.status='published' FOR UPDATE OF a`, articleID).Scan(&revisionID, &generationID, &embeddingID, &generationProfile, &embeddingProfile, &generationMethod, &embeddingMatchesGeneration)
 	if err == pgx.ErrNoRows {
 		return false, tx.Commit(ctx)
 	}
@@ -100,7 +103,7 @@ FROM velis.articles a LEFT JOIN velis.ai_current_selections s ON s.article_id=a.
 		needGeneration = needGeneration && generationID == nil
 		needEmbedding = needEmbedding && generationID != nil && embeddingID == nil
 	} else {
-		needGeneration = needGeneration && generationID != nil && (generationProfile == nil || *generationProfile != request.GenerationProfile)
+		needGeneration = needGeneration && generationID != nil && (generationProfile == nil || *generationProfile != request.GenerationProfile || (generationMethod != nil && *generationMethod == "extractive"))
 		needEmbedding = needEmbedding && generationID != nil && embeddingID != nil && (embeddingProfile == nil || *embeddingProfile != request.EmbeddingProfile || !embeddingMatchesGeneration)
 	}
 	if !needGeneration && !needEmbedding {

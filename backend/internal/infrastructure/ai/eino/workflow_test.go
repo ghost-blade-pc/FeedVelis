@@ -63,7 +63,7 @@ func (m *deterministicChat) Stream(context.Context, []*schema.Message, ...model.
 
 func request(chunks []string) enrichment.GenerationRequest {
 	return enrichment.GenerationRequest{Revision: enrichment.RevisionInput{Title: "标题", Language: "zh-CN"}, InputHash: strings.Repeat("a", 64), Chunks: chunks,
-		PromptVersion: "p-v1", WorkflowVersion: "w-v1", MaxOutputTokens: 1200, AuditTokenBudget: 1000, MaxCalls: 9, Concurrency: 2, MapSummaryChars: 20, TotalTimeout: time.Second,
+		PromptVersion: "p-v1", WorkflowVersion: "w-v1", MaxOutputTokens: 1200, AuditTokenBudget: 10000, MaxCalls: 9, Concurrency: 2, MapSummaryChars: 20, TotalTimeout: time.Second,
 		Limits: enrichment.OutputLimits{SummaryChars: 1000, KeywordCount: 12, TopicCount: 5, LabelChars: 64}}
 }
 
@@ -128,7 +128,7 @@ func TestWorkflowRejectsOversizedMapSummaryBeforeReduce(t *testing.T) {
 	}
 	response, err := workflow.Generate(context.Background(), request([]string{"一", "二"}))
 	code, _ := enrichment.ErrorClassification(err)
-	if code != enrichment.ErrorInvalidOutput || len(response.Calls) != 2 || chat.calls != 2 {
+	if code != enrichment.ErrorInvalidOutput || len(response.Calls) != 4 || chat.calls != 4 {
 		t.Fatalf("超长 Map 摘要未在 reduce 前拒绝: code=%s records=%d calls=%d", code, len(response.Calls), chat.calls)
 	}
 	for _, call := range response.Calls {
@@ -169,6 +169,9 @@ func (m *flakyMapChat) Generate(_ context.Context, input []*schema.Message, _ ..
 	}
 	m.mu.Unlock()
 	if failed {
+		if m.err == nil {
+			return schema.AssistantMessage("", nil), nil
+		}
 		return nil, m.err
 	}
 	message := schema.AssistantMessage("分块摘要", nil)
@@ -205,6 +208,41 @@ func TestWorkflowRetriesOnlyTransientFailedChunks(t *testing.T) {
 	}
 	if retry := response.Calls[3]; retry.Status != "succeeded" || retry.InputHash != response.Calls[1].InputHash {
 		t.Fatalf("重试未复用同一分块输入: retry=%+v failed=%+v", retry, response.Calls[1])
+	}
+}
+
+func TestWorkflowRepairsOnlyInvalidMapChunkWithinBudget(t *testing.T) {
+	chat := &flakyMapChat{marker: "二", failures: 1}
+	workflow, err := NewWorkflow(context.Background(), chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := workflow.Generate(context.Background(), request([]string{"一", "二", "三"}))
+	if err != nil || response.Content.Summary != "确定性摘要" || chat.calls()["二"] != 2 || chat.calls()["一"] != 1 || chat.calls()["三"] != 1 {
+		t.Fatalf("未只修复非法分块: response=%+v calls=%v err=%v", response, chat.calls(), err)
+	}
+	if len(response.Calls) != 5 || response.Calls[1].ErrorReason != enrichment.ReasonSummaryEmpty || response.Calls[3].Status != "succeeded" || response.Calls[1].InputHash == response.Calls[3].InputHash {
+		t.Fatalf("修复调用应使用独立 Prompt 并保留失败原因: %+v", response.Calls)
+	}
+
+	tight := request([]string{"一", "二", "三"})
+	tight.MaxCalls = 4
+	chat = &flakyMapChat{marker: "二", failures: 1}
+	workflow, _ = NewWorkflow(context.Background(), chat)
+	response, err = workflow.Generate(context.Background(), tight)
+	code, _ := enrichment.ErrorClassification(err)
+	if code != enrichment.ErrorInvalidOutput || len(response.Calls) != 3 || chat.calls()["二"] != 1 {
+		t.Fatalf("调用预算不足仍修复: code=%s records=%d calls=%v", code, len(response.Calls), chat.calls())
+	}
+
+	noTokenRoom := request([]string{"一", "二", "三"})
+	noTokenRoom.AuditTokenBudget = noTokenRoom.MaxOutputTokens
+	chat = &flakyMapChat{marker: "二", failures: 1}
+	workflow, _ = NewWorkflow(context.Background(), chat)
+	response, err = workflow.Generate(context.Background(), noTokenRoom)
+	code, _ = enrichment.ErrorClassification(err)
+	if code != enrichment.ErrorInvalidOutput || len(response.Calls) != 3 || chat.calls()["二"] != 1 {
+		t.Fatalf("Token 余量不足仍修复: code=%s records=%d calls=%v", code, len(response.Calls), chat.calls())
 	}
 }
 

@@ -27,6 +27,7 @@ export interface ArticleEnhancement {
   summary: string
   keywords: string[]
   topics: string[]
+  method: 'model' | 'extractive'
   generated_at: string
 }
 

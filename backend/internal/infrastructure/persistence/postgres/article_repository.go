@@ -317,7 +317,7 @@ func nextIdentity(ctx context.Context, tx pgx.Tx, table string) (int64, error) {
 func (r *ArticleRepository) GetPublished(ctx context.Context, articleID int64) (articleDomain.Detail, error) {
 	row := r.pool.QueryRow(ctx, `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,
 v.source_author_name,v.excerpt,a.source_published_at,a.discovered_at,a.published_at,
-u.id::text,u.nickname,g.summary,g.keywords,g.topics,g.generated_at,v.sanitized_html
+u.id::text,u.nickname,g.summary,g.keywords,g.topics,g.generated_at,g.generation_method,v.sanitized_html
 FROM velis.articles a JOIN velis.article_versions v ON v.id=a.current_revision_id
 	LEFT JOIN velis.sources s ON s.id=a.source_id LEFT JOIN velis.users u ON u.id=a.author_user_id
 	LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
@@ -333,7 +333,7 @@ WHERE a.id=$1 AND a.status='published'`, articleID)
 func (r *ArticleRepository) ListPublished(ctx context.Context, cursor *articleDomain.Cursor, limit int) ([]articleDomain.ListItem, error) {
 	query := `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
 v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
-g.summary,g.keywords,g.topics,g.generated_at FROM velis.articles a
+g.summary,g.keywords,g.topics,g.generated_at,g.generation_method FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
 LEFT JOIN velis.users u ON u.id=a.author_user_id
 LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
@@ -370,7 +370,7 @@ func (r *ArticleRepository) ListPublishedByIDs(ctx context.Context, articleIDs [
 	}
 	rows, err := querier(ctx, r.pool).Query(ctx, `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
 v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
-g.summary,g.keywords,g.topics,g.generated_at FROM velis.articles a
+g.summary,g.keywords,g.topics,g.generated_at,g.generation_method FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
 LEFT JOIN velis.users u ON u.id=a.author_user_id
 LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
@@ -398,14 +398,14 @@ func scanPublished(row rowScanner, withHTML bool) (articleDomain.ListItem, *stri
 	var canonicalURL *string
 	var sourceID *int64
 	var sourceTitle, sourceSiteURL, sourceAuthorName, authorID, authorNickname *string
-	var enhancementSummary *string
+	var enhancementSummary, enhancementMethod *string
 	var enhancementKeywords, enhancementTopics []string
 	var enhancementGeneratedAt *time.Time
 	var html *string
 	targets := []any{&item.ID, &item.Origin, &item.Title, &canonicalURL, &sourceID, &sourceTitle,
 		&sourceSiteURL, &sourceAuthorName, &item.Excerpt, &item.SourcePublishedAt,
 		&item.DiscoveredAt, &item.SortAt, &authorID, &authorNickname,
-		&enhancementSummary, &enhancementKeywords, &enhancementTopics, &enhancementGeneratedAt}
+		&enhancementSummary, &enhancementKeywords, &enhancementTopics, &enhancementGeneratedAt, &enhancementMethod}
 	if withHTML {
 		targets = append(targets, &html)
 	}
@@ -420,7 +420,7 @@ func scanPublished(row rowScanner, withHTML bool) (articleDomain.ListItem, *stri
 		item.Author = &articleDomain.AuthorSummary{ID: *authorID, Nickname: *authorNickname}
 	}
 	if enhancementSummary != nil && enhancementGeneratedAt != nil {
-		item.Enhancement = &articleDomain.Enhancement{Summary: *enhancementSummary, Keywords: enhancementKeywords, Topics: enhancementTopics, GeneratedAt: enhancementGeneratedAt.UTC()}
+		item.Enhancement = &articleDomain.Enhancement{Summary: *enhancementSummary, Keywords: enhancementKeywords, Topics: enhancementTopics, Method: *enhancementMethod, GeneratedAt: enhancementGeneratedAt.UTC()}
 	}
 	return item, html, nil
 }

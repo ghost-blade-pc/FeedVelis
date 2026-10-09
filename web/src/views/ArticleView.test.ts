@@ -54,6 +54,17 @@ describe('文章详情反馈', () => {
     wrapper.unmount()
   })
 
+  it('摘录降级显示真实来源，不标记为 AI 生成', async () => {
+    vi.mocked(getArticle).mockResolvedValue({ ...article, enhancement: {
+      summary: '来自原文的摘录', keywords: ['正文标题'], topics: ['正文标题'], method: 'extractive', generated_at: '2026-09-28T00:01:00Z',
+    } })
+    const wrapper = await mountView()
+    expect(wrapper.find('.ai-badge').text()).toBe('原文摘录')
+    expect(wrapper.text()).toContain('来自原文的摘录')
+    expect(wrapper.text()).not.toContain('AI 生成')
+    wrapper.unmount()
+  })
+
   it('阅读上报失败不阻塞正文，刷新后重新读取状态', async () => {
     login()
     vi.mocked(recordArticleRead).mockRejectedValue(new Error('网络失败'))
