@@ -17,17 +17,17 @@ Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发
 | 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
 | 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
 | 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
-| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、补录 CLI、API/Web 降级与指标 | 默认关闭；非法输出耗尽后可标记原文摘录；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索与推荐 |
+| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、非法分块有限纠正、原文摘录降级、补录 CLI、API/Web 来源展示与指标 | 默认关闭；仅 `invalid_output` 耗尽后摘录，其他错误保持真实失败；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索与推荐 |
 | 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；索引是可丢弃派生状态，不是事实源 |
 | 推荐 Feed | 匿名 latest 冷启动、登录后关键词/主题与可选语义召回、反馈排序、文章级负反馈排除、来源打散、加密冻结游标、latest 补位及搜索故障回退 | 无 Redis 缓存；每路最多 100 候选、冻结最多 200 条；每页复核公开状态与负反馈 |
-| 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；有界画像向推荐提供当前修订关键词/主题/来源证据 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；latest 与搜索排序不使用画像 |
+| 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；有界画像已向推荐提供当前修订关键词/主题/来源证据 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；latest 与搜索排序不使用画像 |
 | Web | latest/recommend 切换、推荐原因与降级提示、详情、搜索与加载更多、文章反馈操作、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无 Agent 界面 |
 
 Redis 业务缓存、对话 Agent 与定时 Agent 均未实现。文章反馈事实仅依赖 PostgreSQL；阅读按 UTC 固定 30 分钟窗口去重，画像按 UTC 日最多计一次、单文章最多计三次，过期事实即使清理 Worker 暂停也不会参与画像。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
 
 抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
 
-核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。OpenSearch 未配置或故障时搜索返回明确的 `503 SEARCH_UNAVAILABLE`，推荐按 latest 降级；这些故障不会影响 latest、详情或 readiness。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；模型未配置或故障时 `enhancement` 为 null，Web 回退到原始 excerpt。
+核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。OpenSearch 未配置或故障时搜索返回明确的 `503 SEARCH_UNAVAILABLE`，有正向画像的推荐按 latest 降级；匿名或无正向画像仍按冷启动读取，不需要搜索。这些故障不会影响 latest、详情或 readiness。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；当前修订尚无成功增强结果时 `enhancement` 为 null，Web 回退到原始 excerpt。同一修订已选中的成功结果会保留至新结果成功切换；非法输出耗尽后的摘录标记为 `extractive`，不展示为模型摘要。
 
 ## 目录与技术现状
 
@@ -174,8 +174,13 @@ Compose 部署中执行：`docker compose exec postgres psql -U velis -d velis -
 | `GET /readyz` | 当前依赖就绪状态 |
 | `GET /api/v1/ping` | 基础连通 |
 | `GET /api/v1/articles?limit=20&cursor=...` | 匿名已发布文章列表；limit 为 1–50 |
+| `GET /api/v1/articles/recommend?limit=20&cursor=...` | 匿名冷启动或登录后个性化推荐；返回模式、降级状态和最小推荐原因 |
 | `GET /api/v1/search/articles?q=...&limit=20&cursor=...` | 匿名 BM25/可选混合搜索；支持精确筛选与版本化游标分页 |
 | `GET /api/v1/articles/{article_id}` | 匿名已发布文章详情，含 content_html |
+| `GET /api/v1/me/article-feedback?article_ids=...` | 登录用户批量读取最多 50 篇公开文章的本人反馈状态 |
+| `POST /api/v1/me/articles/{article_id}/reads` | 登录用户上报详情阅读，按 UTC 30 分钟窗口去重 |
+| `PUT/DELETE /api/v1/me/articles/{article_id}/favorite` | 设置或取消本人收藏 |
+| `PUT/DELETE /api/v1/me/articles/{article_id}/not-interested` | 设置或撤销本人文章级“不感兴趣” |
 | `GET/POST /api/v1/me/articles` | 本人文章列表；创建草稿或直接发布 |
 | `GET/PATCH/DELETE /api/v1/me/articles/{article_id}` | 本人私有详情、编辑与软删除 |
 | `POST /api/v1/me/articles/{article_id}/publish\|offline` | 作者发布/重新发布与下架 |
@@ -384,6 +389,10 @@ $ADMIN search rebuild cleanup -index velis-articles-v1-20260925t120000z-aaaaaa -
 
 `000009_add_search_projection` 创建搜索投影槽位、按物理索引的投递、索引服务状态与重建记录，并建立一个全局 change sequence。down 只在投影槽位、投递与重建记录全为空、且回滚窗口已关闭时允许执行，避免静默丢失诊断状态。应用回滚时先停投影 Worker；旧应用忽略这些表，不要用 force 绕过保护。
 
+`000010_add_article_feedback` 创建阅读窗口、收藏和文章级负反馈表。只要任一表非空，down 就会拒绝删除反馈事实；应先备份并明确恢复方案，不得通过清表绕过保护。recommend 复用这些事实，不新增推荐结果表。
+
+`000011_add_generation_method` 为生成结果增加 `model|extractive` 来源，旧行默认标记为 `model`，唯一身份加入来源以允许相同输入的模型与摘录结果共存。升级已有环境时先备份生成结果与当前选择、应用迁移，再更新 API、Worker 和 Web。存在 `extractive` 行时 down 会拒绝删除来源字段；历史失败任务不会随升级自动重排，须按前文补录命令先 dry-run 再显式推进。
+
 down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、无资产”的旧模型可表达状态时才允许回退。只要存在用户投稿、资产或第二修订，down 会在事务内明确失败。不要使用 force 或删除数据绕过保护；此时应保持数据库前滚并修复/回滚应用。
 
 ## 验证与开发现状
@@ -408,6 +417,7 @@ VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 - 已有 Domain/Application、抓取解析清洗、Hertz、CLI、配置、架构依赖与前端测试；账户领域、认证用例、HTTP 中间件、安全适配器与前端会话模块都有单测。
 - PostgreSQL 集成测试通过 `VELIS_TEST_DATABASE_URL` 启用，要求已迁移的专用 `_test` 数据库（测试基座会自动应用迁移）；测试会清空 Source/Article 与账户相关表。未设置该变量时跳过，普通 CI 通过不能代替数据库集成验证。
 - OpenSearch 集成测试通过 `VELIS_TEST_OPENSEARCH_URL` 启用，覆盖严格模板、Bulk/别名、BM25 字段权重、精确筛选、稳定排序和 PIT 快照；`make integration-search` 同时要求专用 PostgreSQL，覆盖候选批量复核、下架过滤和跨适配器链路。两个 Make 目标缺少对应变量时都会直接失败，不把 skip 视为通过。
+- recommend 的 PostgreSQL/OpenSearch 链路与生成来源的 PostgreSQL 测试命令见 [集成测试说明](backend/test/integration/README.md)。`make integration-search` 的筛选不包含推荐用例，需显式运行 `TestArticleRecommendationPostgresOpenSearch`；相关依赖未配置时的 skip 不算验收通过。
 - 可靠异步真实依赖测试还要求 `VELIS_TEST_RABBITMQ_URL`；`make integration-async` 在任一变量缺失时直接失败。Broker 重启演练会真实重启容器，默认跳过，需按 [可靠异步验证说明](backend/test/integration/reliable_async.md) 单独执行。
 - 推荐的新部署 profile 示例为 generation `generation-v2`（Workflow `hierarchical-v2`、Prompt `summary-v2`）与 Embedding `embedding-v2`（输入 `retrieval-document-v1`、固定维数模型示例为 1024 维）。profile 版本变化不会自动全量重算，应通过精确、有限批次或经确认的全量 backfill 显式推进。
 - 真实 MinIO 测试通过 `VELIS_TEST_MINIO_ENDPOINT`、`VELIS_TEST_MINIO_UPLOAD_ENDPOINT`、`VELIS_TEST_MINIO_ACCESS_KEY`、`VELIS_TEST_MINIO_SECRET_KEY`、`VELIS_TEST_MINIO_BUCKET` 启用；Compose CORS 测试还要求 `VELIS_TEST_MINIO_WEB_ORIGIN`。内部与公共测试端点应使用不同 authority（例如 `127.0.0.1:9000` 与 `http://localhost:9000`）；未设置内部端点时测试会明确报告跳过，不能计作通过。
@@ -418,6 +428,8 @@ VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 - 浏览器 Playwright E2E、压测和完整监控告警尚未完成；可靠异步故障演练范围与证据见单独说明，不把它描述为生产级灾备验证。
 
 文档中的“已实现”依据当前代码，不代表每次文档更新都重新执行了运行验证。I1 及更早的详细 change 验证保存在只读的 `code_copilot/changes/`；后续规范与 change 统一使用 `openspec/`。
+
+推荐 Feed 与 AI 摘要可靠性 change 已于 2026-10-09 同步长期规格并归档：[推荐验收记录](openspec/changes/archive/2026-10-09-add-recommend-article-feed/tasks.md)、[摘要可靠性验收记录](openspec/changes/archive/2026-10-09-improve-ai-summary-reliability/verification.md)。记录中的 `make check` 与真实依赖测试均通过；本次归档未部署应用、执行数据库迁移或重排历史任务。Redis 业务缓存仍未实现，后续实施顺序见 Roadmap。
 
 ## 文档分工
 

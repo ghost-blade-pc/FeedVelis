@@ -32,3 +32,21 @@ VELIS_DATABASE_URL="$VELIS_TEST_DATABASE_URL" go run ./cmd/velis-migrate -path m
 目前不是自动启动 Testcontainers 的测试套件。未来依赖集成范围见 [Velis Roadmap](<../../../Velis Roadmap.md>)，不以目录说明代替已实现测试。
 
 可靠异步测试还要求 `VELIS_TEST_RABBITMQ_URL`，并可从仓库根目录执行 `make integration-async`。该入口会在缺少 PostgreSQL 或 RabbitMQ 测试 URL 时以非零状态明确失败，避免把 skip 误报为通过。真实 Broker 重启演练及故障矩阵见 [reliable_async.md](reliable_async.md)；该项默认 skip，必须显式执行并重启本地测试容器。
+
+## 推荐 Feed 与 AI 生成来源
+
+`article_recommendation_e2e_test.go` 要求同时设置 `VELIS_TEST_DATABASE_URL` 和 `VELIS_TEST_OPENSEARCH_URL`，覆盖不同用户偏好、BM25/KNN 空候选、下架与新增负反馈、冻结分页及搜索连接故障转 latest。`make integration-search` 的用例筛选不包含推荐测试；在 `backend/` 中显式运行：
+
+```bash
+GOCACHE=/tmp/feedvelis-go-cache go test -count=1 -v \
+  -run '^TestArticleRecommendationPostgresOpenSearch$' ./test/integration
+```
+
+`ai_generation_method_test.go` 只要求专用 PostgreSQL，覆盖同输入模型/摘录结果共存、公开读取来源、同 profile 摘录重排、dry-run 不创建任务及保留摘录数据的降级迁移保护：
+
+```bash
+GOCACHE=/tmp/feedvelis-go-cache go test -count=1 -v \
+  -run '^TestGenerationMethod' ./test/integration
+```
+
+上述测试沿用共享基座，会清理测试数据和相关反馈、增强及投影事实。不得指向开发业务库或生产库，也不要让多个测试进程共用同一测试库。未配置依赖时的 skip 不能作为验收通过。
