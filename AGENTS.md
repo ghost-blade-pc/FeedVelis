@@ -5,6 +5,7 @@
 - `backend/cmd/` 包含 API、Worker、迁移和管理 CLI；`backend/internal/` 按 Domain、Application、Infrastructure、Interfaces 四层组织，`bootstrap/` 负责装配。
 - `backend/migrations/` 保存版本化 PostgreSQL 迁移，`backend/api/openapi/velis.yaml` 是 HTTP 契约，`backend/test/` 放真实依赖与端到端测试。
 - `web/src/` 是 Vue 3 + TypeScript 应用，测试与实现就近放置；`compose.yaml` 和 `deploy/` 提供本地基础设施。
+- `docs/` 保存配置参考、认证与运维文档；README 保持精简只留要点和链接，功能细节写进对应文档。
 - `openspec/` 是当前规划与长期规格入口；`code_copilot/` 仅作只读历史证据。实现前查阅 `README.md` 与 `Velis Roadmap.md`。
 
 ## 构建、测试与本地开发

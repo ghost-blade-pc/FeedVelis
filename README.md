@@ -1,35 +1,29 @@
 # Velis Feed
 
-Velis 是一个可自托管的图文 Feed 项目，当前已实现 RSS 自动发布与用户 Markdown 图文投稿的统一内容池、稳定 latest、匿名/登录推荐 Feed、可选 BM25/KNN 混合文章搜索、站内阅读、私有图片资产、AI 内容增强、管理员 Source 管理，以及账户与会话闭环。后端采用 Go + CloudWeGo Hertz/Eino + PostgreSQL，前端采用 Vue 3 + TypeScript。
+Velis 是一个可自托管的图文 Feed 项目。RSS 自动发布与用户 Markdown 投稿进入统一内容池，对外提供稳定 latest、匿名/登录推荐 Feed、BM25 与可选混合搜索、站内阅读，并带有私有图片资产、AI 内容增强、管理员 Source 管理和账户会话闭环。后端 Go + CloudWeGo Hertz/Eino + PostgreSQL，前端 Vue 3 + TypeScript。
 
-本文只描述当前功能、开发现状和运行方式。项目目标、技术决策、开发顺序与验收标准统一见 [Velis Roadmap](<Velis Roadmap.md>)。目录占位、依赖声明和 Compose 服务不代表业务能力已实现。
+当前功能与限制以本文、[OpenAPI](backend/api/openapi/velis.yaml)、[迁移](backend/migrations/)和 [openspec/specs/](openspec/specs/) 为准；项目目标、技术决策与实施顺序见 [Velis Roadmap](<Velis Roadmap.md>)。规划中的能力不代表已经实现。
 
-项目以共享 RSS/用户投稿内容池、AI 内容增强、推荐 Feed 和两层 Agent（对话内即时推荐、后续定时任务写入站内收件箱）为业务主线，同时用于实践可靠异步、搜索缓存、微服务演进、Docker/Kubernetes、可观测性、压测与 Go GC 优化。规划中的技术能力不代表当前已经实现。
+## 功能
 
-## 当前功能与边界
+- 内容供给：RSS 2.0、Atom、JSON Feed 抓取与用户 Markdown 投稿共享公开文章模型；来源身份互斥、不可变修订、作者与管理员下架。
+- 阅读与发现：匿名 latest 稳定游标分页、站内详情、BM25 搜索（可选 KNN/RRF 混合与精确筛选）、登录后推荐 Feed（返回推荐原因与降级标记）。
+- 内容增强：Eino 有界 Workflow 生成摘要、关键词、主题与向量，模型失败不阻塞发布与阅读。
+- 图片资产：MinIO 私有预签名直传，匿名读取经 API 核对当前公开引用后流式返回；图片不剥离 EXIF，上传前自行移除隐私信息。
+- 账户与反馈：用户名密码注册登录、会话刷新轮换、RBAC、本人资料；详情阅读、收藏与文章级“不感兴趣”。
+- 可靠异步：Outbox、RabbitMQ Relay、消费幂等与版本化任务槽位，AI 增强和搜索投影由 Worker 异步推进。
+- 管理：管理员在 Web 或 CLI 管理 Source（新增、周期、暂停/恢复、手动抓取、历史），并下架或恢复公开文章。
 
-| 能力 | 已实现 | 当前边界 |
-| --- | --- | --- |
-| 工程 | API、Worker、迁移、管理 CLI 四个入口；四层目录、依赖边界测试、配置、日志、健康检查与 CI | 仍处于早期业务建设阶段 |
-| 来源管理 | CLI 及管理员 HTTP/Web 新增、列出、改周期、暂停、恢复、同步抓取与抓取历史；5 分钟至 24 小时来源级周期 | 系统级来源；Feed URL 创建后不可修改，无删除、认证 Feed、自定义请求头或用户订阅 |
-| 抓取 | RSS 2.0、Atom、JSON Feed；ETag/Last-Modified、304、租约/fencing、失败退避、运行历史、超时与 5 MiB 限制 | 抓取调度仍由 Worker 直接编排；公开文章事实会原子写入 Outbox；默认忽略通用环境代理 |
-| 文章存储 | RSS/用户互斥来源身份、不可变修订、固定站内发布时间、乐观锁、作者与管理员下架优先级 | 用户发布后直接公开，无审核队列、协作编辑或版本历史 UI |
-| 阅读 | 匿名联合 latest、`(effective_published_at,id)` 稳定游标、站内详情；RSS 展示 Source/原文，投稿只展示作者稳定 ID/昵称 | RSS 有原站时间时优先排序，缺失时回退固定站内发布时间；新文章插入不提供跨请求数据库快照 |
-| 图片资产 | 私有 MinIO 预签名直传、服务端确认、版本引用、额度/格式限制、匿名授权流式读取和孤儿清理 | JPEG/PNG/WebP；不转码、不生成缩略图、不剥离 EXIF；API 承担公开图片下行流量 |
-| 账户与鉴权 | 用户名密码注册登录、会话刷新轮换、RBAC、本人资料、登录限流、管理审计与维护 CLI | 默认关闭（`auth.enabled=false`）；无改密/找回/注销或设备会话列表 |
-| AI 内容增强 | Eino 有界分层 Workflow、独立 generation/Embedding profile、租约与 fencing、版本化摘要/关键词/主题/向量、非法分块有限纠正、原文摘录降级、补录 CLI、API/Web 来源展示与指标 | 默认关闭；仅 `invalid_output` 耗尽后摘录，其他错误保持真实失败；模型失败不阻塞发布与阅读；向量可用于默认关闭的混合搜索与推荐 |
-| 搜索投影与查询 | 每文章唯一收敛槽位、租约与 fencing 的投影 Worker、版本化严格索引模板与读写别名、逐项分类的 Bulk、可恢复的在线重建、切换/回滚/清理 CLI、匿名 BM25/可选 KNN+RRF 搜索、精确筛选、PIT/加密冻结游标与 PostgreSQL 身份复核 | 默认未配置；混合默认关闭、每路最多 100 候选；索引是可丢弃派生状态，不是事实源 |
-| 推荐 Feed | 匿名 latest 冷启动、登录后关键词/主题与可选语义召回、反馈排序、文章级负反馈排除、来源打散、加密冻结游标、latest 补位及搜索故障回退 | 可选用户隔离的首查排序计划缓存（绝对 30 秒）；当前卡片使用共享缓存；每路最多 100 候选、冻结最多 200 条；每页复核公开状态与负反馈 |
-| 文章反馈 | 登录用户可上报详情阅读、收藏及标记“不感兴趣”；本人状态批量读取；有界画像已向推荐提供当前修订关键词/主题/来源证据 | 认证关闭时无反馈路由；阅读保留 90 天、负反馈有效 180 天；latest 与搜索排序不使用画像 |
-| Web | latest/recommend 切换、推荐原因与降级提示、详情、搜索与加载更多、文章反馈操作、账户闭环、本人文章列表与 Markdown 编辑/预览/图片上传、管理员 Source 页面 | 手动保存，不自动保存/合并；无 Agent 界面 |
+认证、AI、搜索投影与 Redis 读取缓存默认关闭或未配置；核心发布与阅读链路只依赖 PostgreSQL，RSS、纯文本投稿、latest 和详情即可工作。用户级 RSS 订阅、投稿审核、following/hot Feed、社交功能与对话/定时 Agent 尚未实现。
 
-可选 Redis 已接入 latest ID 候选页、搜索及推荐的当前卡片装配，并在文章写入提交后失效首页；用户推荐首查计划按真实身份隔离并有界缓存；对话 Agent 与定时 Agent 均未实现。文章反馈事实仅依赖 PostgreSQL；阅读按 UTC 固定 30 分钟窗口去重，画像按 UTC 日最多计一次、单文章最多计三次，过期事实即使清理 Worker 暂停也不会参与画像。当前搜索支持 BM25、可选查询 Embedding/KNN/RRF 及关键词/主题/来源精确筛选。用户级 RSS 订阅、投稿审核、following/hot Feed 和社交功能不在当前范围；导航中的占位页不代表对应能力已实现。
+## 技术栈
 
-抓取器默认忽略 `HTTP_PROXY`、`HTTPS_PROXY` 与 `ALL_PROXY`，直连时会校验每次 DNS 结果、实际连接、重定向、协议和端口。只有 `VELIS_FEED_PROXY_URL` 会启用专用可信出口代理；此时最终 DNS/IP 安全边界委托给代理，应用无法声称仍能验证最终目标 IP。代理地址可以含凭据，但日志只记录脱敏模式与主机。
+- 后端：Go 1.26.6+，CloudWeGo Hertz、Eino，pgx 显式 SQL，golang-migrate 版本化迁移。
+- 存储与中间件：PostgreSQL（事实源）、OpenSearch（可丢弃的搜索投影）、Redis（可选读取缓存）、RabbitMQ（可靠异步）、MinIO（私有图片资产）。
+- 前端：Vue 3、TypeScript、Vite、Pinia、Vue Router。
+- 部署与观测：Docker Compose（`compose.yaml`、`deploy/`），Prometheus 抓取 API、Worker 与 RabbitMQ 指标。
 
-核心发布与阅读链路不依赖 MQ、Redis、搜索或模型：PostgreSQL 可用时，RSS、纯文本投稿、latest 和详情即可工作。OpenSearch 未配置或故障时搜索返回明确的 `503 SEARCH_UNAVAILABLE`，有正向画像的推荐在需要重新召回时按 latest 降级；已有有效缓存计划可在约 30 秒窗口内继续经当前事实复核；匿名或无正向画像仍按冷启动读取，不需要搜索。这些故障不会影响 latest、详情或 readiness。MQ 故障时事件留在 Outbox，恢复后 Relay 追赶；当前修订尚无成功增强结果时 `enhancement` 为 null，Web 回退到原始 excerpt。同一修订已选中的成功结果会保留至新结果成功切换；非法输出耗尽后的摘录标记为 `extractive`，不展示为模型摘要。
-
-## 目录与技术现状
+## 目录结构
 
 ```text
 backend/cmd/           velis-api、velis-worker、velis-migrate、velis-admin
@@ -38,16 +32,14 @@ backend/migrations/    版本化 PostgreSQL SQL
 backend/api/openapi/   当前 HTTP 契约
 backend/test/          集成测试、fixtures 与其他测试入口
 web/                   Vue 3、TypeScript、Vite、Pinia、Vue Router
-部署入口               compose.yaml、deploy/、各应用 Dockerfile
-openspec/              当前 OpenSpec 规范、change 与归档
-code_copilot/          迁移前 Spec Copilot 历史证据（只读）
+deploy/、compose.yaml   本地与部署入口
+openspec/              长期规格、change 与归档
+code_copilot/          迁移前历史证据（只读）
 ```
 
-后端 module：`github.com/ghost-blade-pc/Velis_Feed/backend`。实际数据访问为 pgx + 显式 SQL，迁移使用 golang-migrate。
+后端 module 为 `github.com/ghost-blade-pc/Velis_Feed/backend`。当前 Compose 仍使用 `pgvector/pgvector:pg17` 并在初始迁移创建 `vector` 扩展，属于遗留配置：Embedding 已以 `real[]` 版本化持久化，迁移清理列入 Roadmap。
 
-当前 Compose 仍使用 `pgvector/pgvector:pg17`，初始迁移创建 `vector` 扩展；AI Embedding 已以 PostgreSQL `real[]` 版本化持久化，但没有向量查询实现。OpenSearch 已用于可重建投影和 BM25 查询，默认关闭的 KNN/RRF 已实现；遗留 pgvector 的迁移清理列入 Roadmap。
-
-## 本地启动
+## 快速开始
 
 ### Docker Compose
 
@@ -59,7 +51,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-已有 `.env` 时直接使用，不重复覆盖。Compose 自动执行迁移后启动 API、Worker 和 Web；全量环境还包含 Redis、RabbitMQ、MinIO。
+已有 `.env` 时直接使用，不重复覆盖。Compose 自动执行迁移后启动 API、Worker 和 Web，全量环境还包含 Redis、RabbitMQ、MinIO。
 
 | 入口 | 地址 |
 | --- | --- |
@@ -71,7 +63,15 @@ docker compose ps
 | Worker 指标（容器网络） | `velis-worker:9091/metrics` |
 | MinIO Console | <http://localhost:9001> |
 
-认证开启后管理员可在 Web 的“Source 管理”完成新增、周期、暂停/恢复、手动抓取和历史查看；本地 CLI 仍保留。未登记来源且没有用户投稿时，文章列表为空。
+未登记来源且没有用户投稿时，文章列表为空。认证开启后可以在 Web 的“Source 管理”维护来源，也可以用 CLI：
+
+```bash
+cd backend
+go run ./cmd/velis-admin -config configs/config.example.yaml source add -url https://example.com/feed.xml
+go run ./cmd/velis-admin -config configs/config.example.yaml source fetch 1
+```
+
+Source 周期、暂停/恢复、AI 内容补录与搜索投影命令见 [docs/operations.md](docs/operations.md)。
 
 ```bash
 docker compose logs velis-api velis-worker
@@ -85,344 +85,26 @@ docker compose down
 需要 Go 1.26.6 或更高兼容补丁版本、Node.js 24，以及 PostgreSQL。以下方式与全量 Compose 应用启动方式二选一，避免端口冲突：
 
 ```bash
-# 仓库根目录
+# 仓库根目录：启动 PostgreSQL 并执行迁移
 docker compose up -d postgres
 make migrate-up
 
-# API 终端
+# 终端 1：API
 cd backend
 go run ./cmd/velis-api -config configs/config.example.yaml
-```
 
-```bash
-# Worker 终端，从仓库根目录开始
-cd backend
+# 终端 2：Worker（沿用 backend/ 目录）
 go run ./cmd/velis-worker -config configs/config.example.yaml
-```
 
-```bash
-# Web 终端，从仓库根目录开始
+# 终端 3：Web（从仓库根目录进入）
 cd web
 npm ci
 npm run dev
 ```
 
-Vite 在 `:5173` 提供页面，将 `/api`、`/livez`、`/readyz` 代理到 `localhost:8080`。RSS、纯文本投稿与阅读主链路只需要 PostgreSQL；图片上传/读取需要 MinIO，未配置时按下表局部降级。无需模型密钥。
+Vite 在 `:5173` 提供页面，将 `/api`、`/livez`、`/readyz` 代理到 `localhost:8080`。RSS、纯文本投稿与阅读主链路只需要 PostgreSQL；图片上传/读取需要 MinIO，未配置时图片相关能力局部降级。无需模型密钥。
 
-### 登记和抓取来源
-
-从仓库根目录进入 `backend/`，将示例 URL 和 ID 替换为实际来源：
-
-```bash
-cd backend
-go run ./cmd/velis-admin -config configs/config.example.yaml source add -url https://example.com/feed.xml
-go run ./cmd/velis-admin -config configs/config.example.yaml source list
-go run ./cmd/velis-admin -config configs/config.example.yaml source fetch 1
-go run ./cmd/velis-admin -config configs/config.example.yaml source pause 1
-go run ./cmd/velis-admin -config configs/config.example.yaml source resume 1
-```
-
-`source fetch 1 --force` 可忽略条件请求头，重新拉取并清洗内容；它仍遵循来源认领规则。正常运行时 Worker 按每个 Source 的周期自动认领。CLI 与管理员 HTTP 复用应用规则。
-
-AI profile 升级不会自动触发全量费用。管理员必须在精确文章、有限批次、全量候选三种范围中恰好选择一种。可先精确重试单篇，或按有效发布时间从新到旧处理有限批次：
-
-```bash
-cd backend
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 324 -dry-run
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 324
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -limit 20 -order newest
-```
-
-AI 停用一段时间后，可先预览没有 AI 内容增强内容的全部文章，再显式确认全量推进：
-
-```bash
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -all -dry-run
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -all -confirm-all
-```
-
-`-mode missing-only` 只为没有 AI 内容增强内容的文章补齐：当前没有生成结果的文章（`stage=all` 时连同 Embedding 一起补齐），以及已有摘要、关键词和主题但缺 Embedding 的文章；已有当前 generation 与 embedding 结果的文章不会被全量命令重算；`-article-id` 与 `-limit` 只改变范围，不绕过这一判断。要推进 profile 落后或来源为 `extractive` 的文章，请改用 `-mode outdated-only`。
-
-模型连续返回非法摘要并耗尽 generation 尝试后，Worker 会保存最多 400 个字符的当前修订原文摘录；API 的 `enhancement.method` 为 `extractive`，Web 显示“原文摘录”。其他错误不会伪装为成功。升级代码和迁移后，可先对历史失败文章 366 做只读预览，再显式重排；摘录以后可用相同 profile 的 `outdated-only` 再试模型：
-
-```bash
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 366 -dry-run
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage all -mode missing-only -article-id 366
-go run ./cmd/velis-admin -config configs/config.example.yaml ai backfill -stage generation -mode outdated-only -article-id 366 -dry-run
-```
-
-`-order oldest|newest` 只适用于 `-limit 1..1000`，默认 `oldest`。`-all` 固定命令开始时的文章 ID 快照并在内部短事务分页，只推进异步任务，不在 CLI 进程内调用模型；非 dry-run 必须带 `-confirm-all`。相同目标的 pending/running/retry_wait 任务会跳过，failed 任务可显式重推。全量执行可能产生大量模型费用，应先 dry-run，并检查 Token 预算、错误指标及 generation/Embedding 配置；`stage=all` 重新生成时会同时更新两个目标 profile。
-
-推进 profile 升级后，用下面的查询核对是否仍有文章停留在旧 profile，把两个版本值换成当前部署的取值：
-
-```sql
-SELECT s.article_id, s.generation_profile_version, s.embedding_profile_version
-FROM velis.ai_current_selections s
-JOIN velis.articles a ON a.id = s.article_id AND a.current_revision_id = s.revision_id
-WHERE a.status = 'published'
-  AND (s.generation_profile_version <> 'generation-v2' OR s.embedding_profile_version <> 'embedding-v2');
-```
-
-Compose 部署中执行：`docker compose exec postgres psql -U velis -d velis -c "<上面的 SQL>"`。有结果说明该文章仍是旧 profile，用 `-mode outdated-only` 精确推进；没有结果表示所有公开文章的增强结果都与当前 profile 一致。
-
-## 当前 API
-
-完整字段与错误信封见 [OpenAPI](backend/api/openapi/velis.yaml)。认证端点在 `auth.enabled=true` 时才会注册。
-
-| 方法与路径 | 用途 |
-| --- | --- |
-| `GET /livez` | 进程存活 |
-| `GET /readyz` | 当前依赖就绪状态 |
-| `GET /api/v1/ping` | 基础连通 |
-| `GET /api/v1/articles?limit=20&cursor=...` | 匿名已发布文章列表；limit 为 1–50 |
-| `GET /api/v1/articles/recommend?limit=20&cursor=...` | 匿名冷启动或登录后个性化推荐；返回模式、降级状态和最小推荐原因 |
-| `GET /api/v1/search/articles?q=...&limit=20&cursor=...` | 匿名 BM25/可选混合搜索；支持精确筛选与版本化游标分页 |
-| `GET /api/v1/articles/{article_id}` | 匿名已发布文章详情，含 content_html |
-| `GET /api/v1/me/article-feedback?article_ids=...` | 登录用户批量读取最多 50 篇公开文章的本人反馈状态 |
-| `POST /api/v1/me/articles/{article_id}/reads` | 登录用户上报详情阅读，按 UTC 30 分钟窗口去重 |
-| `PUT/DELETE /api/v1/me/articles/{article_id}/favorite` | 设置或取消本人收藏 |
-| `PUT/DELETE /api/v1/me/articles/{article_id}/not-interested` | 设置或撤销本人文章级“不感兴趣” |
-| `GET/POST /api/v1/me/articles` | 本人文章列表；创建草稿或直接发布 |
-| `GET/PATCH/DELETE /api/v1/me/articles/{article_id}` | 本人私有详情、编辑与软删除 |
-| `POST /api/v1/me/articles/{article_id}/publish\|offline` | 作者发布/重新发布与下架 |
-| `POST /api/v1/me/articles/preview` | 无状态服务端 Markdown 预览 |
-| `POST /api/v1/me/assets`、`POST .../{asset_id}/confirm` | 创建预签名图片上传并确认实际对象 |
-| `GET/HEAD /api/v1/assets/{asset_id}/content` | 当前公开引用的匿名流式读取或作者预览 |
-| `POST /api/v1/admin/articles/{article_id}/offline\|restore` | 管理员下架与恢复公开文章 |
-| `/api/v1/admin/sources...` | Source 新增、详情、改周期、暂停/恢复、手动抓取与历史 |
-| `POST /api/v1/auth/register` | 注册普通用户；成功 201，不建立会话 |
-| `POST /api/v1/auth/login` | 登录并建立独立会话，返回访问令牌并下发 Cookie |
-| `POST /api/v1/auth/refresh` | 用刷新 Cookie 单次轮换令牌 |
-| `POST /api/v1/auth/logout` | 撤销当前会话并清除 Cookie；已退出仍返回 204 |
-| `GET /api/v1/account/me` | 读取本人账户 |
-| `PATCH /api/v1/account/me` | 修改本人昵称 |
-
-列表返回 `items`、`next_cursor`、`has_more`；latest 只读取 `published`，按 `(effective_published_at,id)` 倒序，其中 RSS 优先使用 `source_published_at`、缺失时回退固定站内 `published_at`，站内投稿使用固定站内 `published_at`。文章来源由 `origin.type=rss|user` 判别。latest 游标为版本 2 且有格式校验，旧排序语义生成的版本 1 游标返回 `INVALID_CURSOR`，调用方应从第一页重新获取；latest 游标尚无 HMAC 签名。默认 BM25 的 v1 搜索游标绑定规范化查询、筛选条件、PIT、排序位置和过期时间，并使用 HMAC-SHA256 防篡改；混合开启首查使用下述认证加密 v2 冻结游标；查询或筛选变化时必须从第一页重新搜索。响应携带 `X-Request-ID`，错误使用统一 `error` 信封（`code`/`message`/`request_id`，无 `details`）。
-
-I2 内容、资产和 Source 写接口要求 `Idempotency-Key`，修改既有资源还要求强 `If-Match: "<lock_version>"`；成功结果默认保留 24 小时。浏览器在同一用户动作的认证刷新或结果不明重试中复用原键，用户明确再次提交才生成新键。保留期结束后不承诺响应重放，但数据库唯一约束和状态机仍保护数据一致性。版本冲突返回 409，Web 保留本地 Markdown，不自动合并或换键覆盖。
-
-## 统一内容与资产边界
-
-- 用户稿支持 `draft`、`published`、`offline`、`deleted`；首次发布固定 `published_at`。作者可编辑、下架、重新发布和软删除本人文章，管理员只能下架/恢复公开文章，不能读取他人草稿或编辑/删除投稿。
-- Markdown 最大 256 KiB；原始 HTML 不生效，外部图片不允许。发布要求标题为 1–200 个 Unicode 字符，并具有可见文本或有效 `asset:<uuid>` 图片。
-- 图片只接受 JPEG、PNG、WebP；单文件不超过 10 MiB、宽高各不超过 8192、像素不超过 4000 万；每篇最多 20 张/50 MiB，每用户默认 1 GiB且最多 20 个待确认资产。
-- I2 保存原始图片字节，**不会剥离 EXIF 或其他元数据**。上传前应自行移除位置、设备等隐私信息。超过 24 小时未确认、超过 7 天未绑定的图片会由 Worker 清理；文章下架不删除图片，软删除会立即撤销读取并进入可重试对象清理。
-
-### 认证与 MinIO 降级矩阵
-
-| 条件 | 匿名 RSS/latest | 用户纯文本投稿 | `/me/*`、`/admin/*` | 图片上传/确认/字节读取 | `/readyz` |
-| --- | --- | --- | --- | --- | --- |
-| `auth.enabled=false` | 可用 | 不提供 | 不注册（404） | 匿名图片读取路由存在；无本人上传路由 | 只以 PostgreSQL 等核心依赖判断 |
-| 认证开启、MinIO 正常 | 可用 | 可用 | 按身份/RBAC 可用 | 可用 | 可用 |
-| 认证开启、MinIO 未配置或故障 | 可用 | 无图片引用时可用 | Source 与文章文本操作可用 | `503 ASSET_UNAVAILABLE` | 不仅因 MinIO 故障失败 |
-
-MinIO Bucket 必须私有；匿名图片只能经 API 实时核对“当前公开修订引用”后流式读取。预签名 URL 仅用于 15 分钟直传，不能作为公开读取契约。对象存储的三个地址概念不可混用：`assets.endpoint`/`VELIS_ASSET_ENDPOINT` 是 API 与 Worker 使用的内部 `host:port`，`assets.upload_endpoint`/`VELIS_ASSET_UPLOAD_ENDPOINT` 是浏览器可达的完整 HTTP(S) origin，`assets.web_origin`/`VELIS_ASSET_WEB_ORIGIN` 是 Bucket CORS 允许发起上传的精确前端来源。本地 Compose 分别使用 `minio:9000`、`http://localhost:9000` 和 `http://localhost:5173`。
-
-混合搜索默认关闭（`search.query.hybrid.enabled=false` / `VELIS_SEARCH_QUERY_HYBRID_ENABLED=false`）。开启前保留 v1 索引，设置 `search.schema_version=2`，通过已有 `search rebuild start` / `search rebuild cutover` 流程在线重建并切换 v2；不要原地修改 v1 mapping。v2 的 `embedding_profile_version` 来自实际 Embedding 结果，不会把同维度旧 profile 标为当前 profile。API 与 Worker 注入相同的 `VELIS_AI_EMBEDDING_PROVIDER/BASE_URL/API_KEY/MODEL/PROFILE_VERSION/DIMENSIONS/REQUEST_DIMENSIONS`；API 只需 Embedding 配置，不依赖 generation。
-
-首查默认每路召回 100 条（可配 1–100），KNN 的 k 与其上限一致，等权 RRF 常数固定为 60；无向量文章仍可文本命中。整个搜索默认 5 秒，Embedding/KNN 各默认 1 秒（可配 100ms–2s，且小于总预算），模型只调用一次、不重试、不写结果表。模型未配置、v1 读索引、无有效向量或语义失败时保留正常 BM25 排序。混合开关开启后包括 BM25 降级都冻结有限候选，最多两路 100 条的去重并集（最多 200 条）；不能遍历全部匹配。游标为 AES-256-GCM 认证加密 v2，使用独立 HKDF 派生键，绝对 TTL 2 分钟；续页零模型/KNN 调用，当前下架或语义身份变化会跳过候选，纯文本项返回当前公开修订。最大 16 KiB 游标需要部署入口支持，访问日志不得记录 URL 查询串。旧 v1 BM25 游标继续原 PIT 计划。
-
-回滚先关闭混合开关，让客户端对失效 v2 游标从第一页重查；需要时用既有 `search rebuild rollback` 切回保留的 v1 索引，继续 BM25。关闭开关恢复原有 BM25 深分页；不删除旧索引、不重算向量，不涉及数据库降级迁移。查询计划或游标键变化也要求重新查询。
-
-搜索采用独立的局部降级边界：OpenSearch 正常且游标键有效时 `/api/v1/search/articles` 可用；端点未配置、production 缺少游标键或 OpenSearch 查询失败时，仅该接口返回带 `Retry-After` 的 `503 SEARCH_UNAVAILABLE`。latest、详情、投稿、抓取及 `/readyz` 不把搜索作为核心依赖；PostgreSQL 复核失败时搜索同样不返回部分结果。
-
-启用对象存储后公共上传端点为必填项，这是一次有意的配置兼容性变更：已有部署升级前必须补充该字段，系统不会回退到内部 DNS 名称，也不会从请求 Host/Origin 推导。生产应使用客户端可解析、可路由且证书有效的 HTTPS 资产入口；反向代理必须原样保留签名时使用的 Host，否则 AWS Signature V4 校验会失败。公共端点不得包含用户信息、查询、片段或路径前缀。
-
-## 账户与认证
-
-认证默认关闭。开启前请先初始化管理员并注入密钥，顺序为：应用迁移 → 部署 `auth.enabled=false` 版本 → CLI 初始化管理员 → 注入 JWT、限流、来源与 Cookie 配置 → 开启认证 → 需要时再开启注册。
-
-```bash
-# 初始化管理员：默认从终端隐藏输入并二次确认；自动化场景用 -password-stdin
-cd backend
-go run ./cmd/velis-admin -config configs/config.example.yaml account init-admin -username root
-printf '%s\n' "$ADMIN_PASSWORD" | go run ./cmd/velis-admin account init-admin -username root -password-stdin
-
-# 角色与状态维护：值相同时幂等成功，不撤销会话也不新增审计
-go run ./cmd/velis-admin account set-role -username alice -role admin
-go run ./cmd/velis-admin account set-status -username alice -status disabled
-```
-
-开启认证至少需要以下环境变量（密钥只通过环境注入，不写入示例与日志）：
-
-| 变量 | 说明 |
-| --- | --- |
-| `VELIS_AUTH_ENABLED` | `true` 时注册认证路由；关闭时保持匿名行为 |
-| `VELIS_AUTH_REGISTRATION_ENABLED` | 是否开放注册入口 |
-| `VELIS_AUTH_JWT_ACTIVE_KID` / `VELIS_AUTH_JWT_ACTIVE_KEY` | 主动签名密钥：Base64，解码后至少 32 字节 |
-| `VELIS_AUTH_THROTTLE_KEY` | 登录失败限流查找键的密钥，同样至少 32 字节 |
-| `VELIS_AUTH_ALLOWED_ORIGIN` | 精确同源来源，例如本地 `http://localhost:5173`、生产 `https://velis.example.com` |
-| `VELIS_AUTH_COOKIE_SECURE` | 生产保持 `true`；只有 `development` 且来源为本机时才能关闭 |
-| `VELIS_AUTH_TRUSTED_PROXY_CIDRS` | 部署在反向代理之后时必须填写反代网段 |
-
-`VELIS_AUTH_TRUSTED_PROXY_CIDRS` 尤其重要：Compose 中 `velis-web` 的 nginx 反代 `/api` 并设置 `X-Forwarded-For`，若不把反代列为可信，IP 维度限流会把所有用户合并成同一个来源，30 次失败即可全局锁死登录。`compose.yaml` 已把 `velis_default` 的子网固定为 `172.30.0.0/24`、把 `velis-web` 固定为 `172.30.0.10`，并把该地址的 `/32` 作为 `velis-api` 的默认值，因此 Compose 部署无需额外设置；生产部署填**反代自身的地址**。
-
-只填反代自己的地址，不要填整个子网：子网还包含网桥网关，而客户端流量从发布端口进入时的源地址正是网关；把网关也列为可信，客户端自带的 `X-Forwarded-For` 就会成为「最右的不可信跳点」被采纳，来源 IP 可被伪造、IP 维度限流可被轮换绕过。同理，`web/nginx.conf` 使用 `$remote_addr` 覆盖而不是 `$proxy_add_x_forwarded_for` 追加——nginx 是本项目部署的入口代理，前面没有其它反向代理。启动日志中的 `trusted_proxy_cidrs` 字段给出实际生效的取值，可用它核对是否配错。
-
-登录会话与浏览器行为：
-
-- 访问令牌有效期 15 分钟且不超过会话剩余期限，只驻留页面内存，不写 `localStorage`、`sessionStorage`、IndexedDB 或 Cookie；重载页面后用刷新 Cookie 恢复登录。
-- 刷新令牌为 `HttpOnly` Cookie，单次轮换；旧令牌再次出现会撤销该会话，因此客户端在结果不明的网络失败后不会自动重放刷新请求。
-- 多标签页用 Web Locks 的 `velis-auth-refresh` 锁串行化刷新，并用 BroadcastChannel 同步令牌与退出事件；访问令牌与刷新令牌都不落持久存储。浏览器不支持 Web Locks 时**不做跨标签协调**，各标签各自刷新，由服务端的单次轮换与重放撤销兜底——该跨标签协调能力不在 I1 范围，留给后续提案单独设计。
-- 退出、账户禁用与角色变更都会立即撤销会话；重新启用需要重新登录。
-
-保留期清理由 `velis-worker` 承担：认证开启时，Worker 每个 `auth.cleanup_interval`（默认 1 小时）分批删除超过保留期的数据，每批最多 `auth.cleanup_batch`（默认 500）条。保留期为登录失败事件 30 分钟、过期限制 24 小时、会话与刷新令牌在过期或撤销后 7 天；用户与管理审计不参与清理。认证关闭（`auth.enabled=false`）时 Worker 不启动清理。
-
-当前限制：**没有修改密码、找回密码或注销账户的能力**，也没有通过 HTTP 管理账户角色/状态的接口；I2 的管理员 HTTP 仅覆盖文章下架/恢复和 Source 管理。忘记密码只能由运维人员在确认身份、取得授权并具备备份的前提下按例外流程处置。
-
-## 配置
-
-配置顺序：内置默认值 → YAML → `VELIS_*` 环境变量 → 启动校验。配置入口见 [config.example.yaml](backend/configs/config.example.yaml) 和 [config.go](backend/internal/infrastructure/config/config.go)。
-
-示例仅供本地开发；真实数据库地址、密码、Token 和模型密钥通过环境变量注入，不提交到仓库。宿主机连接配置应与 Compose 中 PostgreSQL 的实际账户和数据库匹配。
-
-常用环境变量除资产、幂等与 Feed 配置外，还包括 `VELIS_RABBITMQ_URL`、`VELIS_RELAY_*`、`VELIS_CONSUMER_*`、`VELIS_OUTBOX_*` 和 `VELIS_WORKER_METRICS_ADDRESS`。RabbitMQ URL 留空时只禁用 Relay/Consumer，文章事务仍写 Outbox。完整上限及默认值见示例 YAML；对象存储凭据、MQ 凭据和含凭据的代理 URL 不得提交或写入日志。
-
-### AI 内容增强配置
-
-generation 与 Embedding 是两个独立的 OpenAI-compatible profile。某组的 provider/base URL/API Key/model 任一被填写时，其余项必须完整；两组均为空时不装配 AI Worker，也不影响 readiness。API Key 只通过 `VELIS_AI_GENERATION_API_KEY`、`VELIS_AI_EMBEDDING_API_KEY` 注入。
-
-Compose 用户可直接在本地 `.env` 中按 [.env.example](.env.example) 的 AI 区块取消注释并填写；这些参数只传给 `velis-worker`，无需也不应把真实密钥写入 YAML。Embedding 未配置时仍会生成并公开摘要、关键词和主题。
-
-| 配置 | 默认值 | 硬边界/说明 |
-| --- | --- | --- |
-| generation timeout / stage budget | 30s / 2m | 单次 1s–5m；阶段预算不小于单次且不超过 15m |
-| structured output mode | prompt | `prompt|json_object|json_schema`；只在 Provider 明确兼容时启用后两者 |
-| output token 参数名 | max_tokens | `max_tokens|max_completion_tokens`；Provider 忽略参数名时输出上限静默失效，需按实测选择 |
-| single input / chunk chars | 12000 / 6000 | 1000–100000 / 500–single input，按 Unicode 字符计 |
-| Map summary / repair input chars | 800 / 16000 | 64–4000 / 1000–100000，防止中间与纠正输入无界 |
-| max chunks / concurrency / calls | 8 / 2 / 9 | 1–64 / 1–8 / 1–65，调用数至少覆盖 map + reduce |
-| generation attempts / backoff | 3 / 5s–5m | 尝试 1–5；退避 1s–1h 且有界抖动 |
-| output / audit Token | 3072 / 20000 | 输出 64–8192；审计预算不小于输出且最多 1000000 |
-| summary / keyword / topic / label | 1000 / 12 / 5 / 64 字符 | summary 最多 4000；关键词 1–12、主题 1–5、标签最多 128 |
-| Embedding timeout / stage budget | 20s / 30s | dimensions 启用时必填且为 1–65536；`request_dimensions=false` 时只校验、不发送参数 |
-| Embedding input / attempts / audit Token | 12000 / 3 / 10000 | 输入 1000–100000；尝试 1–5；审计预算最多 1000000 |
-| Worker lease / poll / batch | 2m / 1s / 8 | lease 10s–10m；poll 100ms–1m；batch 1–100 |
-
-### 搜索投影配置
-
-OpenSearch 是可选依赖。`search.endpoints` 为空时投影 Worker 不装配、API 搜索返回 `503 SEARCH_UNAVAILABLE`：文章发布、RSS 抓取、latest、详情与 AI 增强全部照常工作，只是 PostgreSQL 里保留一份待处理槽位。非开发环境必须使用 HTTPS 并显式提供 `search.username` 与 `search.password`；凭据注入 API 与 Worker，日志只记录脱敏后的协议与主机。
-
-Compose 已内置固定 `opensearchproject/opensearch:3.8.0` 单节点服务，默认把 API 与 Worker 指向它。把 `VELIS_SEARCH_ENDPOINTS` 显式写成空值即可关闭投影与查询而不影响其它组件。
-
-| 配置 | 默认值 | 硬边界/说明 |
-| --- | --- | --- |
-| endpoints | 空（未配置） | 最多 8 个；不得携带凭据、查询或路径 |
-| index_prefix | velis-articles | 2–64 位小写标识；读写别名由它派生为 `-read` / `-write` |
-| schema_version | 1 | 1–100；与映射、分析器、维度和投影编码共同构成 schema 身份 |
-| embedding_dimensions | 1024 | 1–65536；启用 Embedding profile 时必须与 `ai.embedding.dimensions` 一致 |
-| connect / request timeout | 5s / 30s | 1s–1m / 1s–5m |
-| query timeout / PIT keep-alive | 5s / 2m | 100ms–30s / 30s–10m；查询超时独立于投影写入超时 |
-| candidate batch / request maximum | 100 / 500 | 单批 1–500；单请求最多检查 1–5000 个候选且不得小于单批 |
-| bulk_max_items / bytes / document chars | 500 / 5 MiB / 65536 | 1–10000 / 1KiB–64MiB / 1000–4MiB；超限文档单独永久失败 |
-| worker lease / poll / batch | 2m / 1s / 20 | lease 10s–10m 且必须大于 request timeout；poll 100ms–1m；batch 1–500 |
-| worker attempts / backoff | 5 / 2s–5m | 尝试 1–20；退避 1s–1h |
-| rebuild snapshot batch / rollback window / sample | 500 / 24h / 200 | 批 1–10000；窗口 1m–30d；抽样 1–10000 |
-
-搜索游标签名键只能通过 `VELIS_SEARCH_CURSOR_KEY` 注入，值为 Base64，解码后至少 32 字节；YAML 中的同名字段会被忽略。development/test 未设置时会为当前进程生成临时键，重启后旧游标失效；production 未设置时搜索局部禁用。多副本部署必须为所有 API 实例配置同一个持久密钥，否则游标跨实例不可用。
-
-BM25 查询固定使用读别名和可见文档，标题、关键词、主题、摘要、正文的权重依次降低；`keyword`、`topic`、`source_id` 是精确筛选。分页通过 PIT 与 `search_after` 保持快照，PIT 过期或游标无效时返回受控错误，客户端应从第一页重试。OpenSearch 候选始终由 PostgreSQL 批量复核当前公开状态、当前修订和当前 AI 选择后才返回，因此索引延迟或迟到文档不会泄露已下架内容。查询身份只需读别名上的搜索与 PIT 权限，不应授予索引写入或管理权限；开启混合搜索时还需要读取实际读索引 mapping 元数据的权限；无需授予索引写入或别名切换权限。
-
-### Redis 读取缓存
-
-可选 Redis 读取缓存覆盖三类可重建对象：版本化卡片片段、latest ID 候选页、用户隔离的推荐首查排序计划。文章写入提交后尽力失效首页；推荐 latest 补位使用保留本人排除、冻结候选 skip 和首查 StartedAt 的专用 ID 查询，再共享卡片装配。没有数据库迁移或 HTTP 字段变化。
-
-每批先在短 `READ ONLY REPEATABLE READ` 快照读取当前公开状态、修订、AI 选择及实际 Embedding/profile，再批量读缓存，只批量加载缺失片段，结束快照后回填。来源、昵称和排序字段总是来自当前数据库；编辑、AI 切换及下架无需等待卡片过期。写事务中的读取复用事务视图并绕过公开缓存；PostgreSQL 失败仍返回原错误，文章详情直接读取 PostgreSQL。搜索排序及语义身份过滤保持原行为，Redis 故障只导致有界回源。
-
-latest ID 候选正常情况下约 5 秒收敛，命中不续期。发布、恢复、下架、删除及 RSS 写入在最外层提交后失效所有合法 limit 的首页；回滚不执行，故障不改变已提交结果，续页靠绝对 TTL 收敛。每次 latest 最多检查 500 个候选，水位包含已检查的下架项，但不消费有效 lookahead。达到上限可能返回短页或空页且 `has_more=true`；客户端应使用 `next_cursor` 继续，不能根据 `items` 数量判断结束；Web 空页也保留“加载更多”。该窗口不承诺自动刷新已显示页面，也不提供跨请求数据库快照。
-
-默认 `cache.enabled=false`，宿主机启用时设置 `VELIS_CACHE_ENABLED=true` 和 `VELIS_CACHE_REDIS_ADDRESS=127.0.0.1:6379`。Compose 开发示例显式启用，地址为 `redis:6379`；设置 `VELIS_CACHE_ENABLED=false` 即可关闭，不需要删除 Redis 键或业务数据。配置优先级为默认 < YAML < `VELIS_*` 环境变量，API/Worker 必须使用相同 namespace；空 namespace 按环境派生 `velis:<app.environment>`。Redis 运行时不可达不会阻止启动，readiness 仍只依赖 PostgreSQL。
-
-| 配置 / 环境变量后缀（统一加 `VELIS_CACHE_`） | 默认 | 启用时约束 |
-| --- | --- | --- |
-| `enabled` / `ENABLED` | false | 布尔值 |
-| `redis.address` / `REDIS_ADDRESS` | 需配置 | host:port，不能嵌入凭据 |
-| `redis.database` / `REDIS_DATABASE` | 0 | 非负 |
-| `redis.tls` / `REDIS_TLS` | false | TLS 最低 1.2，验证服务端证书 |
-| `namespace` / `NAMESPACE` | `velis:<environment>` | 1–96 位字母、数字、冒号、下划线、连字符 |
-| `card_ttl` / `CARD_TTL` | 5m | 1s–1h |
-| `latest_ttl` / `LATEST_TTL` | 5s | 1s–5s |
-| `recommend_ttl` / `RECOMMEND_TTL` | 30s | 1s–30s |
-| `operation_timeout` / `OPERATION_TIMEOUT` | 50ms | 5ms–100ms，不能大于总预算 |
-| `request_budget` / `REQUEST_BUDGET` | 100ms | 10ms–200ms |
-| `pool_size` / `POOL_SIZE` | 10 | 1–100 |
-| `batch_size` / `BATCH_SIZE` | 100 | 1–100 |
-
-凭据仅由 `VELIS_CACHE_REDIS_USERNAME`、`VELIS_CACHE_REDIS_PASSWORD` 注入，YAML 中的凭据字段不会生效。适配器关闭自动命令/连接重试，缓存操作共享请求剩余预算且受父 deadline 限制，传输失败后本请求直接绕过；回填/失效失败只记录受控分类。卡片最多 64KiB，计划最多 128KiB；绝对到期时间从原始读取开始计算，命中不续期。指标单位及接入约定见 [缓存可观测性](backend/test/integration/cache_observability.md)，基线及本阶段验收见 [verification.md](openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/verification.md)。
-
-### 推荐 Feed 配置与边界
-
-`GET /api/v1/articles/recommend` 默认每页 20 条（1–50），匿名及没有有效正向关键词/主题画像的用户按 PostgreSQL latest 冷启动，返回 `mode=cold_start`、`degraded=false`。登录用户的当前修订关键词/主题、去重阅读和收藏影响排序；有效“不感兴趣”仅硬排除对应文章。每路最多召回 100 条，去重后冻结最多 200 条；候选不足用 latest 补位，OpenSearch 整体故障时 `mode=latest_fallback`。响应的 `degraded` 标记降级，文章只返回 `keyword_match`、`topic_match`、`similar_content`、`recent`、`latest_fallback` 之一作为原因。Web 默认 latest，可切换推荐并在游标失效时从第一页重试。
-
-| 配置 | 默认值 | 硬边界/说明 |
-| --- | --- | --- |
-| `recommend.first_query_timeout` | 5s | 500ms–30s；仅限制推荐首查 |
-| `recommend.bm25_candidates` / `knn_candidates` | 各 100 | 各 1–100；最多冻结 200 条 |
-| `recommend.cursor_ttl` | 2m | 30s–10m；绝对到期，不因翻页续期 |
-| `VELIS_RECOMMEND_CURSOR_KEY` | 开发进程临时生成 | 独立于搜索密钥，仅从环境读取；Base64 解码后至少 32 字节；production 必填且各 API 实例相同 |
-
-推荐游标是独立的认证加密 v1 格式，绑定匿名/登录身份与排序版本；续页不重新召回或生成向量，但仍复核公开状态和本人有效负反馈。启用 Redis 后，首查排序计划使用服务端认证的真实用户 ID、规范化当前画像指纹及排序/召回/Embedding 配置指纹隔离，默认绝对 TTL 30 秒，命中不续期。窗口只冻结候选排序；每次首查重新建立时间和消费状态，每页仍复核当前公开状态、语义身份和本人有效排除。硬排除前原候选集合的签名变化会重算，包含无标签文章负反馈撤销及自然过期。匿名/无正向画像不使用计划缓存，latest_fallback 和依赖失败不写入计划；搜索恢复后，曾故障回退的新首查可重新召回。有效计划中的真实语义降级标志可保留至该 30 秒窗口结束。Redis 故障不单独改变 mode/degraded，清缓存不影响有效客户端游标的续页。当前身份和卡片使用共享读取缓存；PostgreSQL 读取失败返回 `503 DEPENDENCY_UNAVAILABLE`，不会直接返回搜索投影。新的候选进入新首查时仍受约 30 秒排序窗口约束；已有 latest 补位按首查站内发布时间水位及键集继续。
-
-## 搜索投影运维
-
-**OpenSearch 不是事实源。** 文章、修订、公开状态与 AI 当前选择都以 PostgreSQL 为准；索引只是可丢弃的派生投影。删除整个索引不会丢任何业务事实，重建即可恢复。投影写入永远不会反向修改 PostgreSQL。
-
-一次完整的首次初始化与存量重建：
-
-```bash
-export VELIS_SEARCH_ENDPOINTS=http://localhost:9200   # Compose 只把 OpenSearch 发布到本机端口
-ADMIN="go run ./cmd/velis-admin -config configs/config.example.yaml"
-
-# 1. 建立首个物理索引、读写别名与 schema 身份（幂等，可重复执行）
-$ADMIN search index init
-
-# 2. 全量重建：创建候选索引、快照公开文章、追赶增量、校验后停在 validated
-$ADMIN search rebuild start
-
-# 3. 查看服务索引、活动重建与最近记录
-$ADMIN search rebuild status
-
-# 4. 校验通过后再原子切换读写别名，并打开 24h 回滚窗口
-$ADMIN search rebuild cutover
-
-# 5. 回滚窗口结束后清理旧索引（必须显式确认，且只删除精确目标）
-$ADMIN search rebuild cleanup -index velis-articles-v1-20260925t120000z-aaaaaa -confirm
-```
-
-命令默认读取 `configs/config.example.yaml`；该配置的数据库指向 `localhost:5432`，与 Compose 发布的端口一致。OpenSearch 端点必须显式给出，因为示例配置默认不启用投影。
-
-运维边界：
-
-- `rebuild start` 一次只允许一个活动重建；已有活动重建或回滚窗口未关闭时会明确拒绝。
-- `rebuild resume` 从持久化的文章 ID 与 change sequence 水位继续，进程中途退出不会丢进度，也不会重写已完成的批次。
-- 校验不通过（公开文档数与候选索引不一致、存在落后投递、抽样身份或内容指纹不符）时**拒绝切换**，当前索引继续服务；失败报告持久化在重建记录上。
-- `rollback` 只能在回滚窗口内执行；窗口内 Worker 会同时写新旧两个索引，因此切回不会有落后文档。
-- `cleanup` 拒绝删除当前读索引、回滚窗口内的索引、仍被投递引用或前缀未知的索引。回滚窗口到期后它会先停止该索引的投递再删除。
-- 观察积压：`velis_search_projection_jobs`、`velis_search_oldest_pending_age_seconds`、`velis_search_lagging_deliveries`、`velis_search_bulk_items_total` 与 `velis_search_rebuild_phase`。
-- 失败投递超过自动尝试上限后进入 `failed` 并停止自动重试；目标再次变化会自动重新激活，也可以用 `search retry -limit <1..1000> [-article-id <id>] [-index <物理索引>]` 有界重试，命令输出可审计报告。
-- 单篇文章的永久失败（例如映射错误）只影响该篇，不会阻塞同批其它文档。
-- 应用回滚时先停投影 Worker；旧应用忽略新增表，文章主链路继续可用。不要因应用回滚执行 down migration 或删除 OpenSearch 索引。
-
-## 数据迁移与回滚
-
-`000004_unify_content_supply` 会保留历史 RSS 文章 ID，把旧正文回填为 revision 1，并以原 `discovered_at` 固定 `published_at`。迁移前应备份并在专用环境核对文章数、ID、状态、修订和 latest 抽样。
-
-`000005_sort_latest_by_source_time` 将公开文章的 latest 索引替换为 `(COALESCE(source_published_at, published_at), id)` 倒序表达式索引；down migration 只恢复旧索引，不修改文章数据。应用回滚时应先回滚 API，再回滚该迁移，避免查询排序与索引语义不一致。
-
-`000006_create_reliable_article_async` 创建 Outbox、消费 Inbox 与异步任务槽位。空表时可下迁移；只要存在事件、消费记录或任务，down 会拒绝执行。应用回滚前先停 Relay/Consumer、确认并备份这些表；不得用 force 或删数据绕过保护。已发布 Outbox 默认保留 7 天并由 Worker 分批清理，未发布事件不会被清理。
-
-`000007_add_ai_content_enrichment` 扩展任务阶段、租约、重试与完成状态，并创建不可变 generation/Embedding 结果、独立 current 指针和模型调用审计表。回滚前先停 AI Worker；只要存在增强结果、调用记录或任务已进入新状态，down 会明确拒绝。向量保存为 `real[]`，此阶段没有向量查询或索引。
-
-`000008_harden_ai_provider_acceptance` 增加同一任务 generation 跨重试共享的单次格式纠正额度，并为模型调用审计补充结构化输出模式与低基数安全原因。只要已经使用纠正额度或存在新调用类型/审计字段数据，down 会拒绝；应用回滚时应保留该迁移和审计事实。
-
-`000009_add_search_projection` 创建搜索投影槽位、按物理索引的投递、索引服务状态与重建记录，并建立一个全局 change sequence。down 只在投影槽位、投递与重建记录全为空、且回滚窗口已关闭时允许执行，避免静默丢失诊断状态。应用回滚时先停投影 Worker；旧应用忽略这些表，不要用 force 绕过保护。
-
-`000010_add_article_feedback` 创建阅读窗口、收藏和文章级负反馈表。只要任一表非空，down 就会拒绝删除反馈事实；应先备份并明确恢复方案，不得通过清表绕过保护。recommend 复用这些事实，不新增推荐结果表。
-
-`000011_add_generation_method` 为生成结果增加 `model|extractive` 来源，旧行默认标记为 `model`，唯一身份加入来源以允许相同输入的模型与摘录结果共存。升级已有环境时先备份生成结果与当前选择、应用迁移，再更新 API、Worker 和 Web。存在 `extractive` 行时 down 会拒绝删除来源字段；历史失败任务不会随升级自动重排，须按前文补录命令先 dry-run 再显式推进。
-
-down migration 受保护：只有数据库仍是“单修订 RSS、无投稿、无资产”的旧模型可表达状态时才允许回退。只要存在用户投稿、资产或第二修订，down 会在事务内明确失败。不要使用 force 或删除数据绕过保护；此时应保持数据库前滚并修复/回滚应用。
-
-## 验证与开发现状
+## 测试与验证
 
 ```bash
 make check
@@ -433,38 +115,28 @@ VELIS_TEST_DATABASE_URL='postgres://velis:velis@localhost:5432/velis_test?sslmod
 VELIS_TEST_RABBITMQ_URL='amqp://velis:开发密码@localhost:5672/velis' \
 make integration-async
 
-# OpenSearch 模板/Bulk/别名、BM25/PIT 契约测试，以及 PostgreSQL + OpenSearch 搜索链路测试
-VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-opensearch
+# PostgreSQL + OpenSearch 搜索链路
 VELIS_TEST_DATABASE_URL='postgres://velis:velis@localhost:5432/velis_test?sslmode=disable' \
 VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 ```
 
-`make check` 包含 gofmt、Go 单测/竞态/构建、Vitest 与 Web 类型检查/构建；其中 gofmt 会修改未格式化的 Go 文件。独立命令见 [Makefile](Makefile)。CI 另外执行 `go vet`，详见 [ci.yml](.github/workflows/ci.yml)。
+`make check` 包含 gofmt、Go 单测/竞态/构建、Vitest 与 Web 类型检查/构建，其中 gofmt 会修改未格式化的 Go 文件；CI 另外执行 `go vet`。真实 PostgreSQL 测试使用专用 `_test` 库并清表，未配置对应 `VELIS_TEST_*` 变量的 Make 目标会直接失败，跳过不等于通过。其余目标为 `make integration-postgres`、`integration-rabbitmq`、`integration-opensearch`、`integration-redis`、`integration-cache-reads`、`integration-all`，各自必需的变量与覆盖范围见 [docs/operations.md](docs/operations.md) 和[集成测试说明](backend/test/integration/README.md)。浏览器 Playwright E2E、压测和正式监控告警尚未完成。
 
-- 已有 Domain/Application、抓取解析清洗、Hertz、CLI、配置、架构依赖与前端测试；账户领域、认证用例、HTTP 中间件、安全适配器与前端会话模块都有单测。
-- PostgreSQL 集成测试通过 `VELIS_TEST_DATABASE_URL` 启用，要求已迁移的专用 `_test` 数据库（测试基座会自动应用迁移）；测试会清空 Source/Article 与账户相关表。未设置该变量时跳过，普通 CI 通过不能代替数据库集成验证。
-- OpenSearch 集成测试通过 `VELIS_TEST_OPENSEARCH_URL` 启用，覆盖严格模板、Bulk/别名、BM25 字段权重、精确筛选、稳定排序和 PIT 快照；`make integration-search` 同时要求专用 PostgreSQL，覆盖候选批量复核、下架过滤和跨适配器链路。两个 Make 目标缺少对应变量时都会直接失败，不把 skip 视为通过。
-- recommend 的 PostgreSQL/OpenSearch 链路与生成来源的 PostgreSQL 测试命令见 [集成测试说明](backend/test/integration/README.md)。`make integration-search` 的筛选不包含推荐用例，需显式运行 `TestArticleRecommendationPostgresOpenSearch`；相关依赖未配置时的 skip 不算验收通过。
-- 可靠异步真实依赖测试还要求 `VELIS_TEST_RABBITMQ_URL`；`make integration-async` 在任一变量缺失时直接失败。Broker 重启演练会真实重启容器，默认跳过，需按 [可靠异步验证说明](backend/test/integration/reliable_async.md) 单独执行。
-- 推荐的新部署 profile 示例为 generation `generation-v2`（Workflow `hierarchical-v2`、Prompt `summary-v2`）与 Embedding `embedding-v2`（输入 `retrieval-document-v1`、固定维数模型示例为 1024 维）。profile 版本变化不会自动全量重算，应通过精确、有限批次或经确认的全量 backfill 显式推进。
-- 真实 MinIO 测试通过 `VELIS_TEST_MINIO_ENDPOINT`、`VELIS_TEST_MINIO_UPLOAD_ENDPOINT`、`VELIS_TEST_MINIO_ACCESS_KEY`、`VELIS_TEST_MINIO_SECRET_KEY`、`VELIS_TEST_MINIO_BUCKET` 启用；Compose CORS 测试还要求 `VELIS_TEST_MINIO_WEB_ORIGIN`。内部与公共测试端点应使用不同 authority（例如 `127.0.0.1:9000` 与 `http://localhost:9000`）；未设置内部端点时测试会明确报告跳过，不能计作通过。
-- [I2 可复现闭环脚本](web/e2e/README.md) 会在本地/`.test` API 创建临时用户、文章和 Source，验证用户直发、RSS 抓取、联合 latest、编辑冲突和作者/管理员下架；它不是生产脚本。
-- 2026-09-22 使用专用 `_test` 数据库和真实 MinIO 完成 I2 全依赖回归：PostgreSQL 集成套件、MinIO 私有 Bucket/三种图片格式/流式读取与删除测试，以及上述 8 步 HTTP 闭环均通过；临时 API、数据库和测试对象已在验证后清理。
-- 认证相关计数与耗时继续使用结构化日志；异步投影日志使用 `trace_id`、`event_id`、`task_id`、`worker_id` 串联，错误限长并脱敏。
-- API 与 Worker 均提供独立的内部 `/metrics`；搜索指标使用固定结果、阶段、PIT、检索模式、通道、降级原因与依赖错误分类标签，记录请求、分段耗时、两路/并集候选、公开事实/陈旧身份过滤、扫描上限与 PIT 生命周期。Prometheus 同时抓取 API、Worker 与 RabbitMQ。Grafana 只有 Compose 入口，尚无正式仪表盘或告警规则。
-- 浏览器 Playwright E2E、压测和完整监控告警尚未完成；可靠异步故障演练范围与证据见单独说明，不把它描述为生产级灾备验证。
+## 配置
 
-文档中的“已实现”依据当前代码，不代表每次文档更新都重新执行了运行验证。I1 及更早的详细 change 验证保存在只读的 `code_copilot/changes/`；后续规范与 change 统一使用 `openspec/`。
+配置优先级为内置默认值 < YAML < `VELIS_*` 环境变量，启动时校验。入口见 [config.example.yaml](backend/configs/config.example.yaml)、[.env.example](.env.example) 和 [config.go](backend/internal/infrastructure/config/config.go)。真实凭据只经环境变量注入，不提交、不写日志。
 
-推荐 Feed 与 AI 摘要可靠性 change 已于 2026-10-09 同步长期规格并归档：[推荐验收记录](openspec/changes/archive/2026-10-09-add-recommend-article-feed/tasks.md)、[摘要可靠性验收记录](openspec/changes/archive/2026-10-09-improve-ai-summary-reliability/verification.md)。记录中的 `make check` 与真实依赖测试均通过；本次归档未部署应用、执行数据库迁移或重排历史任务。Redis 卡片/latest 读取缓存及用户隔离的推荐计划 change 已于 2026-10-10 同步长期规格并归档，见 [缓存验收记录](openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/verification.md)；后续顺序见 Roadmap。
+AI 内容增强、搜索投影、Redis 缓存与推荐 Feed 的配置项、默认值和硬边界见 [docs/configuration.md](docs/configuration.md)；认证开启步骤与环境变量见 [docs/authentication.md](docs/authentication.md)。
 
-## 文档分工
+## 文档
 
-- 本 README：当前功能、限制、启动与测试。
-- [Velis Roadmap](<Velis Roadmap.md>)：唯一项目目标、架构决策和后续实施路线。
-- `AGENTS.md`、`CLAUDE.md` 与 `openspec/`：当前协作入口、规范、change 与归档，不另立产品规划。
-- `code_copilot/`：迁移前的历史 change 与证据，只读保留，不再作为执行入口。
-- OpenAPI、迁移和测试目录说明：对应实现的技术契约与局部使用说明。
+- [Velis Roadmap](<Velis Roadmap.md>)：唯一项目目标、技术决策、实施顺序与完成标准。
+- [docs/configuration.md](docs/configuration.md)：完整配置项、默认值与降级开关。
+- [docs/authentication.md](docs/authentication.md)：认证开启顺序、环境变量、会话行为与当前限制。
+- [docs/operations.md](docs/operations.md)：Source、AI 补录与搜索投影运维，迁移与回滚，验证记录。
+- [OpenAPI](backend/api/openapi/velis.yaml)：完整 HTTP 契约、错误信封与分页/幂等约定。
+- [openspec/specs/](openspec/specs/)：已同步的长期行为规范，含内容与资产硬限制（Markdown 256 KiB、图片格式与额度）、搜索/推荐/缓存契约；`openspec/changes/` 保存进行中的 change 与归档。
+- [集成测试说明](backend/test/integration/README.md)、[I2 闭环脚本](web/e2e/README.md)。
 - [第三方声明](backend/THIRD_PARTY_NOTICES.md)：随应用发布的第三方组件、版本与许可证。
 
 仓库暂未添加开源许可证，默认保留全部权利。

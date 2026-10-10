@@ -3,6 +3,7 @@
 ## 项目导航
 
 - [README](README.md)：当前功能、开发现状、启动与验证方式。
+- `docs/`：配置参考、认证与运维细节；README 只留要点和链接，新增或补充功能文档写在这里。
 - [Velis Roadmap](<Velis Roadmap.md>)：唯一项目目标、技术决策、实施顺序与完成标准；实现前读取对应阶段，未决细节在 change 中定稿。
 - `backend/api/openapi/velis.yaml`、`backend/migrations/`：当前 API 与数据库契约，随实现更新。
 - `openspec/`：当前 Spec 与 change 工作区；后续提案、实施、同步与归档均使用 OpenSpec。
