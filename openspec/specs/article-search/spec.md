@@ -82,7 +82,7 @@
 
 ### Requirement: 每批搜索命中回到 PostgreSQL 复核当前公开事实
 
-系统 SHALL 把 OpenSearch 仅作为候选与排序来源，并在返回前按有界候选批次一次性从 PostgreSQL 读取当前 `published` 文章及其当前修订、来源、作者和当前增强结果。系统 SHALL 按最终检索次序（纯 BM25 全序或混合 RRF 全序）重排 PostgreSQL 结果，丢弃不存在或当前不可见的文章；KNN 候选 SHALL 额外校验投影修订、generation、Embedding 选择和 profile 与当前事实一致。首次融合前 SHALL 移除无效 KNN 贡献，同篇文章若有 BM25 贡献 SHALL 保留其 BM25 资格。系统 SHALL 继续有界扫描候选直到收集请求页、候选耗尽或达到单请求扫描上限；不得逐命中执行 PostgreSQL 查询。
+系统 SHALL 把 OpenSearch 仅作为候选与排序来源，并在返回前按有界候选批次从 PostgreSQL 复核当前 `published` 状态、修订、来源、作者与当前增强结果选择；只有与该批当前事实匹配的版本化卡片数据才可从缓存装配，缺失、损坏或不匹配部分 SHALL 批量回源。系统 SHALL 按最终检索次序（纯 BM25 全序或混合 RRF 全序）重排 PostgreSQL 结果，丢弃不存在或当前不可见的文章；KNN 候选 SHALL 额外校验投影修订、generation、Embedding 选择和 profile 与当前事实一致。首次融合前 SHALL 移除无效 KNN 贡献，同篇文章若有 BM25 贡献 SHALL 保留其 BM25 资格。系统 SHALL 继续有界扫描候选直到收集请求页、候选耗尽或达到单请求扫描上限；不得逐命中执行 PostgreSQL 查询。
 
 #### Scenario: 索引中暂留已下架文章
 - **WHEN** OpenSearch 快照仍命中一篇已在 PostgreSQL 下架或删除的文章
@@ -115,6 +115,14 @@
 #### Scenario: 混合翻页期间向量身份变化
 - **WHEN** 固定列表中曾使用有效 KNN 贡献的候选在后续页复核时身份失效
 - **THEN** 系统 SHALL 丢弃该候选并推进消费位置，即使它原先也有 BM25 贡献也不得沿用陈旧语义名次；重新查询第一页 SHALL 可以按新事实召回
+
+#### Scenario: Redis 故障时装配搜索结果
+- **WHEN** OpenSearch 和 PostgreSQL 正常，但 Redis 不可用或卡片数据损坏
+- **THEN** 系统 SHALL 批量回源装配当前公开结果并保持搜索排序，缓存故障不得导致 SEARCH_UNAVAILABLE 或返回未经事实复核的旧卡片
+
+#### Scenario: 当前事实复核与卡片回填并发
+- **WHEN** 文章编辑或增强选择变化发生于拆分后的事实读取与回源装配之间
+- **THEN** 每批事实与卡片 SHALL 保持一致的读取视图，旧载荷不得被写入新版本键或冒充当前修订
 
 ### Requirement: 搜索故障被隔离并返回明确不可用错误
 

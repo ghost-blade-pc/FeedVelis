@@ -347,7 +347,7 @@ latest ID 候选正常情况下约 5 秒收敛，命中不续期。发布、恢�
 | `pool_size` / `POOL_SIZE` | 10 | 1–100 |
 | `batch_size` / `BATCH_SIZE` | 100 | 1–100 |
 
-凭据仅由 `VELIS_CACHE_REDIS_USERNAME`、`VELIS_CACHE_REDIS_PASSWORD` 注入，YAML 中的凭据字段不会生效。适配器关闭自动命令/连接重试，缓存操作共享请求剩余预算且受父 deadline 限制，传输失败后本请求直接绕过；回填/失效失败只记录受控分类。卡片最多 64KiB，计划最多 128KiB；绝对到期时间从原始读取开始计算，命中不续期。指标单位及接入约定见 [缓存可观测性](backend/test/integration/cache_observability.md)，基线及本阶段验收见 [verification.md](openspec/changes/cache-article-and-feed-reads-with-redis/verification.md)。
+凭据仅由 `VELIS_CACHE_REDIS_USERNAME`、`VELIS_CACHE_REDIS_PASSWORD` 注入，YAML 中的凭据字段不会生效。适配器关闭自动命令/连接重试，缓存操作共享请求剩余预算且受父 deadline 限制，传输失败后本请求直接绕过；回填/失效失败只记录受控分类。卡片最多 64KiB，计划最多 128KiB；绝对到期时间从原始读取开始计算，命中不续期。指标单位及接入约定见 [缓存可观测性](backend/test/integration/cache_observability.md)，基线及本阶段验收见 [verification.md](openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/verification.md)。
 
 ### 推荐 Feed 配置与边界
 
@@ -456,7 +456,7 @@ VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 
 文档中的“已实现”依据当前代码，不代表每次文档更新都重新执行了运行验证。I1 及更早的详细 change 验证保存在只读的 `code_copilot/changes/`；后续规范与 change 统一使用 `openspec/`。
 
-推荐 Feed 与 AI 摘要可靠性 change 已于 2026-10-09 同步长期规格并归档：[推荐验收记录](openspec/changes/archive/2026-10-09-add-recommend-article-feed/tasks.md)、[摘要可靠性验收记录](openspec/changes/archive/2026-10-09-improve-ai-summary-reliability/verification.md)。记录中的 `make check` 与真实依赖测试均通过；本次归档未部署应用、执行数据库迁移或重排历史任务。Redis 卡片/latest 读取缓存已实现；用户隔离的推荐计划已接入；完整验收记录与后续顺序见 Roadmap。
+推荐 Feed 与 AI 摘要可靠性 change 已于 2026-10-09 同步长期规格并归档：[推荐验收记录](openspec/changes/archive/2026-10-09-add-recommend-article-feed/tasks.md)、[摘要可靠性验收记录](openspec/changes/archive/2026-10-09-improve-ai-summary-reliability/verification.md)。记录中的 `make check` 与真实依赖测试均通过；本次归档未部署应用、执行数据库迁移或重排历史任务。Redis 卡片/latest 读取缓存及用户隔离的推荐计划 change 已于 2026-10-10 同步长期规格并归档，见 [缓存验收记录](openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/verification.md)；后续顺序见 Roadmap。
 
 ## 文档分工
 

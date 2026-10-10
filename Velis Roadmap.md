@@ -1,6 +1,6 @@
 # Velis Roadmap
 
-> 路线基线：2026-09-25；实施状态更新：2026-10-09。本文是项目目标、技术决策、实施顺序与完成标准的唯一来源；当前已经可用的功能、运行方式和限制见 [README](README.md)。
+> 路线基线：2026-09-25；实施状态更新：2026-10-10。本文是项目目标、技术决策、实施顺序与完成标准的唯一来源；当前已经可用的功能、运行方式和限制见 [README](README.md)。
 >
 > Velis 是个人后端与 Agent 工程实践项目。路线优先形成小而完整的产品闭环，再围绕真实问题引入中间件、微服务、容器编排、可观测性和性能优化；目录占位、依赖声明或服务启动不等同于能力完成。
 
@@ -200,7 +200,7 @@ Feed 只保留：
 | `latest` | PostgreSQL 已发布文章，有效发布时间（RSS 原站时间优先、固定站内时间回退）+ ID | 核心路径，不依赖 Redis、MQ、搜索或模型 |
 | `recommend` | 关键词/主题、语义召回、少量用户反馈、新鲜度与来源打散 | BM25/关键词 → latest |
 
-I4.6 的 Redis 读取缓存默认关闭，保存可重建的卡片片段（5 分钟）、latest ID 页（5 秒）及用户隔离的推荐首查排序计划（30 秒），命中均不续期。卡片每批在短只读快照复核当前公开/修订/AI/语义身份并批量回源缺失片段；写事务绕过公开缓存，文章写入最外层提交后尽力失效 latest 首页。计划键包含真实身份、当前画像与配置指纹，每页仍查当前事实与本人有效排除，原候选排除签名变化重算；匿名/无画像、latest_fallback 和依赖失败不缓存。Redis 故障只触发有界回源，PostgreSQL 故障仍返回原错误，清缓存不影响有效客户端游标续页。六状态固定负载及真实联合故障/恢复证据见 [缓存验收](openspec/changes/cache-article-and-feed-reads-with-redis/verification.md)，其中也记录快照与故障增加的代价。
+I4.6 的 Redis 读取缓存默认关闭，保存可重建的卡片片段（5 分钟）、latest ID 页（5 秒）及用户隔离的推荐首查排序计划（30 秒），命中均不续期。卡片每批在短只读快照复核当前公开/修订/AI/语义身份并批量回源缺失片段；写事务绕过公开缓存，文章写入最外层提交后尽力失效 latest 首页。计划键包含真实身份、当前画像与配置指纹，每页仍查当前事实与本人有效排除，原候选排除签名变化重算；匿名/无画像、latest_fallback 和依赖失败不缓存。Redis 故障只触发有界回源，PostgreSQL 故障仍返回原错误，清缓存不影响有效客户端游标续页。六状态固定负载及真实联合故障/恢复证据见 [缓存验收](openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/verification.md)，其中也记录快照与故障增加的代价。
 
 ### 两层 Agent
 
@@ -274,7 +274,7 @@ I3 的可靠异步与 AI 内容增强、I4.1 搜索投影、I4.2 BM25 文章搜�
 
 当前 OpenSearch 提供可重建投影、BM25 和默认关闭的 KNN/RRF 混合搜索。混合首查每路最多 100 候选，v2 游标冻结最多 200 条、绝对 TTL 2 分钟；查询 Embedding 只在首查调用一次，语义故障降级 BM25。v2 profile 映射以在线重建发布，支持 v1 回滚。向量事实仍保存于 PostgreSQL `real[]`。Redis 业务读取缓存已实现，Agent 尚未实现。recommend 已增加匿名冷启动、本人反馈排序、词项/可选语义候选、独立冻结游标和 latest 降级；不能把单独的 BM25 搜索描述为个性化推荐。
 
-I4.6 `cache-article-and-feed-reads-with-redis` 已完成实现和真实联合验收，证据见 [任务](openspec/changes/cache-article-and-feed-reads-with-redis/tasks.md) 与 [验证记录](openspec/changes/cache-article-and-feed-reads-with-redis/verification.md)。实现完成不代表已归档、同步长期规格或部署。下一项开发进入 I5 最小对话 Agent，复用搜索、推荐和详情应用端口。
+I4.6 `cache-article-and-feed-reads-with-redis` 已完成实现和真实联合验收，证据见 [任务](openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/tasks.md) 与 [验证记录](openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/verification.md)。该 change 已于 2026-10-10 同步长期规格并归档，新增 `article-read-cache`，更新推荐、搜索与统一文章规格；归档不代表已部署。下一项开发进入 I5 最小对话 Agent，复用搜索、推荐和详情应用端口。
 
 后续仍需在对应 change 中决定的主要细节：
 
