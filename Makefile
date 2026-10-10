@@ -1,4 +1,4 @@
-.PHONY: help backend-fmt backend-test backend-race backend-build integration-postgres integration-rabbitmq integration-opensearch integration-search integration-redis integration-cache-reads integration-async integration-all web-install web-lint web-test web-build check compose-up compose-down migrate-up migrate-down
+.PHONY: help backend-fmt backend-test backend-race backend-build integration-postgres integration-rabbitmq integration-opensearch integration-search integration-redis integration-cache-reads integration-agent-conversations integration-agent-tools integration-async integration-all web-install web-lint web-test web-build check compose-up compose-down migrate-up migrate-down
 
 GOCACHE_DIR ?= /tmp/feedvelis-go-cache
 
@@ -14,6 +14,8 @@ help:
 	@echo "make integration-async 运行 PostgreSQL + RabbitMQ 可靠异步真实依赖测试"
 	@echo "make integration-redis 运行 Redis 适配器及故障代理真实依赖测试"
 	@echo "make integration-cache-reads 运行 PostgreSQL/Redis/OpenSearch 读取联合验收（含推荐）"
+	@echo "make integration-agent-conversations 运行 PostgreSQL 私有会话真实验收"
+	@echo "make integration-agent-tools 运行 PostgreSQL/Redis/OpenSearch 内部工具联合验收"
 	@echo "make integration-all  运行全部真实依赖测试"
 
 backend-fmt:
@@ -61,7 +63,17 @@ integration-cache-reads:
 	$(MAKE) integration-redis
 	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run 'TestCacheRead|TestArticleRecommendationPostgresOpenSearch|TestArticleSearch|TestHybrid' ./test/integration
 
-integration-all: integration-postgres integration-rabbitmq integration-opensearch integration-search integration-cache-reads
+integration-agent-conversations:
+	@test -n "$(VELIS_TEST_DATABASE_URL)" || (echo "未设置 VELIS_TEST_DATABASE_URL（必须指向 _test 数据库）" && exit 2)
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run '^TestAgentConversation' ./test/integration
+
+integration-agent-tools:
+	@test -n "$(VELIS_TEST_DATABASE_URL)" || (echo "未设置 VELIS_TEST_DATABASE_URL（必须指向 _test 数据库）" && exit 2)
+	@test -n "$(VELIS_TEST_OPENSEARCH_URL)" || (echo "未设置 VELIS_TEST_OPENSEARCH_URL" && exit 2)
+	@test -n "$(VELIS_TEST_REDIS_ADDRESS)" || (echo "未设置 VELIS_TEST_REDIS_ADDRESS" && exit 2)
+	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run '^TestAgentTools' ./test/integration
+
+integration-all: integration-postgres integration-rabbitmq integration-opensearch integration-search integration-cache-reads integration-agent-conversations integration-agent-tools
 
 web-install:
 	cd web && npm ci

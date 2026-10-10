@@ -13,8 +13,9 @@ Velis 是一个可自托管的图文 Feed 项目。RSS 自动发布与用户 Mar
 - 账户与反馈：用户名密码注册登录、会话刷新轮换、RBAC、本人资料；详情阅读、收藏与文章级“不感兴趣”。
 - 可靠异步：Outbox、RabbitMQ Relay、消费幂等与版本化任务槽位，AI 增强和搜索投影由 Worker 异步推进。
 - 管理：管理员在 Web 或 CLI 管理 Source（新增、周期、暂停/恢复、手动抓取、历史），并下架或恢复公开文章。
+- Agent 基础：默认关闭的本人私有会话、不可变用户消息、手动标题及加密历史分页；三个内部文章只读工具，见 [会话](docs/agent-conversations.md)和[工具](docs/agent-tools.md)。
 
-认证、AI、搜索投影与 Redis 读取缓存默认关闭或未配置；核心发布与阅读链路只依赖 PostgreSQL，RSS、纯文本投稿、latest 和详情即可工作。用户级 RSS 订阅、投稿审核、following/hot Feed、社交功能与对话/定时 Agent 尚未实现。
+认证、AI、搜索投影、Agent 与 Redis 读取缓存默认关闭或未配置；核心发布、阅读与已开启的会话持久化只依赖 PostgreSQL。用户级 RSS 订阅、投稿审核、following/hot Feed、社交功能、Agent 模型编排/SSE/Web体验与定时 Agent 尚未实现。
 
 ## 技术栈
 

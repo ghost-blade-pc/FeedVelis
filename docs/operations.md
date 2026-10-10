@@ -186,3 +186,7 @@ VELIS_TEST_OPENSEARCH_URL='http://127.0.0.1:9200' make integration-search
 - 2026-09-22 使用专用 `_test` 数据库和真实 MinIO 完成 I2 全依赖回归：PostgreSQL 集成套件、MinIO 私有 Bucket/三种图片格式/流式读取与删除测试，以及上述 8 步 HTTP 闭环均通过；临时 API、数据库和测试对象已在验证后清理。
 - 推荐 Feed 与 AI 摘要可靠性 change 已于 2026-10-09 同步长期规格并归档：[推荐验收记录](../openspec/changes/archive/2026-10-09-add-recommend-article-feed/tasks.md)、[摘要可靠性验收记录](../openspec/changes/archive/2026-10-09-improve-ai-summary-reliability/verification.md)。记录中的 `make check` 与真实依赖测试均通过；本次归档未部署应用、执行数据库迁移或重排历史任务。
 - Redis 卡片/latest 读取缓存及用户隔离的推荐计划 change 已于 2026-10-10 同步长期规格并归档，见[缓存验收记录](../openspec/changes/archive/2026-10-10-cache-article-and-feed-reads-with-redis/verification.md)；后续顺序见 [Velis Roadmap](../Velis%20Roadmap.md)。
+
+## Agent 会话基础操作
+
+私有会话的启用、七个端点、幂等、永久最小删除标记、关闭功能保留数据和空事实回退命令见 [Agent 会话操作](agent-conversations.md)，三个内部只读工具及预算见 [工具说明](agent-tools.md)。`make integration-agent-conversations` 要求专用 PostgreSQL `_test` 库；`make integration-agent-tools` 额外要求真实OpenSearch和Redis，缺少变量均非零退出。关闭Agent不删除历史，不通过清空业务数据完成降级迁移。

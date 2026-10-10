@@ -1,5 +1,7 @@
 # PostgreSQL 集成测试
 
+Agent 会话迁移、仓储、事务服务与认证HTTP全链路使用 `agent_conversation_*_test.go`，从仓库根运行 `make integration-agent-conversations`（必需 `VELIS_TEST_DATABASE_URL`）。工具使用 `agent_tools_test.go`，运行 `make integration-agent-tools`，额外必需 `VELIS_TEST_OPENSEARCH_URL` 和 `VELIS_TEST_REDIS_ADDRESS`。入口缺任意变量均非零退出，skip不得作为验收。表不变量、永久最小删除标记、历史保留和仅空业务事实允许的 down/up 命令见 [Agent 会话说明](../../../docs/agent-conversations.md)，工具契约见 [工具说明](../../../docs/agent-tools.md)。仍须设置专用 `_test` 库；不得通过删除历史让降级迁移通过。
+
 `harness_test.go` 是共享基座：读取 `VELIS_TEST_DATABASE_URL`（数据库名必须以 `_test` 结尾）、把 `migrations/` 应用到最新版本，并提供分区清表。`article_repository_test.go` 验证 Source/Article 仓储、租约、幂等、事务与并发；`account_repository_test.go` 验证账户唯一约束、会话撤销、刷新轮换与重放、登录失败限流、管理审计与清理、CLI 管理锁；可靠异步测试覆盖 Outbox/Inbox、任务收敛、补录和 RabbitMQ 端到端恢复。
 
 基座提供 `resetArticles`（包括 Source、Article、资产、幂等、Outbox、Inbox 和异步任务）与 `resetAccounts`。测试会清空这些表，只能使用可丢弃的测试库；未设置环境变量时测试跳过。

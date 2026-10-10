@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 
+	agent "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/agentconversation"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlecache"
 	feedbackApp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articlefeedback"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/articleread"
@@ -22,11 +23,19 @@ import (
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/persistence/postgres"
 	searchAdapter "github.com/ghost-blade-pc/Velis_Feed/backend/internal/infrastructure/search/opensearch"
 	hertzhttp "github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz"
+	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/handler"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	agentKey, ephemeral, err := cfg.AgentAPIKey()
+	if err != nil {
+		return err
+	}
+	if ephemeral && logger != nil {
+		logger.Warn("Agent 使用临时游标密钥，重启后旧游标失效")
+	}
 	pool, err := postgres.Open(ctx, cfg.Database)
 	if err != nil {
 		return err
@@ -98,6 +107,18 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			AdminArticles:  content.adminArticles,
 			Assets:         content.assets,
 			Feedback:       feedbackApp.NewService(postgres.NewArticleFeedbackRepository(pool), clock.System{}),
+		}
+		if cfg.Agent.Enabled {
+			agentObserver := observability.NewAgentObserver(registry, logger)
+			codec, err := agent.NewCursorCodec(agentKey)
+			if err != nil {
+				return err
+			}
+			tx := postgres.NewTxManager(pool)
+			service := agent.NewService(postgres.NewAgentConversationRepository(pool), tx, tx, postgres.NewIdempotencyRepository(pool), agent.Limits{
+				MaxConversations: cfg.Agent.MaxConversationsPerUser, MaxMessages: cfg.Agent.MaxMessagesPerConversation, MaxMessageChars: cfg.Agent.MaxMessageChars,
+			})
+			options.Auth.Agent = handler.NewAgentConversation(service, codec, cfg.Agent.CursorTTL, cfg.Agent.MaxMessageChars).WithObserver(agentObserver)
 		}
 	}
 	// 启动自检只报告存储状态，不阻止启动：资产能力按请求降级，readyz 仍以 PostgreSQL 为准。

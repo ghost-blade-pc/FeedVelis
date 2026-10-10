@@ -103,10 +103,10 @@ func (s *Service) semanticRecall(ctx context.Context, query Query, pit string) s
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(knnCtx.Err(), context.DeadlineExceeded) {
 			reason = "knn_timeout"
 		}
-		return semanticResult{reason: reason}
+		return semanticResult{batch: CandidateBatch{PITID: batch.PITID}, reason: reason}
 	}
 	if !validBatch(batch, h.KNNCandidates, true) {
-		return semanticResult{reason: "knn_failed"}
+		return semanticResult{batch: CandidateBatch{PITID: batch.PITID}, reason: "knn_failed"}
 	}
 	return semanticResult{batch: batch}
 }
@@ -151,26 +151,45 @@ func (s *Service) searchHybrid(ctx context.Context, query Query) (Page, error) {
 	}
 	s.observer.ObservePIT(ctx, PITCreate)
 	defer func() {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		budget := time.Second
+		if query.once {
+			budget = 250 * time.Millisecond
+		}
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 		defer cancel()
 		s.closePIT(cleanup, pit)
 	}()
 	recallCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	semanticCh := make(chan semanticResult, 1)
-	go func() { semanticCh <- s.semanticRecall(recallCtx, query, pit) }()
+	if !query.once {
+		go func(initialPIT string) { semanticCh <- s.semanticRecall(recallCtx, query, initialPIT) }(pit)
+	}
 	started = s.now()
 	bm25, err := s.index.Search(recallCtx, IndexRequest{Query: query, PITID: pit, Size: s.config.Hybrid.BM25Candidates, KeepAlive: s.config.PITKeepAlive})
+	if bm25.PITID != "" {
+		pit = bm25.PITID
+	}
 	s.observer.ObserveStage(ctx, StageOpenSearch, s.now().Sub(started))
 	if err != nil || !validBatch(bm25, s.config.Hybrid.BM25Candidates, false) {
 		cancel()
 		return Page{}, controlled(CodeSearchUnavailable, errOr(err, ErrInvalidIndexResponse))
 	}
 	var semantic semanticResult
-	select {
-	case semantic = <-semanticCh:
-	case <-ctx.Done():
-		return Page{}, controlled(CodeSearchUnavailable, ctx.Err())
+	if query.once {
+		if err := ctx.Err(); err != nil {
+			return Page{}, controlled(CodeSearchUnavailable, err)
+		}
+		semantic = s.semanticRecall(recallCtx, query, pit)
+	} else {
+		select {
+		case semantic = <-semanticCh:
+		case <-ctx.Done():
+			return Page{}, controlled(CodeSearchUnavailable, ctx.Err())
+		}
+	}
+	if semantic.batch.PITID != "" {
+		pit = semantic.batch.PITID
 	}
 	if err = ctx.Err(); err != nil {
 		return Page{}, controlled(CodeSearchUnavailable, err)
@@ -280,6 +299,10 @@ func (s *Service) pageFromCurrent(query Query, state FrozenPage, current map[int
 		}
 		if len(page.Items) == query.Limit {
 			state.Offset = offset
+			if query.once {
+				page.HasMore = true
+				break
+			}
 			token, err := s.codec.EncodeFrozen(query, s.config.Hybrid, state)
 			if err != nil {
 				return Page{}, err
@@ -288,7 +311,9 @@ func (s *Service) pageFromCurrent(query Query, state FrozenPage, current map[int
 			page.HasMore = true
 			break
 		}
-		page.Items = append(page.Items, item.Item)
+		value := item.Item
+		value.RevisionID = item.Identity.RevisionID
+		page.Items = append(page.Items, value)
 	}
 	return page, nil
 }

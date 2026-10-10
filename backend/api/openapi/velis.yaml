@@ -6,6 +6,301 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /me/agent/conversations:
+    post:
+      operationId: createAgentConversation
+      summary: 创建本人空会话
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。省略title使用“新对话”；默认每用户50个会话，支持1–500。固定24h幂等，重放原201和ETag，满配额可重放。
+      security:
+      - bearerAuth: []
+      responses:
+        '201':
+          description: 创建本人空会话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversation'
+          headers:
+            ETag:
+              description: 响应快照title_version的强ETag，仅用于改名，不表示消息集合版本。
+              schema:
+                type: string
+                pattern: ^"[1-9][0-9]*"$
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentCreateInput'
+    get:
+      operationId: listAgentConversations
+      summary: 分页读取本人会话
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。按(last_activity_at,id)倒序实时keyset分页，不冻结跨页集合，活跃移动可能跨越旧边界。空items为[]。
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 分页读取本人会话
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversationPage'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+        description: 省略为20；显式空值、0、重复及未知参数拒绝。
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 4096
+        description: 独立认证加密游标，绑定账户、用途及历史会话；首查绝对期限默认1h，续页允许改变limit但不续期。显式空值、篡改、跨作用域或到期返回INVALID_CURSOR。
+  /me/agent/conversations/{id}:
+    get:
+      operationId: getAgentConversation
+      summary: 读取本人会话元数据
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。不包含消息正文或最后消息片段。
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 读取本人会话元数据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversation'
+          headers:
+            ETag:
+              description: 响应快照title_version的强ETag，仅用于改名，不表示消息集合版本。
+              schema:
+                type: string
+                pattern: ^"[1-9][0-9]*"$
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: 会话UUID；不存在、删除或非本人统一404，管理员无豁免。
+    patch:
+      operationId: renameAgentConversation
+      summary: 手动修改本人会话标题
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。实际改名增加title_version并更新活跃时间；无变化仍检查版本，但不更新版本/活跃时间。重放优先于当前版本且返回原200快照。
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 手动修改本人会话标题
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversation'
+          headers:
+            ETag:
+              description: 响应快照title_version的强ETag，仅用于改名，不表示消息集合版本。
+              schema:
+                type: string
+                pattern: ^"[1-9][0-9]*"$
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: 会话UUID；不存在、删除或非本人统一404，管理员无豁免。
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          pattern: ^"[1-9][0-9]*"$
+        description: 预期title_version的强ETag，拒绝重复、弱版本、列表、通配符、前导零及溢出。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRenameInput'
+    delete:
+      operationId: deleteAgentConversation
+      summary: 不可恢复删除本人整会话
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。无正文，不要求幂等键或If-Match。原子物理删除消息/会话、释放配额并清除所有关联幂等成功正文，保留仅会话UUID/账户UUID/删除时间的永久最小标记。本人重复删除204，未知/他人404。
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: 不可恢复删除本人整会话
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: 会话UUID；不存在、删除或非本人统一404，管理员无豁免。
+  /me/agent/conversations/{id}/messages:
+    get:
+      operationId: listAgentMessages
+      summary: 向前分页读取本人消息历史
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。最近消息首查，sequence倒序选批后批内升序返回；下一页sequence小于本批最小序号。65条历史默认依次46–65、26–45；追加不改变旧边界，空/末页next_cursor=null。
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 向前分页读取本人消息历史
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessagePage'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: 会话UUID；不存在、删除或非本人统一404，管理员无豁免。
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+        description: 省略为20；显式空值、0、重复及未知参数拒绝。
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 4096
+        description: 独立认证加密游标，绑定账户、用途及历史会话；首查绝对期限默认1h，续页允许改变limit但不续期。显式空值、篡改、跨作用域或到期返回INVALID_CURSOR。
+    post:
+      operationId: appendAgentMessage
+      summary: 追加不可变用户消息
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。角色固定user，不自动回复；默认每会话200条（user与assistant共计），可配1–2000。正文有效UTF-8，仅CRLF/CR转LF，保留所有其它格式；默认4000
+        code point，可配1–16000。拒绝NUL、空/全空白、非法编码和未配对Unicode转义，超长不截断。消息body预算max(64KiB,12×max_message_chars+4KiB)，硬上限256KiB。固定24h幂等，规范化正文摘要，重放原ID/序号/201。
+      security:
+      - bearerAuth: []
+      responses:
+        '201':
+          description: 追加不可变用户消息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessage'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: 会话UUID；不存在、删除或非本人统一404，管理员无豁免。
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentMessageInput'
   /me/article-feedback:
     get:
       operationId: getMyArticleFeedback
@@ -1190,6 +1485,141 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    AgentConversation:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - title
+      - title_version
+      - message_count
+      - created_at
+      - last_activity_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+        title_version:
+          type: integer
+          format: int64
+          minimum: 1
+        message_count:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+          description: UTC RFC3339
+        last_activity_at:
+          type: string
+          format: date-time
+          description: UTC RFC3339
+    AgentMessage:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - conversation_id
+      - sequence
+      - role
+      - content
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        role:
+          type: string
+          enum:
+          - user
+          - assistant
+        content:
+          type: string
+          minLength: 1
+          maxLength: 16000
+          description: 规范化正文code point长度；默认配置上限4000，保留首尾空白及Markdown。
+        created_at:
+          type: string
+          format: date-time
+          description: UTC RFC3339
+    AgentCreateInput:
+      type: object
+      additionalProperties: false
+      description: 4KiB以内严格JSON，拒绝重复键、null、未知字段、非法UTF-8、未配对代理项及尾随JSON。
+      properties:
+        title:
+          type: string
+          minLength: 1
+          description: 省略为新对话；显式标题TrimSpace后1–100 code point，必须为单行且不含控制字符。
+    AgentRenameInput:
+      type: object
+      additionalProperties: false
+      required:
+      - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          description: TrimSpace后1–100 code point，单行且不含控制字符。拒绝null/重复/未知字段；body至多4KiB。
+    AgentMessageInput:
+      type: object
+      additionalProperties: false
+      required:
+      - content
+      properties:
+        content:
+          type: string
+          minLength: 1
+          description: 仅接受正文；拒绝role、user_id、序号、资源ID或时间等伪造字段及null。
+    AgentConversationPage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentConversation'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+          maxLength: 4096
+        has_more:
+          type: boolean
+    AgentMessagePage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentMessage'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+          maxLength: 4096
+        has_more:
+          type: boolean
     ArticleFeedbackPage:
       type: object
       additionalProperties: false
@@ -1755,6 +2185,8 @@ components:
                 ARTICLE_CONTENT_INVALID、ARTICLE_ASSET_INVALID、ASSET_QUOTA_EXCEEDED、
                 ASSET_PENDING_LIMIT_EXCEEDED、ASSET_UNAVAILABLE、SOURCE_VERSION_CONFLICT、
                 SOURCE_ALREADY_EXISTS、SOURCE_FETCH_IN_PROGRESS、SOURCE_FETCH_FAILED；
+                Agent会话：AGENT_CONVERSATION_NOT_FOUND、AGENT_TITLE_VERSION_CONFLICT、
+                AGENT_CONVERSATION_LIMIT_EXCEEDED、AGENT_MESSAGE_LIMIT_EXCEEDED、INVALID_CURSOR；
                 通用：VALIDATION_FAILED、NOT_FOUND、NOT_READY、INTERNAL_ERROR、
                 INVALID_CURSOR、SEARCH_UNAVAILABLE、DEPENDENCY_UNAVAILABLE。
             message:

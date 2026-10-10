@@ -112,3 +112,20 @@ latest ID 候选正常情况下约 5 秒收敛，命中不续期。发布、恢�
 | `VELIS_RECOMMEND_CURSOR_KEY` | 开发进程临时生成 | 独立于搜索密钥，仅从环境读取；Base64 解码后至少 32 字节；production 必填且各 API 实例相同 |
 
 推荐游标是独立的认证加密 v1 格式，绑定匿名/登录身份与排序版本；续页不重新召回或生成向量，但仍复核公开状态和本人有效负反馈。启用 Redis 后，首查排序计划使用服务端认证的真实用户 ID、规范化当前画像指纹及排序/召回/Embedding 配置指纹隔离，默认绝对 TTL 30 秒，命中不续期。窗口只冻结候选排序；每次首查重新建立时间和消费状态，每页仍复核当前公开状态、语义身份和本人有效排除。硬排除前原候选集合的签名变化会重算，包含无标签文章负反馈撤销及自然过期。匿名/无正向画像不使用计划缓存，latest_fallback 和依赖失败不写入计划；搜索恢复后，曾故障回退的新首查可重新召回。有效计划中的真实语义降级标志可保留至该 30 秒窗口结束。Redis 故障不单独改变 mode/degraded，清缓存不影响有效客户端游标的续页。当前身份和卡片使用共享读取缓存；PostgreSQL 读取失败返回 `503 DEPENDENCY_UNAVAILABLE`，不会直接返回搜索投影。新的候选进入新首查时仍受约 30 秒排序窗口约束；已有 latest 补位按首查站内发布时间水位及键集继续。
+
+## Agent 会话与内部工具
+
+Agent默认关闭，必须同时开启auth才注册路由。配置优先级仍为默认值 < YAML < 环境变量，专用游标密钥只接受环境注入。完整行为及启用示例见 [会话操作](agent-conversations.md) 和 [工具契约](agent-tools.md)。
+
+| YAML | 默认值 | 范围 | 环境变量 |
+| --- | --- | --- | --- |
+| agent.enabled | false | bool | VELIS_AGENT_ENABLED |
+| agent.max_conversations_per_user | 50 | 1–500 | VELIS_AGENT_MAX_CONVERSATIONS_PER_USER |
+| agent.max_messages_per_conversation | 200 | 1–2000 | VELIS_AGENT_MAX_MESSAGES_PER_CONVERSATION |
+| agent.max_message_chars | 4000 | 1–16000 code point | VELIS_AGENT_MAX_MESSAGE_CHARS |
+| agent.cursor_ttl | 1h | 1m–24h绝对期限 | VELIS_AGENT_CURSOR_TTL |
+| agent.tools.timeout | 5s | 100ms–10s | VELIS_AGENT_TOOL_TIMEOUT |
+| agent.tools.max_output_bytes | 131072 | 65536–1048576字节 | VELIS_AGENT_TOOL_MAX_OUTPUT_BYTES |
+| 不接受YAML密钥 | 无 | Base64解码后恰好32字节 | VELIS_AGENT_CURSOR_KEY |
+
+固定24h幂等、标题100字符、分页20/50、工具结果5/10、正文工具4000/8000和PIT清理250ms不另增配置。非开发API启用会话且缺密钥时启动失败；开发API可生成进程临时密钥，重启后旧游标失效。其他进程不新增密钥要求，也不新增readiness依赖。降低配额不删除存量，允许读取、删除和原成功重放。

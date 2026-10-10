@@ -38,6 +38,7 @@ WHERE a.status='published' AND a.id=ANY($1::bigint[])`, ids)
 		identity.GenerationID = valueOrEmpty(generation)
 		identity.EmbeddingID = valueOrEmpty(embedding)
 		identity.Profile = valueOrEmpty(profile)
+		item.RevisionID = identity.RevisionID
 		items = append(items, searchApp.CurrentArticle{Item: item, Identity: identity})
 	}
 	return items, rows.Err()

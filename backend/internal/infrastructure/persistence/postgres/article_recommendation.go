@@ -14,7 +14,7 @@ import (
 func (r *ArticleRepository) ListRecommendationLatest(ctx context.Context, cursor *articleDomain.Cursor, limit int, skip []int64, userID string, now, startedAt time.Time) ([]articleDomain.ListItem, error) {
 	query := `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
 v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
-g.summary,g.keywords,g.topics,g.generated_at,g.generation_method FROM velis.articles a
+g.summary,g.keywords,g.topics,g.generated_at,g.generation_method,a.current_revision_id FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
 LEFT JOIN velis.users u ON u.id=a.author_user_id
 LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
@@ -44,10 +44,12 @@ AND ($2::uuid IS NULL OR NOT EXISTS (
 	defer rows.Close()
 	items := make([]articleDomain.ListItem, 0, limit)
 	for rows.Next() {
-		item, _, err := scanPublished(rows, false)
+		var revisionID int64
+		item, _, err := scanPublished(extendedScanner{rows, []any{&revisionID}}, false)
 		if err != nil {
 			return nil, err
 		}
+		item.RevisionID = revisionID
 		items = append(items, item)
 	}
 	return items, rows.Err()

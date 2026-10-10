@@ -121,7 +121,9 @@ type Enhancement struct {
 }
 
 type ListItem struct {
-	ID                int64
+	ID int64
+	// RevisionID 仅用于内部工具引用，HTTP presenter 不输出此字段。
+	RevisionID        int64 `json:"-"`
 	Origin            OriginType
 	Title             string
 	CanonicalURL      string

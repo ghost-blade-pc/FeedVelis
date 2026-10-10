@@ -11,6 +11,7 @@ import (
 const QueryPlanVersion = 1
 
 type Request struct {
+	once     bool
 	Q        string
 	Keyword  *string
 	Topic    *string
@@ -26,6 +27,7 @@ type Filters struct {
 }
 
 type Query struct {
+	once    bool
 	Q       string  `json:"q"`
 	Filters Filters `json:"filters"`
 	Limit   int     `json:"-"`

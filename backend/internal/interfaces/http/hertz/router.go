@@ -52,6 +52,7 @@ type AuthOptions struct {
 	AdminSources handler.AdminSourceService
 	// Feedback 为 nil 时不注册反馈路由。
 	Feedback handler.ArticleFeedbackService
+	Agent    *handler.AgentConversation
 }
 
 func NewServer(options Options) *server.Hertz {
@@ -134,6 +135,16 @@ func registerAuthRoutes(h *server.Hertz, options *AuthOptions, logger *slog.Logg
 	}
 	if options.Feedback != nil {
 		registerArticleFeedbackRoutes(h, options)
+	}
+	if options.Agent != nil {
+		group := h.Group("/api/v1/me/agent/conversations", middleware.Authenticate(options.Service))
+		group.POST("", options.Agent.Observe("create"), middleware.RequireJSON(), options.Agent.Create)
+		group.GET("", options.Agent.Observe("list"), options.Agent.List)
+		group.GET("/:id", options.Agent.Observe("detail"), options.Agent.Detail)
+		group.PATCH("/:id", options.Agent.Observe("rename"), middleware.RequireJSON(), options.Agent.Rename)
+		group.DELETE("/:id", options.Agent.Observe("delete"), options.Agent.Delete)
+		group.GET("/:id/messages", options.Agent.Observe("history"), options.Agent.History)
+		group.POST("/:id/messages", options.Agent.Observe("append"), middleware.RequireJSON(), options.Agent.Append)
 	}
 }
 

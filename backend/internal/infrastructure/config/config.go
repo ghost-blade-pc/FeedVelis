@@ -33,6 +33,7 @@ type Config struct {
 	Search      SearchConfig      `yaml:"search"`
 	Recommend   RecommendConfig   `yaml:"recommend"`
 	Cache       CacheConfig       `yaml:"cache"`
+	Agent       AgentConfig       `yaml:"agent"`
 }
 
 type AppConfig struct {
@@ -102,6 +103,7 @@ type OutboxConfig struct {
 // Default 返回适合本地开发的非敏感默认配置。
 func Default() Config {
 	return Config{
+		Agent: defaultAgentConfig(),
 		Cache: defaultCacheConfig(),
 		App: AppConfig{
 			Name:        "velis",
@@ -226,6 +228,9 @@ func Load(path string) (Config, error) {
 }
 
 func applyEnvironment(cfg *Config) error {
+	if err := applyAgentEnvironment(cfg); err != nil {
+		return err
+	}
 	setString(&cfg.App.Name, "VELIS_APP_NAME")
 	setString(&cfg.App.Environment, "VELIS_APP_ENVIRONMENT")
 	setString(&cfg.App.LogLevel, "VELIS_LOG_LEVEL")
@@ -460,6 +465,9 @@ func setInt64(target *int64, key string) error {
 }
 
 func (cfg *Config) Validate() error {
+	if err := validateAgentConfig(&cfg.Agent); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.App.Name) == "" {
 		return errors.New("app.name 不能为空")
 	}

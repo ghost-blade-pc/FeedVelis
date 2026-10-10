@@ -317,13 +317,15 @@ func nextIdentity(ctx context.Context, tx pgx.Tx, table string) (int64, error) {
 func (r *ArticleRepository) GetPublished(ctx context.Context, articleID int64) (articleDomain.Detail, error) {
 	row := r.pool.QueryRow(ctx, `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,
 v.source_author_name,v.excerpt,a.source_published_at,a.discovered_at,a.published_at,
-u.id::text,u.nickname,g.summary,g.keywords,g.topics,g.generated_at,g.generation_method,v.sanitized_html
+u.id::text,u.nickname,g.summary,g.keywords,g.topics,g.generated_at,g.generation_method,v.sanitized_html,a.current_revision_id
 FROM velis.articles a JOIN velis.article_versions v ON v.id=a.current_revision_id
 	LEFT JOIN velis.sources s ON s.id=a.source_id LEFT JOIN velis.users u ON u.id=a.author_user_id
 	LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
 	LEFT JOIN velis.ai_generation_results g ON g.id=cs.generation_result_id AND g.article_id=a.id AND g.revision_id=a.current_revision_id
 WHERE a.id=$1 AND a.status='published'`, articleID)
-	item, html, err := scanPublished(row, true)
+	var revisionID int64
+	item, html, err := scanPublished(extendedScanner{row, []any{&revisionID}}, true)
+	item.RevisionID = revisionID
 	if errors.Is(err, pgx.ErrNoRows) {
 		return articleDomain.Detail{}, articleDomain.ErrNotFound
 	}
@@ -333,7 +335,7 @@ WHERE a.id=$1 AND a.status='published'`, articleID)
 func (r *ArticleRepository) ListPublished(ctx context.Context, cursor *articleDomain.Cursor, limit int) ([]articleDomain.ListItem, error) {
 	query := `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
 v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
-g.summary,g.keywords,g.topics,g.generated_at,g.generation_method FROM velis.articles a
+g.summary,g.keywords,g.topics,g.generated_at,g.generation_method,a.current_revision_id FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
 LEFT JOIN velis.users u ON u.id=a.author_user_id
 LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
@@ -353,7 +355,9 @@ WHERE a.status='published'`
 	defer rows.Close()
 	items := make([]articleDomain.ListItem, 0)
 	for rows.Next() {
-		item, _, err := scanPublished(rows, false)
+		var revisionID int64
+		item, _, err := scanPublished(extendedScanner{rows, []any{&revisionID}}, false)
+		item.RevisionID = revisionID
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +374,7 @@ func (r *ArticleRepository) ListPublishedByIDs(ctx context.Context, articleIDs [
 	}
 	rows, err := querier(ctx, r.pool).Query(ctx, `SELECT a.id,a.origin_type,v.title,a.canonical_url,s.id,s.title,s.site_url,v.source_author_name,
 v.excerpt,a.source_published_at,a.discovered_at,COALESCE(a.source_published_at,a.published_at),u.id::text,u.nickname,
-g.summary,g.keywords,g.topics,g.generated_at,g.generation_method FROM velis.articles a
+g.summary,g.keywords,g.topics,g.generated_at,g.generation_method,a.current_revision_id FROM velis.articles a
 JOIN velis.article_versions v ON v.id=a.current_revision_id LEFT JOIN velis.sources s ON s.id=a.source_id
 LEFT JOIN velis.users u ON u.id=a.author_user_id
 LEFT JOIN velis.ai_current_selections cs ON cs.article_id=a.id AND cs.revision_id=a.current_revision_id
@@ -382,7 +386,9 @@ WHERE a.status='published' AND a.id=ANY($1::bigint[])`, articleIDs)
 	defer rows.Close()
 	items := make([]articleDomain.ListItem, 0, len(articleIDs))
 	for rows.Next() {
-		item, _, scanErr := scanPublished(rows, false)
+		var revisionID int64
+		item, _, scanErr := scanPublished(extendedScanner{rows, []any{&revisionID}}, false)
+		item.RevisionID = revisionID
 		if scanErr != nil {
 			return nil, scanErr
 		}

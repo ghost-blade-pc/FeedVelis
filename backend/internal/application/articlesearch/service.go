@@ -46,6 +46,7 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 		result = ResultValidation
 		return Page{}, err
 	}
+	query.once = request.once
 	if s.index == nil || s.reader == nil || s.codec == nil {
 		result = ResultSearchUnavailable
 		return Page{}, controlled(CodeSearchUnavailable, ErrIndexUnavailable)
@@ -94,7 +95,13 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 	closeOnReturn := true
 	defer func() {
 		if closeOnReturn {
-			s.closePIT(ctx, pitID)
+			if query.once {
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 250*time.Millisecond)
+				defer cancel()
+				s.closePIT(cleanup, pitID)
+			} else {
+				s.closePIT(ctx, pitID)
+			}
 		}
 	}()
 
@@ -111,6 +118,9 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 		size := min(s.config.CandidateBatchSize, s.config.MaxCandidatesPerRequest-scanned)
 		stageStarted := s.now()
 		batch, searchErr := s.index.Search(ctx, IndexRequest{Query: query, PITID: pitID, After: after, Size: size, KeepAlive: s.config.PITKeepAlive})
+		if query.once && batch.PITID != "" {
+			pitID = batch.PITID
+		}
 		s.observer.ObserveStage(ctx, StageOpenSearch, s.now().Sub(stageStarted))
 		if searchErr != nil {
 			if errors.Is(searchErr, ErrPITNotFound) {
@@ -136,7 +146,26 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 			ids[index] = candidate.ArticleID
 		}
 		stageStarted = s.now()
-		items, readErr := s.reader.ListPublishedByIDs(ctx, ids)
+		var items []articleItem
+		var readErr error
+		if query.once {
+			reader := s.currentReader
+			if reader == nil {
+				reader, _ = s.reader.(CurrentArticleReader)
+			}
+			if reader == nil {
+				return Page{}, controlled(CodeDependencyUnavailable, errors.New("当前修订读取未配置"))
+			}
+			var current []CurrentArticle
+			current, readErr = reader.ListPublishedWithIdentity(ctx, ids)
+			for _, value := range current {
+				item := value.Item
+				item.RevisionID = value.Identity.RevisionID
+				items = append(items, item)
+			}
+		} else {
+			items, readErr = s.reader.ListPublishedByIDs(ctx, ids)
+		}
 		s.observer.ObserveStage(ctx, StagePostgres, s.now().Sub(stageStarted))
 		if readErr != nil {
 			result = ResultDependencyUnavailable
@@ -172,7 +201,9 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 	if len(visible) > query.Limit {
 		page.HasMore = true
 		last := visible[query.Limit-1].position
-		page.NextCursor, err = s.nextCursor(query, pitID, last)
+		if !query.once {
+			page.NextCursor, err = s.nextCursor(query, pitID, last)
+		}
 	} else if !exhausted && scanned >= s.config.MaxCandidatesPerRequest {
 		page.HasMore = true
 		s.observer.ObserveScanLimit(ctx)
@@ -180,13 +211,15 @@ func (s *Service) Search(ctx context.Context, request Request) (page Page, retur
 			result = ResultInternal
 			return Page{}, controlled(CodeInternal, errors.New("扫描上限缺少推进位置"))
 		}
-		page.NextCursor, err = s.nextCursor(query, pitID, *lastChecked)
+		if !query.once {
+			page.NextCursor, err = s.nextCursor(query, pitID, *lastChecked)
+		}
 	}
 	if err != nil {
 		result = ResultInternal
 		return Page{}, controlled(CodeInternal, err)
 	}
-	if page.HasMore {
+	if page.HasMore && !query.once {
 		closeOnReturn = false
 	}
 	s.mode(ctx, ModeBM25, "disabled")
@@ -224,6 +257,19 @@ func errOr(err, fallback error) error {
 }
 
 type UnavailableService struct{}
+
+// SearchOnce 共享检索与最终事实装配，但禁止生成续页并独立有界清理PIT。
+func (s *Service) SearchOnce(ctx context.Context, request Request) (Page, error) {
+	if request.Cursor != "" {
+		return Page{}, controlled(CodeValidationFailed, errors.New("一次检索不接受游标"))
+	}
+	request.once = true
+	return s.Search(ctx, request)
+}
+
+func (UnavailableService) SearchOnce(context.Context, Request) (Page, error) {
+	return Page{}, controlled(CodeSearchUnavailable, ErrIndexUnavailable)
+}
 
 func (UnavailableService) Search(context.Context, Request) (Page, error) {
 	return Page{}, controlled(CodeSearchUnavailable, ErrIndexUnavailable)

@@ -3,6 +3,17 @@ app:
   environment: development
   log_level: info
 
+# 私有会话基础默认关闭，同时要求auth开启；专用游标密钥仅接受环境变量。
+agent:
+  enabled: false
+  max_conversations_per_user: 50
+  max_messages_per_conversation: 200
+  max_message_chars: 4000
+  cursor_ttl: 1h
+  tools:
+    timeout: 5s
+    max_output_bytes: 131072
+
 http:
   address: 0.0.0.0:8080
   # API 内部 Prometheus listener；故障不影响核心 readiness。

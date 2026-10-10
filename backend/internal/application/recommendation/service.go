@@ -65,6 +65,13 @@ type Service struct {
 	planFallback func(context.Context)
 }
 
+type onceContextKey struct{}
+
+// GetOnce 复用本人画像、排除和最终事实装配，不生成续页令牌。
+func (s *Service) GetOnce(ctx context.Context, userID string, limit int) (Page, error) {
+	return s.Get(context.WithValue(ctx, onceContextKey{}, true), userID, limit, "")
+}
+
 func NewService(profile ProfileReader, index CandidateIndex, reader Reader, codec *CursorCodec, embedder QueryEmbedder, config Config, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
@@ -288,7 +295,9 @@ func (s *Service) page(ctx context.Context, userID string, limit int, state Curs
 			s.observer.AddFiltered(ctx, 1)
 			continue
 		}
-		page.Items = append(page.Items, Item{Article: item.Item, Reason: candidate.Reason})
+		value := item.Item
+		value.RevisionID = item.Identity.RevisionID
+		page.Items = append(page.Items, Item{Article: value, Reason: candidate.Reason})
 	}
 	for i := state.Offset; i < len(state.Items); i++ {
 		candidate := state.Items[i]
@@ -343,7 +352,7 @@ func (s *Service) page(ctx context.Context, userID string, limit int, state Curs
 		}
 		s.observer.AddSource(ctx, origin, 1)
 	}
-	if page.HasMore {
+	if once, _ := ctx.Value(onceContextKey{}).(bool); page.HasMore && !once {
 		token, err := s.codec.Encode(state)
 		if err != nil {
 			return Page{}, ErrInvalidCursor

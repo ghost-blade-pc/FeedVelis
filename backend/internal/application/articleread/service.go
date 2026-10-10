@@ -155,6 +155,7 @@ func (s *Service) assemble(view context.Context, ids []int64, allowed bool) ([]a
 			return nil, nil, ErrInconsistentFragment
 		}
 		item := fact.Item
+		item.RevisionID = fact.Identity.RevisionID
 		item.Title = fragment.Title
 		item.Excerpt = fragment.Excerpt
 		item.Enhancement = fragment.Enhancement
