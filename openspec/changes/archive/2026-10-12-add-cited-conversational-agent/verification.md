@@ -57,10 +57,21 @@ SSE 的真实 TCP/数据库测试覆盖跨实例重放、非法/重复/未来/�
 
 ## 固定阅读评测与交接
 
-[十项固定评测](../../../backend/internal/infrastructure/ai/eino/testdata/reading-eval.json) 契约全部通过。七个文章回答有合法本轮引用身份，其中六个有固定材料支持标注，一个刻意错误的断言仍通过身份校验；伪造证据和写工具注入被拒绝，真正空结果使用服务端模板。引用身份与语义支持分别输出，不能把身份校验解释为完整语义证明，不能把确定性桩的通过率解释为真实模型质量。
+[十项固定评测](../../../../backend/internal/infrastructure/ai/eino/testdata/reading-eval.json) 契约全部通过。七个文章回答有合法本轮引用身份，其中六个有固定材料支持标注，一个刻意错误的断言仍通过身份校验；伪造证据和写工具注入被拒绝，真正空结果使用服务端模板。引用身份与语义支持分别输出，不能把身份校验解释为完整语义证明，不能把确定性桩的通过率解释为真实模型质量。
 
-下一 Web change 复用 [OpenAPI](../../../backend/api/openapi/velis.yaml)、[客户端接入](../../../docs/agent-runs.md)、[协议夹具](../../../backend/test/fixtures/agent-runs/protocol.json)、成功/澄清/redacted 回答夹具及真实 nginx 路由。关键约定是重连先用详情替换快照、按完整事件位置去重、EOF 查询原回合、显式 cancel 独立调用、partial 与 redacted 分开。Web 体验和完整产品评测尚未实施；笔记、外部来源、写作产物和长期偏好需各自定义新工具权限、副作用和证据类型。
+下一 Web change 复用 [OpenAPI](../../../../backend/api/openapi/velis.yaml)、[客户端接入](../../../../docs/agent-runs.md)、[协议夹具](../../../../backend/test/fixtures/agent-runs/protocol.json)、成功/澄清/redacted 回答夹具及真实 nginx 路由。关键约定是重连先用详情替换快照、按完整事件位置去重、EOF 查询原回合、显式 cancel 独立调用、partial 与 redacted 分开。Web 体验和完整产品评测尚未实施；笔记、外部来源、写作产物和长期偏好需各自定义新工具权限、副作用和证据类型。
 
 收费模型冒烟未运行。若另行明确授权，应单独记录 Provider/model、profile/prompt 版本、日期、实际 usage 完整性、费用及人工语义评判，凭据仅环境注入。独立生成默认关闭，模型不纳入 readiness。
 
 本机原始证据：`/tmp/feedvelis-agent-acceptance/{integration,protocol}.json`、`/tmp/feedvelis-agent-affected-reads.json`、`/tmp/feedvelis-agent-make-check.log`、`/tmp/feedvelis-agent-benchmark.log`、`/tmp/feedvelis-agent-nginx-terminal.log`。这些临时文件用于本次复核；可移植的执行命令和固定夹具已写入仓库文档。
+
+## 长期规格同步与归档
+
+2026-10-12，按用户确认先同步长期规格，再归档至 `openspec/changes/archive/2026-10-12-add-cited-conversational-agent/`。
+
+- `agent-evidence`、`agent-orchestration`、`agent-runs`、`agent-streaming` 新增长期规格，共 37 项要求；Purpose 沿用各 delta 原文。
+- `agent-conversations` 更新 7 项要求，保留原标题、Purpose、未涉及要求和全部既有场景。
+- 归档前任务为 49/49，全部规划产物完成；`openspec validate add-cited-conversational-agent --strict` 与 `openspec validate --specs --strict` 通过，后者为 16 项通过、0 失败。
+- 归档后同步更新 Roadmap、数据文档与测试文档的验收链接，并核对归档文档内部相对链接。
+
+本次仅同步规格和归档文档；实施与测试结果仍以上述 2026-10-11 验收记录为准。未提交、推送或部署业务服务，Web 体验与完整产品评测留待后续 change。

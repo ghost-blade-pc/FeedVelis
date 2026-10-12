@@ -87,4 +87,4 @@ GOCACHE=/tmp/feedvelis-go-cache go test -race -count=1 -v \
 
 真实数据库用例覆盖 up、空事实 down/up、有事实拒绝 down、归属/角色/关联约束、严格命令、最新用户消息、显式三次重试、接受快照、24 小时窗口、结算失败回滚、最外层提交响应丢失、两个服务实例的账户/会话/最后助手名额竞争、旧追加重放、降低配额后保存回调拒绝、稳定分页与游标隔离、成功保留与失败清理、清理失败回滚和删除竞争。删除查询确认五类回合表与消息都无残留，幂等快照与删除标记各保留三字段。
 
-早期迁移、删除与保留期测试使用构造夹具；完整执行、模型协议、真实依赖及 nginx 联合验收见[测试说明](agent-testing.md)和[阶段记录](../openspec/changes/add-cited-conversational-agent/verification.md)。未调用收费模型，未提交、推送或部署业务服务。
+早期迁移、删除与保留期测试使用构造夹具；完整执行、模型协议、真实依赖及 nginx 联合验收见[测试说明](agent-testing.md)和[阶段记录](../openspec/changes/archive/2026-10-12-add-cited-conversational-agent/verification.md)。未调用收费模型，未提交、推送或部署业务服务。

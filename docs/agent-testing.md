@@ -43,7 +43,7 @@ GOCACHE=/tmp/feedvelis-go-cache go test ./internal/infrastructure/ai/eino \
 
 每项分别报告引用身份和固定材料的语义支持标注，以及模型/工具调用数。十项契约通过不表示真实模型语义正确率 100%。七个文章回答中六个有支持标注，一个刻意构造的错误断言仍通过身份校验；另一个伪造引用被拒绝，写工具注入被拒绝，空结果返回服务端模板。标注只针对固定材料和句子，不是通用语义判定器；真实用户问题和 Provider 泛化仍需下一阶段完整产品评测。
 
-benchmark 记录本机桩的总耗时、分配字节和次数，包含桩固定分批等待，不能解释为真实 Provider 延迟或生产容量。默认资源上限、事件上限、实际 TCP 慢写与双执行器竞争另有回归测试。完整结果见[阶段验收记录](../openspec/changes/add-cited-conversational-agent/verification.md)。
+benchmark 记录本机桩的总耗时、分配字节和次数，包含桩固定分批等待，不能解释为真实 Provider 延迟或生产容量。默认资源上限、事件上限、实际 TCP 慢写与双执行器竞争另有回归测试。完整结果见[阶段验收记录](../openspec/changes/archive/2026-10-12-add-cited-conversational-agent/verification.md)。
 
 ## 下一 Web change 与可选真实模型冒烟
 
