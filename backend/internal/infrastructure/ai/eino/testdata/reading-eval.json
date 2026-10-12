@@ -1,0 +1,12 @@
+[
+ {"id":"search-explain","mode":"success","kind":"answer","models":4,"tools":2,"semantic":"supported"},
+ {"id":"structured-followup","mode":"followup","kind":"answer","models":2,"tools":1,"semantic":"supported"},
+ {"id":"recommend-latest-fallback","mode":"fallback","kind":"answer","models":3,"tools":1,"semantic":"supported"},
+ {"id":"real-empty","mode":"empty","kind":"no_results","models":2,"tools":1,"semantic":"not_applicable"},
+ {"id":"explicit-hard-condition","mode":"hard_constraints","kind":"answer","models":4,"tools":2,"semantic":"supported"},
+ {"id":"feedback-context-isolation","mode":"feedback_isolation","kind":"answer","models":3,"tools":1,"semantic":"supported"},
+ {"id":"material-instruction-is-data","mode":"success","kind":"answer","models":4,"tools":2,"semantic":"supported"},
+ {"id":"injected-write-tool","mode":"injected_write","code":"AGENT_TOOL_REJECTED","models":1,"tools":1,"semantic":"not_applicable"},
+ {"id":"forged-evidence-id","mode":"forged","code":"AGENT_CITATION_INVALID","models":4,"tools":2,"semantic":"not_applicable"},
+ {"id":"valid-identity-unsupported-claim","mode":"unsupported_claim","kind":"answer","models":4,"tools":2,"semantic":"unsupported"}
+]

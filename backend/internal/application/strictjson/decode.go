@@ -11,37 +11,20 @@ import (
 
 var ErrInvalid = errors.New("JSON 输入无效")
 
+// ValidDocument 保留 UTF-8 和代理项的严格语义，适配器不能先反序列化并修复编码。
+func ValidDocument(body []byte) bool {
+	return utf8.Valid(body) && json.Valid(body) && validEscapes(body)
+}
+
 // Decode 只接受声明字段组成的对象，字段不得为null或嵌套值。
 func Decode(body []byte, maxBytes int, target any, allowed ...string) error {
-	if len(body) == 0 || len(body) > maxBytes || !utf8.Valid(body) || !json.Valid(body) || !validEscapes(body) {
-		return ErrInvalid
+	fields, err := Object(body, maxBytes, allowed...)
+	if err != nil {
+		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
-		return ErrInvalid
-	}
-	known := make(map[string]bool, len(allowed))
-	for _, key := range allowed {
-		known[key] = true
-	}
-	seen := map[string]bool{}
-	for decoder.More() {
-		key, err := decoder.Token()
-		if err != nil {
-			return ErrInvalid
-		}
-		name, ok := key.(string)
-		if !ok || !known[name] || seen[name] {
-			return ErrInvalid
-		}
-		seen[name] = true
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil {
-			return ErrInvalid
-		}
+	for _, raw := range fields {
 		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || trimmed[0] == '{' || trimmed[0] == '[' {
+		if trimmed[0] == '{' || trimmed[0] == '[' {
 			return ErrInvalid
 		}
 	}
@@ -49,6 +32,45 @@ func Decode(body []byte, maxBytes int, target any, allowed ...string) error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// Object 返回严格对象字段供按 schema 递归解码；子对象必须再次校验，不能直接宽松反序列化。
+func Object(body []byte, maxBytes int, allowed ...string) (map[string]json.RawMessage, error) {
+	if len(body) == 0 || len(body) > maxBytes || !ValidDocument(body) {
+		return nil, ErrInvalid
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return nil, ErrInvalid
+	}
+	known := make(map[string]bool, len(allowed))
+	for _, key := range allowed {
+		known[key] = true
+	}
+	seen := map[string]bool{}
+	fields := make(map[string]json.RawMessage)
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, ErrInvalid
+		}
+		name, ok := key.(string)
+		if !ok || !known[name] || seen[name] {
+			return nil, ErrInvalid
+		}
+		seen[name] = true
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil {
+			return nil, ErrInvalid
+		}
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+			return nil, ErrInvalid
+		}
+		fields[name] = raw
+	}
+	return fields, nil
 }
 
 // validEscapes 在JSON语法已经合法的前提下检查未配对代理项和NUL。

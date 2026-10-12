@@ -91,6 +91,10 @@ func TestAgentConversationMigrationSafeDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	runDown, err := os.ReadFile("../../migrations/000013_create_agent_runs.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// 每次在同一事务中测试回退；保护失败后回滚，不触碰迁移版本表。
 	for _, fixture := range []string{"空库", "空状态", "非空计数", "会话", "消息", "删除标记", "Agent幂等"} {
 		t.Run(fixture, func(t *testing.T) {
@@ -99,6 +103,10 @@ func TestAgentConversationMigrationSafeDown(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = tx.Rollback(ctx) }()
+			// 按编号逆序解除后续迁移的外键；全部操作仍由本测试事务回滚。
+			if _, err := tx.Exec(ctx, string(runDown)); err != nil {
+				t.Fatal(err)
+			}
 			if fixture == "空状态" {
 				_, err = tx.Exec(ctx, `INSERT INTO velis.agent_user_state(user_id) VALUES($1)`, agentTestUser)
 			}

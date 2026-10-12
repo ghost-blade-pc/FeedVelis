@@ -13,6 +13,26 @@ agent:
   tools:
     timeout: 5s
     max_output_bytes: 131072
+  # 对话模型与内容增强独立；凭据仅通过 VELIS_AGENT_GENERATION_API_KEY 注入。
+  generation:
+    enabled: false
+    provider: ""
+    base_url: ""
+    model: ""
+    profile_version: agent-model-v1
+    prompt_version: agent-reading-v1
+    timeout: 30s
+    max_tokens_parameter: max_tokens
+    max_output_tokens: 2048
+  execution:
+    timeout: 60s
+    max_model_calls: 4
+    max_tool_calls: 6
+    max_output_tokens: 8192
+    audit_token_budget: 65536
+    max_input_bytes: 49152
+    max_answer_chars: 8000
+    concurrency: 4
 
 http:
   address: 0.0.0.0:8080

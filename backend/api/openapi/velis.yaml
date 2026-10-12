@@ -6,6 +6,226 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /me/agent/conversations/{id}/runs:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: createAgentRun
+      summary: 接受本人最新 user 消息的生成回合
+      security:
+      - bearerAuth: []
+      responses:
+        '202':
+          description: 接受本人最新 user 消息的生成回合
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRunAccepted'
+          headers:
+            Location:
+              description: 原回合详情地址
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      description: 严格 JSON 最大 16 KiB，拒绝未知/重复字段、null、重复幂等头及查询参数。24 小时同键重放固定 accepted
+        快照和 202，不启动重复生成。账户最多两个、会话最多一个活动回合，预留一个助手名额。独立生成默认关闭，新接受返回 503，原重放仍可用。
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRunInput'
+    get:
+      operationId: listAgentRuns
+      summary: 读取本人回合摘要
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 读取本人回合摘要
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRunPage'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+      - name: cursor
+        in: query
+        schema:
+          type: string
+  /me/agent/conversations/{id}/runs/{run_id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getAgentRun
+      summary: 读取当前可见性投影后的回合详情
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 读取当前可见性投影后的回合详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRunDetail'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      description: 读取不启动模型；partial 不表示成功。任一引用失效隐藏整块，数据库原文保持不变。未知 usage 返回 null。
+  /me/agent/conversations/{id}/runs/{run_id}/cancel:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: cancelAgentRun
+      summary: 显式取消原回合，终态重复取消返回 200
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 显式取消原回合，终态重复取消返回 200
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRunSummary'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      description: 无请求体或查询参数；取消和成功按先提交者唯一生效。
+  /me/agent/conversations/{id}/runs/{run_id}/events:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: subscribeAgentRun
+      summary: 续读已提交的回合事件
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: Last-Event-ID
+        in: header
+        schema:
+          type: string
+          pattern: ^v1:[0-9a-f-]{36}:[1-9][0-9]*$
+        description: 单一请求头，绑定本回合。授权与归属检查先于位置错误；跨回合、未来、重复及非法位置返回 INVALID_AGENT_EVENT_ID。
+      description: 使用 fetch + Bearer；禁止 URL 令牌和全部查询参数。每批按当前来源事实投影，重放同一 ID 可变为 redacted。每
+        10 秒心跳，单次最多 90 秒，写阻塞最多 5 秒，实例最多 64、账户最多 4 个订阅。注销/删除/访问令牌到期终止订阅，断线不取消回合。五种持久事件见
+        AgentRunEvent；stream.error 无 id、不入库、不表示回合终态。重连先读取详情替换本地快照，再按 ID 去重续读。EOF 必须查询原回合。
+      responses:
+        '200':
+          description: UTF-8 SSE，每事件及时 flush
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store
+            X-Accel-Buffering:
+              schema:
+                const: 'no'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '204':
+          description: 终态最后位置已消费
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '410':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /me/agent/conversations:
     post:
       operationId: createAgentConversation
@@ -263,7 +483,7 @@ paths:
     post:
       operationId: appendAgentMessage
       summary: 追加不可变用户消息
-      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→版本/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。角色固定user，不自动回复；默认每会话200条（user与assistant共计），可配1–2000。正文有效UTF-8，仅CRLF/CR转LF，保留所有其它格式；默认4000
+      description: 仅auth与agent同时启用时注册。认证→基本格式→归属/删除→幂等→活动回合/配额；失败使用中文error.message和request_id。无Redis、OpenSearch、RabbitMQ或模型依赖。角色固定user，不自动回复；默认每会话200条（user、assistant与活动回合助手预留共计），可配1–2000。合法旧成功重放先于活动回合检查；存在accepted/running回合时，新追加返回409 AGENT_RUN_IN_PROGRESS，不占用幂等键或消息序号。预留不增加message_count。正文有效UTF-8，仅CRLF/CR转LF，保留所有其它格式；默认4000
         code point，可配1–16000。拒绝NUL、空/全空白、非法编码和未配对Unicode转义，超长不截断。消息body预算max(64KiB,12×max_message_chars+4KiB)，硬上限256KiB。固定24h幂等，规范化正文摘要，重放原ID/序号/201。
       security:
       - bearerAuth: []
@@ -1485,6 +1705,465 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    AgentRunInput:
+      type: object
+      additionalProperties: false
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        context_article_id:
+          type: integer
+          minimum: 1
+        retry_of:
+          type: string
+          format: uuid
+        constraints:
+          type: object
+          additionalProperties: false
+          properties:
+            keyword:
+              type: string
+            topic:
+              type: string
+            source_id:
+              type: integer
+              minimum: 1
+          required: []
+      required:
+      - message_id
+    AgentRunAccepted:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        user_message_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - accepted
+          - running
+          - succeeded
+          - failed
+          - canceled
+          - timed_out
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - conversation_id
+      - user_message_id
+      - status
+      - created_at
+    AgentRunSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        user_message_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - accepted
+          - running
+          - succeeded
+          - failed
+          - canceled
+          - timed_out
+        created_at:
+          type: string
+          format: date-time
+        assistant_message_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+        finished_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        partial:
+          type: boolean
+      required:
+      - id
+      - conversation_id
+      - user_message_id
+      - status
+      - created_at
+      - assistant_message_id
+      - error_code
+      - finished_at
+      - partial
+    AgentRunDetail:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        user_message_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - accepted
+          - running
+          - succeeded
+          - failed
+          - canceled
+          - timed_out
+        created_at:
+          type: string
+          format: date-time
+        assistant_message_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+        finished_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        partial:
+          type: boolean
+        answer:
+          anyOf:
+          - $ref: '#/components/schemas/AgentAnswer'
+          - type: 'null'
+        usage:
+          $ref: '#/components/schemas/AgentRunUsage'
+      required:
+      - id
+      - conversation_id
+      - user_message_id
+      - status
+      - created_at
+      - assistant_message_id
+      - error_code
+      - finished_at
+      - partial
+      - answer
+      - usage
+    AgentRunPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentRunSummary'
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+        has_more:
+          type: boolean
+      required:
+      - items
+      - next_cursor
+      - has_more
+    AgentRunUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        model_calls:
+          type: integer
+          minimum: 0
+        tool_calls:
+          type: integer
+          minimum: 0
+        input_tokens:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        output_tokens:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        total_tokens:
+          anyOf:
+          - type: integer
+            minimum: 0
+          - type: 'null'
+        usage_complete:
+          type: boolean
+      required:
+      - model_calls
+      - tool_calls
+      - input_tokens
+      - output_tokens
+      - total_tokens
+      - usage_complete
+    AgentAnswer:
+      type: object
+      additionalProperties: false
+      properties:
+        version:
+          const: 1
+        kind:
+          enum:
+          - answer
+          - no_results
+          - clarification
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentAnswerBlock'
+          maxItems: 32
+        references:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentReference'
+        cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentCard'
+          maxItems: 10
+        redacted:
+          type: boolean
+      required:
+      - version
+      - kind
+      - blocks
+      - references
+      - cards
+      - redacted
+    AgentAnswerBlock:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        evidence_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 32
+        quotes:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentQuote'
+        redacted:
+          type: boolean
+      required:
+      - id
+      - text
+      - evidence_ids
+      - redacted
+    AgentQuote:
+      type: object
+      additionalProperties: false
+      properties:
+        evidence_id:
+          type: string
+          format: uuid
+        text:
+          type: string
+      required:
+      - evidence_id
+      - text
+    AgentReference:
+      type: object
+      additionalProperties: false
+      properties:
+        evidence_id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          minimum: 1
+        kind:
+          const: article
+        article_id:
+          type: integer
+          minimum: 1
+        revision_id:
+          type: integer
+          minimum: 1
+        content_kind:
+          enum:
+          - summary
+          - body
+        truncated:
+          type: boolean
+      required:
+      - evidence_id
+      - number
+      - kind
+      - article_id
+      - revision_id
+      - content_kind
+      - truncated
+    AgentCard:
+      type: object
+      additionalProperties: false
+      properties:
+        number:
+          type: integer
+          minimum: 1
+        article_id:
+          type: integer
+          minimum: 0
+        revision_id:
+          type: integer
+          minimum: 0
+        title:
+          type: string
+        author:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            properties:
+              id:
+                type: string
+              nickname:
+                type: string
+              name:
+                type: string
+            required: []
+          - type: 'null'
+        origin_type:
+          type: string
+        source:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            properties:
+              id:
+                type: integer
+                minimum: 0
+              title:
+                type: string
+            required:
+            - id
+            - title
+          - type: 'null'
+        original_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+        summary_source:
+          type: string
+        metadata_truncated:
+          type: boolean
+        summary:
+          type: string
+        path:
+          type: string
+        truncated:
+          type: boolean
+        mode:
+          type: string
+        degrade_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+        recommendation_reason:
+          type: string
+        degraded:
+          type: boolean
+      required:
+      - number
+      - article_id
+      - revision_id
+      - title
+      - path
+      - truncated
+    AgentRunEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        version:
+          const: 1
+        run_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          minimum: 1
+        kind:
+          enum:
+          - run.status
+          - tool.status
+          - answer.sources
+          - answer.block
+          - run.terminal
+        status:
+          type: string
+          enum:
+          - accepted
+          - running
+          - succeeded
+          - failed
+          - canceled
+          - timed_out
+        tool_name:
+          enum:
+          - search_articles
+          - recommend_articles
+          - get_article
+        tool_status:
+          enum:
+          - started
+          - succeeded
+          - failed
+        error_code:
+          type: string
+        block:
+          $ref: '#/components/schemas/AgentAnswerBlock'
+        references:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentReference'
+        cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentCard'
+        partial:
+          type: boolean
+        redacted:
+          type: boolean
+      required:
+      - version
+      - run_id
+      - sequence
+      - kind
+      - partial
+      - redacted
     AgentConversation:
       type: object
       additionalProperties: false
@@ -1529,6 +2208,13 @@ components:
       - content
       - created_at
       properties:
+        run_id:
+          type: string
+          format: uuid
+          description: 仅受控生成助手包含其回合身份。
+        content_redacted:
+          type: boolean
+          description: 仅受控生成助手包含，来源失效时为 true。
         id:
           type: string
           format: uuid
@@ -1547,8 +2233,8 @@ components:
         content:
           type: string
           minLength: 1
-          maxLength: 16000
-          description: 规范化正文code point长度；默认配置上限4000，保留首尾空白及Markdown。
+          maxLength: 16062
+          description: 用户消息默认上限4000 code point；生成助手最多16000正文字符加片段分隔符。保留首尾空白及Markdown。
         created_at:
           type: string
           format: date-time

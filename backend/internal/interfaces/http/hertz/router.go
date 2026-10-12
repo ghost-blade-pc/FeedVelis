@@ -51,8 +51,9 @@ type AuthOptions struct {
 	// AdminSources 为 nil 时不注册管理员 Source 路由。
 	AdminSources handler.AdminSourceService
 	// Feedback 为 nil 时不注册反馈路由。
-	Feedback handler.ArticleFeedbackService
-	Agent    *handler.AgentConversation
+	Feedback  handler.ArticleFeedbackService
+	Agent     *handler.AgentConversation
+	AgentRuns *handler.AgentRun
 }
 
 func NewServer(options Options) *server.Hertz {
@@ -60,6 +61,7 @@ func NewServer(options Options) *server.Hertz {
 		server.WithHostPorts(options.Address),
 		server.WithExitWaitTime(options.ShutdownTimeout),
 		server.WithDisablePrintRoute(true),
+		server.WithSenseClientDisconnection(true),
 	)
 
 	// 固定顺序：Request ID → Recovery → Access Log。认证路由在其后按端点矩阵追加校验。
@@ -145,6 +147,14 @@ func registerAuthRoutes(h *server.Hertz, options *AuthOptions, logger *slog.Logg
 		group.DELETE("/:id", options.Agent.Observe("delete"), options.Agent.Delete)
 		group.GET("/:id/messages", options.Agent.Observe("history"), options.Agent.History)
 		group.POST("/:id/messages", options.Agent.Observe("append"), middleware.RequireJSON(), options.Agent.Append)
+	}
+	if options.AgentRuns != nil {
+		group := h.Group("/api/v1/me/agent/conversations/:id/runs", middleware.Authenticate(options.Service))
+		group.POST("", middleware.RequireJSON(), options.AgentRuns.Create)
+		group.GET("", options.AgentRuns.List)
+		group.GET("/:run_id", options.AgentRuns.Detail)
+		group.POST("/:run_id/cancel", options.AgentRuns.Cancel)
+		group.GET("/:run_id/events", options.AgentRuns.Events)
 	}
 }
 

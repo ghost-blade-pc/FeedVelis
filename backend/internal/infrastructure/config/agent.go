@@ -9,14 +9,16 @@ import (
 )
 
 type AgentConfig struct {
-	Enabled                    bool             `yaml:"enabled"`
-	MaxConversationsPerUser    int              `yaml:"max_conversations_per_user"`
-	MaxMessagesPerConversation int              `yaml:"max_messages_per_conversation"`
-	MaxMessageChars            int              `yaml:"max_message_chars"`
-	CursorTTLRaw               string           `yaml:"cursor_ttl"`
-	CursorTTL                  time.Duration    `yaml:"-"`
-	CursorKey                  SecretBytes      `yaml:"-"`
-	Tools                      AgentToolsConfig `yaml:"tools"`
+	Enabled                    bool                  `yaml:"enabled"`
+	MaxConversationsPerUser    int                   `yaml:"max_conversations_per_user"`
+	MaxMessagesPerConversation int                   `yaml:"max_messages_per_conversation"`
+	MaxMessageChars            int                   `yaml:"max_message_chars"`
+	CursorTTLRaw               string                `yaml:"cursor_ttl"`
+	CursorTTL                  time.Duration         `yaml:"-"`
+	CursorKey                  SecretBytes           `yaml:"-"`
+	Tools                      AgentToolsConfig      `yaml:"tools"`
+	Generation                 AgentGenerationConfig `yaml:"generation"`
+	Execution                  AgentExecutionConfig  `yaml:"execution"`
 }
 
 type AgentToolsConfig struct {
@@ -27,7 +29,9 @@ type AgentToolsConfig struct {
 
 func defaultAgentConfig() AgentConfig {
 	return AgentConfig{MaxConversationsPerUser: 50, MaxMessagesPerConversation: 200, MaxMessageChars: 4000,
-		CursorTTLRaw: "1h", Tools: AgentToolsConfig{TimeoutRaw: "5s", MaxOutputBytes: 128 * 1024}}
+		CursorTTLRaw: "1h", Tools: AgentToolsConfig{TimeoutRaw: "5s", MaxOutputBytes: 128 * 1024},
+		Generation: AgentGenerationConfig{ProfileVersion: "agent-model-v1", PromptVersion: "agent-reading-v1", TimeoutRaw: "30s", MaxTokensParameter: "max_tokens", MaxOutputTokens: 2048},
+		Execution:  AgentExecutionConfig{TimeoutRaw: "60s", MaxModelCalls: 4, MaxToolCalls: 6, MaxOutputTokens: 8192, AuditTokenBudget: 65536, MaxInputBytes: 49152, MaxAnswerChars: 8000, Concurrency: 4}}
 }
 
 func applyAgentEnvironment(cfg *Config) error {
@@ -54,7 +58,7 @@ func applyAgentEnvironment(cfg *Config) error {
 		}
 		a.CursorKey = SecretBytes(decoded)
 	}
-	return nil
+	return applyAgentGenerationEnvironment(a)
 }
 
 func validateAgentConfig(a *AgentConfig) error {
@@ -71,7 +75,7 @@ func validateAgentConfig(a *AgentConfig) error {
 	if a.Tools.MaxOutputBytes < 65536 || a.Tools.MaxOutputBytes > 1048576 {
 		return errors.New("agent.tools.max_output_bytes 必须介于65536与1048576")
 	}
-	return nil
+	return validateAgentGeneration(a)
 }
 
 // AgentAPIKey 仅在API真正开启会话路由时调用；其他进程不要求此密钥。

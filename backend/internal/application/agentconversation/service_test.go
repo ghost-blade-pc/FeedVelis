@@ -53,6 +53,11 @@ func (r orderRepository) AppendMessage(_ context.Context, _ string, m conversati
 	return nil
 }
 
+func (r orderRepository) ActiveRuns(context.Context, string) (int, error) {
+	*r.order = append(*r.order, "active")
+	return 0, nil
+}
+
 type unitDedup struct {
 	order    *[]string
 	record   idempotency.Record
@@ -86,7 +91,7 @@ func TestWriteLockOrderAndServerRole(t *testing.T) {
 	if err != nil || result.Status != 201 {
 		t.Fatalf("追加: %+v %v", result, err)
 	}
-	if !reflect.DeepEqual(order, []string{"user", "ownership", "idempotency", "conversation", "append", "succeed"}) {
+	if !reflect.DeepEqual(order, []string{"user", "ownership", "idempotency", "conversation", "active", "append", "succeed"}) {
 		t.Fatalf("锁序错误: %v", order)
 	}
 }

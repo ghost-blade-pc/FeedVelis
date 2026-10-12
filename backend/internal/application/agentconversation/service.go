@@ -11,6 +11,7 @@ import (
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/ports"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/account"
 	conversation "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/agentconversation"
+	run "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/agentrun"
 )
 
 type Limits struct {
@@ -29,7 +30,10 @@ type Service struct {
 	snapshot    ReadSnapshot
 	idempotency *idempotency.Service
 	limits      Limits
+	projector   HistoryProjector
 }
+
+func (s *Service) WithHistoryProjector(p HistoryProjector) *Service { s.projector = p; return s }
 
 // NewService 固定使用独立的24小时窗口，不继承文章模块的保留期。
 func NewService(repository Repository, tx ports.TxManager, snapshot ReadSnapshot, dedup idempotency.Repository, limits Limits) *Service {
@@ -172,6 +176,13 @@ func (s *Service) Append(ctx context.Context, userID, id, key, content string) (
 		return Result{}, err
 	}
 	return s.write(ctx, identity, identifier, struct{ ConversationID, Content string }{identifier, normalized}, func(ctx context.Context, c conversation.Conversation, now time.Time) (any, string, string, error) {
+		active, err := s.repository.ActiveRuns(ctx, c.ID)
+		if err != nil {
+			return nil, "", "", err
+		}
+		if active > 0 {
+			return nil, "", "", run.ErrInProgress
+		}
 		if c.MessageCount >= s.limits.MaxMessages {
 			return nil, "", "", conversation.ErrMessageLimit
 		}
@@ -337,6 +348,15 @@ func (s *Service) History(ctx context.Context, userID, id string, before int64, 
 		}
 		for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
 			items[i], items[j] = items[j], items[i]
+		}
+		if s.projector != nil {
+			items, err = s.projector.Messages(ctx, user, identifier, items)
+			return err
+		}
+		for _, m := range items {
+			if m.RunID != nil {
+				return &run.Error{Code: run.CodeDependencyUnavailable}
+			}
 		}
 		return nil
 	})

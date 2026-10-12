@@ -16,6 +16,7 @@ help:
 	@echo "make integration-cache-reads 运行 PostgreSQL/Redis/OpenSearch 读取联合验收（含推荐）"
 	@echo "make integration-agent-conversations 运行 PostgreSQL 私有会话真实验收"
 	@echo "make integration-agent-tools 运行 PostgreSQL/Redis/OpenSearch 内部工具联合验收"
+	@echo "make integration-agent-runs 运行回合、模型协议、真实 TCP/nginx 联合验收（拒绝 skip）"
 	@echo "make integration-all  运行全部真实依赖测试"
 
 backend-fmt:
@@ -72,6 +73,10 @@ integration-agent-tools:
 	@test -n "$(VELIS_TEST_OPENSEARCH_URL)" || (echo "未设置 VELIS_TEST_OPENSEARCH_URL" && exit 2)
 	@test -n "$(VELIS_TEST_REDIS_ADDRESS)" || (echo "未设置 VELIS_TEST_REDIS_ADDRESS" && exit 2)
 	cd backend && GOCACHE=$(GOCACHE_DIR) go test -count=1 -v -run '^TestAgentTools' ./test/integration
+
+.PHONY: integration-agent-runs
+integration-agent-runs:
+	bash scripts/integration-agent-runs.sh
 
 integration-all: integration-postgres integration-rabbitmq integration-opensearch integration-search integration-cache-reads integration-agent-conversations integration-agent-tools
 

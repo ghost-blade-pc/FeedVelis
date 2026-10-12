@@ -2,15 +2,17 @@ package account
 
 import (
 	"context"
+	"time"
 
 	accountDomain "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/account"
 )
 
 // Identity 是当前调用者上下文：账户、会话与角色状态全部取自数据库当前值，令牌不携带这些声明。
 type Identity struct {
-	User    accountDomain.User
-	Session accountDomain.Session
-	TokenID string
+	User            accountDomain.User
+	Session         accountDomain.Session
+	TokenID         string
+	AccessExpiresAt time.Time
 }
 
 // Authenticate 校验访问令牌，并确认会话与账户仍然有效；数据库不可用时返回底层错误。
@@ -44,7 +46,7 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (Identit
 	if !user.IsActive() {
 		return Identity{}, accountDomain.ErrSessionInvalid
 	}
-	return Identity{User: user, Session: session, TokenID: claims.TokenID}, nil
+	return Identity{User: user, Session: session, TokenID: claims.TokenID, AccessExpiresAt: claims.ExpiresAt}, nil
 }
 
 // UpdateNickname 只允许修改本人昵称，使用读取时版本做乐观锁。

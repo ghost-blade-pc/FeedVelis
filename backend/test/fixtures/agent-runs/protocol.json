@@ -1,0 +1,159 @@
+{
+  "command": {
+    "message_id": "33000000-0000-4000-8000-000000000001",
+    "constraints": {
+      "keyword": "Go"
+    }
+  },
+  "accepted": {
+    "id": "22000000-0000-4000-8000-000000000001",
+    "conversation_id": "11000000-0000-4000-8000-000000000001",
+    "user_message_id": "33000000-0000-4000-8000-000000000001",
+    "status": "accepted",
+    "created_at": "2026-10-11T12:00:00Z"
+  },
+  "events": [
+    {
+      "version": 1,
+      "run_id": "22000000-0000-4000-8000-000000000001",
+      "sequence": 1,
+      "kind": "run.status",
+      "status": "accepted",
+      "partial": false,
+      "redacted": false
+    },
+    {
+      "version": 1,
+      "run_id": "22000000-0000-4000-8000-000000000001",
+      "sequence": 2,
+      "kind": "answer.sources",
+      "references": [
+        {
+          "evidence_id": "82000000-0000-0000-0000-000000000010",
+          "number": 1,
+          "kind": "article",
+          "article_id": 1,
+          "revision_id": 2,
+          "content_kind": "body",
+          "truncated": false
+        }
+      ],
+      "cards": [
+        {
+          "number": 1,
+          "article_id": 1,
+          "revision_id": 2,
+          "title": "执行租约",
+          "origin_type": "user",
+          "source": null,
+          "author": {
+            "id": "82000000-0000-0000-0000-000000000011",
+            "nickname": "作者"
+          },
+          "path": "/articles/1",
+          "original_url": null,
+          "summary": "租约示例",
+          "summary_source": "excerpt",
+          "metadata_truncated": false,
+          "truncated": false,
+          "degraded": false
+        }
+      ],
+      "partial": true,
+      "redacted": false
+    },
+    {
+      "version": 1,
+      "run_id": "22000000-0000-4000-8000-000000000001",
+      "sequence": 3,
+      "kind": "answer.block",
+      "block": {
+        "id": "b1",
+        "text": "文章介绍通过租约约束并发执行。",
+        "evidence_ids": [
+          "82000000-0000-0000-0000-000000000010"
+        ],
+        "redacted": false
+      },
+      "references": [
+        {
+          "evidence_id": "82000000-0000-0000-0000-000000000010",
+          "number": 1,
+          "kind": "article",
+          "article_id": 1,
+          "revision_id": 2,
+          "content_kind": "body",
+          "truncated": false
+        }
+      ],
+      "partial": true,
+      "redacted": false
+    },
+    {
+      "version": 1,
+      "run_id": "22000000-0000-4000-8000-000000000001",
+      "sequence": 4,
+      "kind": "run.terminal",
+      "status": "succeeded",
+      "partial": false,
+      "redacted": false
+    }
+  ],
+  "positions": [
+    "v1:22000000-0000-4000-8000-000000000001:1",
+    "v1:22000000-0000-4000-8000-000000000001:2",
+    "v1:22000000-0000-4000-8000-000000000001:3",
+    "v1:22000000-0000-4000-8000-000000000001:4"
+  ],
+  "answer": {
+    "version": 1,
+    "kind": "answer",
+    "blocks": [
+      {
+        "id": "b1",
+        "text": "文章介绍通过租约约束并发执行。",
+        "evidence_ids": [
+          "82000000-0000-0000-0000-000000000010"
+        ],
+        "redacted": false
+      }
+    ],
+    "references": [
+      {
+        "evidence_id": "82000000-0000-0000-0000-000000000010",
+        "number": 1,
+        "kind": "article",
+        "article_id": 1,
+        "revision_id": 2,
+        "content_kind": "body",
+        "truncated": false
+      }
+    ],
+    "cards": [
+      {
+        "number": 1,
+        "article_id": 1,
+        "revision_id": 2,
+        "title": "执行租约",
+        "origin_type": "user",
+        "source": null,
+        "author": {
+          "id": "82000000-0000-0000-0000-000000000011",
+          "nickname": "作者"
+        },
+        "path": "/articles/1",
+        "original_url": null,
+        "summary": "租约示例",
+        "summary_source": "excerpt",
+        "metadata_truncated": false,
+        "truncated": false,
+        "degraded": false
+      }
+    ],
+    "redacted": false
+  },
+  "stream_error": {
+    "version": 1,
+    "error_code": "AUTH_SESSION_INVALID"
+  }
+}

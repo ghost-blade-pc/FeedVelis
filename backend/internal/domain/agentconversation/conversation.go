@@ -114,12 +114,14 @@ func (c *Conversation) Activate(now time.Time) {
 
 // Message 只在追加时构造；仓储不提供更新或单条删除入口。
 type Message struct {
-	ID             string    `json:"id"`
-	ConversationID string    `json:"conversation_id"`
-	Sequence       int64     `json:"sequence"`
-	Role           Role      `json:"role"`
-	Content        string    `json:"content"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	ConversationID  string    `json:"conversation_id"`
+	Sequence        int64     `json:"sequence"`
+	Role            Role      `json:"role"`
+	Content         string    `json:"content"`
+	CreatedAt       time.Time `json:"created_at"`
+	RunID           *string   `json:"run_id,omitempty"`
+	ContentRedacted *bool     `json:"content_redacted,omitempty"`
 }
 
 func NewMessage(id, conversationID string, sequence int64, role Role, content string, maxChars int, now time.Time) (Message, error) {

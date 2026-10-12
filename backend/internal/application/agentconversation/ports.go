@@ -35,6 +35,7 @@ type Repository interface {
 	InsertConversation(context.Context, conversation.Conversation) error
 	SaveTitle(context.Context, conversation.Conversation) error
 	AppendMessage(context.Context, string, conversation.Message) error
+	ActiveRuns(context.Context, string) (int, error)
 	DeleteConversation(context.Context, conversation.Conversation, time.Time) error
 	List(context.Context, string, *ListBoundary, int) ([]conversation.Conversation, error)
 	Messages(context.Context, string, int64, int) ([]conversation.Message, error)
@@ -42,4 +43,9 @@ type Repository interface {
 
 type ReadSnapshot interface {
 	WithinReadSnapshot(context.Context, func(context.Context, bool) error) error
+}
+
+// HistoryProjector 仅改变读取视图，不能更新不可变消息或其分页位置。
+type HistoryProjector interface {
+	Messages(context.Context, string, string, []conversation.Message) ([]conversation.Message, error)
 }

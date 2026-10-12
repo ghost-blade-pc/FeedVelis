@@ -135,6 +135,12 @@ VALUES($1,$2,$3,$4,$5,$6)`, m.ID, m.ConversationID, m.Sequence, m.Role, m.Conten
 	return err
 }
 
+func (r *AgentConversationRepository) ActiveRuns(ctx context.Context, conversationID string) (int, error) {
+	var count int
+	err := querier(ctx, r.pool).QueryRow(ctx, `SELECT count(*) FROM velis.agent_runs WHERE conversation_id=$1 AND status IN ('accepted','running')`, conversationID).Scan(&count)
+	return count, err
+}
+
 // DeleteConversation 在既有用户锁下清除事实和全部关联成功载荷；任一步失败由外层回滚。
 func (r *AgentConversationRepository) DeleteConversation(ctx context.Context, c conversation.Conversation, now time.Time) error {
 	if err := requireAgentTransaction(ctx); err != nil {
@@ -144,7 +150,7 @@ func (r *AgentConversationRepository) DeleteConversation(ctx context.Context, c 
 	_, err := q.Exec(ctx, `UPDATE velis.idempotency_operations SET result_payload=
 jsonb_build_object('version',1,'conversation_id',$2::text,'deleted',true)
 WHERE actor_user_id=$1 AND resource_type='agent_conversation' AND resource_id=$2
-AND status='succeeded' AND operation IN ('agent.conversation.create','agent.message.append','agent.conversation.rename')`, c.UserID, c.ID)
+AND status='succeeded' AND operation IN ('agent.conversation.create','agent.message.append','agent.conversation.rename','agent.run.accept')`, c.UserID, c.ID)
 	if err != nil {
 		return err
 	}
@@ -190,9 +196,10 @@ func (r *AgentConversationRepository) List(ctx context.Context, userID string, b
 
 // Messages 返回倒序候选；应用服务裁掉多取的一条后再将当前批反转。
 func (r *AgentConversationRepository) Messages(ctx context.Context, conversationID string, before int64, limit int) ([]conversation.Message, error) {
-	rows, err := querier(ctx, r.pool).Query(ctx, `SELECT id::text,conversation_id::text,sequence,role,content,created_at
-FROM velis.agent_messages WHERE conversation_id=$1 AND ($2::bigint=0 OR sequence<$2)
-ORDER BY sequence DESC LIMIT $3`, conversationID, before, limit)
+	rows, err := querier(ctx, r.pool).Query(ctx, `SELECT m.id::text,m.conversation_id::text,m.sequence,m.role,m.content,m.created_at,r.id::text
+FROM velis.agent_messages m LEFT JOIN velis.agent_runs r ON r.assistant_message_id=m.id
+WHERE m.conversation_id=$1 AND ($2::bigint=0 OR m.sequence<$2)
+ORDER BY m.sequence DESC LIMIT $3`, conversationID, before, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +207,7 @@ ORDER BY sequence DESC LIMIT $3`, conversationID, before, limit)
 	items := make([]conversation.Message, 0)
 	for rows.Next() {
 		var m conversation.Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Sequence, &m.Role, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Sequence, &m.Role, &m.Content, &m.CreatedAt, &m.RunID); err != nil {
 			return nil, err
 		}
 		m.CreatedAt = m.CreatedAt.UTC()

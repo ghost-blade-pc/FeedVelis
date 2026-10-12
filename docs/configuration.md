@@ -129,3 +129,32 @@ Agent默认关闭，必须同时开启auth才注册路由。配置优先级仍�
 | 不接受YAML密钥 | 无 | Base64解码后恰好32字节 | VELIS_AGENT_CURSOR_KEY |
 
 固定24h幂等、标题100字符、分页20/50、工具结果5/10、正文工具4000/8000和PIT清理250ms不另增配置。非开发API启用会话且缺密钥时启动失败；开发API可生成进程临时密钥，重启后旧游标失效。其他进程不新增密钥要求，也不新增readiness依赖。降低配额不删除存量，允许读取、删除和原成功重放。
+
+## 对话生成与执行
+
+对话配置独立于 `ai.generation` 和 Embedding，继续按默认值 < YAML < 环境变量覆盖。API Key 只从独立环境变量读取；不接受 YAML 凭据，不继承内容增强的密钥。缺少完整模型配置时只使新接受不可用，已接受键重放、历史与回合读取和维护仍可用。模型不进入 readiness 依赖。
+
+| YAML | 默认值 | 范围或要求 | 环境变量 |
+| --- | --- | --- | --- |
+| agent.generation.enabled | false | 同时要求 auth/agent 开启 | VELIS_AGENT_GENERATION_ENABLED |
+| agent.generation.provider | 空 | openai-compatible | VELIS_AGENT_GENERATION_PROVIDER |
+| agent.generation.base_url | 空 | HTTP(S)，无凭据、查询和片段 | VELIS_AGENT_GENERATION_BASE_URL |
+| agent.generation.model | 空 | 显式指定支持工具调用与流式文本的模型 | VELIS_AGENT_GENERATION_MODEL |
+| 不接受 YAML | 无 | 独立环境凭据，打印脱敏 | VELIS_AGENT_GENERATION_API_KEY |
+| agent.generation.profile_version | agent-model-v1 | 非空 | VELIS_AGENT_GENERATION_PROFILE_VERSION |
+| agent.generation.prompt_version | agent-reading-v1 | 非空 | VELIS_AGENT_GENERATION_PROMPT_VERSION |
+| agent.generation.timeout | 30s | 100ms–60s，受剩余回合期限约束 | VELIS_AGENT_GENERATION_TIMEOUT |
+| agent.generation.max_tokens_parameter | max_tokens | max_tokens 或 max_completion_tokens，仅发送所选项 | VELIS_AGENT_GENERATION_MAX_TOKENS_PARAMETER |
+| agent.generation.max_output_tokens | 2048 | 256–8192 | VELIS_AGENT_GENERATION_MAX_OUTPUT_TOKENS |
+| agent.execution.timeout | 60s | 5s–120s，包含 accepted 排队时间 | VELIS_AGENT_RUN_TIMEOUT |
+| agent.execution.max_model_calls | 4 | 2–8，取证阶段预留一次独立成文调用 | VELIS_AGENT_MAX_MODEL_CALLS |
+| agent.execution.max_tool_calls | 6 | 1–12，失败与非法尝试也计数 | VELIS_AGENT_MAX_TOOL_CALLS |
+| agent.execution.max_output_tokens | 8192 | 512–32768，不小于单次上限 | VELIS_AGENT_RUN_MAX_OUTPUT_TOKENS |
+| agent.execution.audit_token_budget | 65536 | 8192–262144，严格大于单次输出预留 | VELIS_AGENT_RUN_AUDIT_TOKEN_BUDGET |
+| agent.execution.max_input_bytes | 49152 | 8192–131072，包含策略和工具 schema | VELIS_AGENT_MAX_INPUT_BYTES |
+| agent.execution.max_answer_chars | 8000 | 1000–16000 Unicode code point | VELIS_AGENT_MAX_ANSWER_CHARS |
+| agent.execution.concurrency | 4 | 1–16，每 API 实例 | VELIS_AGENT_EXECUTION_CONCURRENCY |
+
+Eino ADK 负责有界 ReAct 取证，结束后以无工具请求独立流式成文。首个响应使用受控任务候选，服务端锁定支持的条件，显式条件优先；未支持的时间筛选和扩展能力返回固定澄清模板。自然语言条件的语义提取需要阅读评测验证，类型校验不能代替语义正确性。
+
+每个模型请求按实际序列化字节及输出上限预留预算，没有完整 usage 时保留保守预留并公开 null/usage_complete=false。模型协议适配不重试 HTTP 请求或重定向，不把 Provider 原始错误写入输出。超过报告用量、输出字节或总预算后不再发起模型请求。相关证据协议见 [agent-evidence.md](agent-evidence.md)。

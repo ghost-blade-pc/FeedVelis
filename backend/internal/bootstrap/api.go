@@ -118,7 +118,16 @@ func RunAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			service := agent.NewService(postgres.NewAgentConversationRepository(pool), tx, tx, postgres.NewIdempotencyRepository(pool), agent.Limits{
 				MaxConversations: cfg.Agent.MaxConversationsPerUser, MaxMessages: cfg.Agent.MaxMessagesPerConversation, MaxMessageChars: cfg.Agent.MaxMessageChars,
 			})
+			runtime := buildAgentRuntime(cfg, pool, search, recommend)
+			runtime.supervisor.WithObserver(observability.NewAgentRunObserver(registry, logger))
+			if err := runtime.supervisor.Start(ctx); err != nil {
+				return err
+			}
+			defer runtime.stop(ctx)
+			runtime.runs.WithPaging(codec, cfg.Agent.CursorTTL)
+			service.WithHistoryProjector(runtime.projector)
 			options.Auth.Agent = handler.NewAgentConversation(service, codec, cfg.Agent.CursorTTL, cfg.Agent.MaxMessageChars).WithObserver(agentObserver)
+			options.Auth.AgentRuns = handler.NewAgentRun(runtime.runs)
 		}
 	}
 	// 启动自检只报告存储状态，不阻止启动：资产能力按请求降级，readyz 仍以 PostgreSQL 为准。

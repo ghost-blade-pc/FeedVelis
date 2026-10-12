@@ -16,6 +16,7 @@ import (
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/application/strictjson"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/account"
 	conversation "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/agentconversation"
+	run "github.com/ghost-blade-pc/Velis_Feed/backend/internal/domain/agentrun"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/middleware"
 	"github.com/ghost-blade-pc/Velis_Feed/backend/internal/interfaces/http/hertz/presenter"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -386,6 +387,8 @@ func (h *AgentConversation) reject(c *app.RequestContext, err error) {
 		status, code, message = 409, "AGENT_CONVERSATION_LIMIT_EXCEEDED", "会话数量已达上限"
 	case errors.Is(err, conversation.ErrMessageLimit):
 		status, code, message = 409, "AGENT_MESSAGE_LIMIT_EXCEEDED", "会话消息数量已达上限"
+	case errors.Is(err, run.ErrInProgress):
+		status, code, message = 409, "AGENT_RUN_IN_PROGRESS", "会话正在生成回答"
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, io.EOF), errors.As(err, &networkErr), errors.As(err, &pgErr), errors.As(err, &connectErr), pgconn.SafeToRetry(err):
 		status, code, message = 503, "DEPENDENCY_UNAVAILABLE", "会话存储暂不可用"
 	}

@@ -14,6 +14,7 @@ var ErrInvalidCursor = errors.New("会话游标无效")
 
 const ListPurpose = "list"
 const HistoryPurpose = "history"
+const RunListPurpose = "run-list"
 
 // Cursor 只保存身份、排序边界及绝对期限，不保存标题或正文。
 type Cursor struct {
@@ -93,6 +94,10 @@ func validCursor(c Cursor) bool {
 	case HistoryPurpose:
 		_, err := normalizeID(c.ConversationID)
 		return err == nil && c.BeforeSequence > 0 && c.ID == "" && c.ActivityAt.IsZero()
+	case RunListPurpose:
+		_, parentErr := normalizeID(c.ConversationID)
+		_, idErr := normalizeID(c.ID)
+		return parentErr == nil && idErr == nil && !c.ActivityAt.IsZero() && c.BeforeSequence == 0
 	default:
 		return false
 	}

@@ -1,6 +1,6 @@
 # Agent 会话与消息基础
 
-提供私有会话、不可变用户消息、手动标题、历史分页和三个内部文章只读工具。无模型自动回复、SSE、Agent Web 页面或定时任务。完整契约见 [OpenAPI](../backend/api/openapi/velis.yaml)，工具见 [只读工具说明](agent-tools.md)。
+提供私有会话、不可变用户消息、手动标题、历史分页和三个内部文章只读工具。有引用模型自动回复、异步回合、取消和 SSE 已在后端接入，见[回合接口](agent-runs.md)与[回合数据与配额](agent-run-data.md)；Agent Web 页面和定时任务尚未接入。完整当前 HTTP 契约见 [OpenAPI](../backend/api/openapi/velis.yaml)，工具见 [只读工具说明](agent-tools.md)。
 
 ## 启用与调用
 
@@ -32,6 +32,8 @@ curl -X DELETE "http://127.0.0.1:8080/api/v1/me/agent/conversations/$CONVERSATIO
 
 ## 持久化不变量
 
+消息上限同时计入活动回合的助手预留，但 `message_count` 仅统计已保存消息。活动回合期间新追加返回 `409 AGENT_RUN_IN_PROGRESS`；本人旧成功追加仍先重放，不占用新键或序号。读取及改名继续可用。只有最后一个消息名额时可以保存用户问题，但之后没有助手额度，不能接受生成；详见 [回合数据与配额](agent-run-data.md)。
+
 - `agent_user_state` 按账户保存现存会话计数，所有写入先锁此行；不会跟随登录会话过期。
 - `agent_conversations` 保存当前标题、标题版本、消息计数和下个序号；消息追加不修改标题版本，活跃时间只能前进。
 - `agent_messages` 通过会话外键确定所有者，只允许 `user`、`assistant` 和正整数序号，同会话序号唯一。仓储没有修改或单条删除消息入口，整会话删除级联物理清除消息。
@@ -43,9 +45,9 @@ curl -X DELETE "http://127.0.0.1:8080/api/v1/me/agent/conversations/$CONVERSATIO
 
 创建、追加、改名、删除统一采用用户状态锁→归属/删除检查→幂等行锁→会话锁。事务内只执行 PostgreSQL 操作。读取历史在同一短只读快照中完成归属检查和消息读取。
 
-Agent 使用独立固定 24 小时幂等服务，三个操作作用域分别为 `agent.conversation.create`、`agent.message.append`、`agent.conversation.rename`；所有成功结果统一关联 `agent_conversation` 和会话 UUID。摘要使用规范化标题/正文、目标会话，以及改名预期版本。重放不续期、不改变计数或活跃时间，版本与配额在归属和重放之后检查。
+Agent 使用独立固定 24 小时幂等服务，会话三个操作作用域分别为 `agent.conversation.create`、`agent.message.append`、`agent.conversation.rename`，回合接受为 `agent.run.accept`；所有成功结果统一关联 `agent_conversation` 和会话 UUID。会话摘要使用规范化标题/正文、目标会话，以及改名预期版本。重放不续期、不改变计数或活跃时间，版本、活动回合与配额在归属和重放之后检查。
 
-整会话删除在同事务中清除全部关联成功快照的标题/正文，将结果替换为版本、会话引用及删除终态，物理删除会话/消息、释放配额、写最小标记。创建键未到期且关联会话已删除时不能重新创建；窗口外重用键生成新 UUID。最小标记不依赖去重记录存续。
+整会话删除在同事务中清除全部关联成功快照的标题/正文和回合私密载荷，将结果替换为版本、会话引用及删除终态，物理删除会话/消息/回合/证据/片段/事件、释放配额、写最小标记。创建键未到期且关联会话已删除时不能重新创建；窗口外重用键生成新 UUID。最小标记不依赖去重记录存续。
 
 既有 `DeleteExpiredIdempotency` 只按截止时间分批删除去重行，不获取用户或会话锁，不清理 Agent 历史和永久删除标记。关闭未来 Agent 功能开关也不得删除这些事实。
 
@@ -58,7 +60,8 @@ cd backend
 export VELIS_TEST_DATABASE_URL='postgres://velis:velis@127.0.0.1:55434/velis_agent_test?sslmode=disable'
 GOCACHE=/tmp/feedvelis-go-cache go test -count=1 -v -run '^TestAgentConversation' ./test/integration
 
-# 仅在没有会话、消息、删除标记、Agent 幂等记录时回退一版。
+# 已应用000013时，回退一版仅撤销回合表；不会撤销000012会话表。
+# 仅在没有新回合、预留、助手关联和接受幂等事实时允许；有事实应保留表关闭生成。
 VELIS_DATABASE_URL="$VELIS_TEST_DATABASE_URL" go run ./cmd/velis-migrate -path migrations -steps 1 down
 VELIS_DATABASE_URL="$VELIS_TEST_DATABASE_URL" go run ./cmd/velis-migrate -path migrations up
 ```
